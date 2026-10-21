@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wrfcoin.invalid/schemas/testnet-status.schema.json",
+  "title": "Redacted WRFCoin testnet status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "checked_at", "consecutive_failures", "chain_id"],
+  "properties": {
+    "status": {"type": "string", "enum": ["PASS", "FAIL"]},
+    "checked_at": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z$"},
+    "consecutive_failures": {"type": "integer", "minimum": 0},
+    "chain_id": {"type": "string", "pattern": "^[1-9][0-9]*$"}
+  }
+}

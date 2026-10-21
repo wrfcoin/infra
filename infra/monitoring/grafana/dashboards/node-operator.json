@@ -1,0 +1,225 @@
+{
+  "id": null,
+  "uid": "wrf-node-operator",
+  "title": "WRFCoin Node Operator",
+  "description": "Local launch_api metrics only. Source verified against core4 6d674e73e6ed5b9b53d0a3bdd6df3d1f79c7daf4; no live scrape evidence.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": [
+    "wrfcoin",
+    "node-operator"
+  ],
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Chain height",
+      "type": "timeseries",
+      "description": "Current local chain tip, refreshed on each metrics scrape.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "wrfcoin_chain_height{job=\"wrfcoin-node\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Connected peers",
+      "type": "timeseries",
+      "description": "Connected P2P peers; zero may indicate missing P2P telemetry.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "wrfcoin_network_peer_count{job=\"wrfcoin-node\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Downloader state",
+      "type": "stat",
+      "description": "One-hot downloader state: idle, discovering, downloading, stalled, complete. Not a readiness verdict; idle is the initialized value when no P2P client updates it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "wrfcoin_p2p_sync_state{job=\"wrfcoin-node\",instance=~\"$instance\"} == 1",
+          "legendFormat": "{{instance}} \u00b7 {{state}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Estimated block interval (height progress, 5m)",
+      "type": "timeseries",
+      "description": "Reciprocal of the positive 5-minute local height slope. An estimate of arrival interval, not timestamp spacing or production duration. Catch-up can appear faster than chain production. No data for zero/negative slope or insufficient samples; check height for stalls.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 / (deriv(wrfcoin_chain_height{job=\"wrfcoin-node\",instance=~\"$instance\"}[5m]) > 0)",
+          "legendFormat": "{{instance}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Reading this dashboard",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Select your Prometheus datasource and node instance. Missing series mean **No data**, not healthy or zero. Check the Prometheus target when samples stop.\n\nCPU and process memory are not exported by the node metrics registry and are intentionally unavailable here. The interval is derived from local height progress; it is not a measured chain block interval. Downloader state alone does not prove chain freshness or readiness."
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1
+      },
+      {
+        "name": "instance",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(wrfcoin_chain_height{job=\"wrfcoin-node\"}, instance)",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  }
+}

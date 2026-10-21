@@ -1,0 +1,33 @@
+# Node overlay: hand wrfcoin-node ONE governance-signed upgrade notice as a read-only file
+# (core4#3095 transport; used by the B3 rollout, core4#3277 S7). OPT-IN, OFF unless passed.
+#
+# The node reads WRFCOIN_UPGRADE_NOTICE_FILE once at boot and trusts the notice by SIGNATURE
+# only: it verifies it against its own chain identity, its WRFCOIN_ORACLE_GOVERNANCE_PUBKEYS
+# allowlist and its clock (core4 docs/operations/UPGRADE_NOTICES.md). A notice for a release this
+# binary already carries is reported `ready` on GET /network/upgrade; one for a NEWER release
+# installs the #3093 deadline, so the node stops cleanly (exit 70) at activation_height - 1.
+#
+# Set on the host, in the same .env the node's -f list reads (owner step; the value is a path,
+# not a secret):
+#   WRFCOIN_UPGRADE_NOTICE_HOST_FILE=<absolute host path of the signed notice JSON>
+# Verify it OFFLINE first (`wrfcoin governance upgrade-notice verify --signed <file>`).
+#
+# The mount is one file, read-only, and create_host_path is false: a wrong path makes the
+# recreate FAIL instead of Docker silently creating an empty directory where the notice should be.
+# Replacing the notice means replacing the file and recreating the node (it is read at boot only).
+#
+# This changes the node's container config, so adding it recreates the node. Add it only in a node
+# window, and keep it in the node's file set from then on (it is recorded in the container's
+# com.docker.compose.project.config_files label, which every later step reads its -f list from).
+# boot-heal does not add node overlays (same as docker-compose.node-api-service-host.yml).
+services:
+  wrfcoin-node:
+    environment:
+      WRFCOIN_UPGRADE_NOTICE_FILE: /etc/wrfcoin/upgrade-notice.signed.json
+    volumes:
+      - type: bind
+        source: ${WRFCOIN_UPGRADE_NOTICE_HOST_FILE:?WRFCOIN_UPGRADE_NOTICE_HOST_FILE must be the absolute host path of a verified signed upgrade notice}
+        target: /etc/wrfcoin/upgrade-notice.signed.json
+        read_only: true
+        bind:
+          create_host_path: false

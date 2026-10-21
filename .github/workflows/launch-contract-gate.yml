@@ -1,0 +1,135 @@
+permissions:
+  contents: read
+
+name: Launch Contract Gate
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  launch-contract-suite:
+    name: Launch Contract Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN || github.token }}
+
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v7
+
+      - name: Checkout backend
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/backend
+          path: backend
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Checkout mobile
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/mobile
+          path: mobile
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Checkout core4
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+          path: core4
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Prepare artifact directory
+        run: mkdir -p artifacts/launch-contract-suite
+
+      - name: Start Core4 stub
+        env:
+          CORE4_FIXTURE_PATH: core4/contract-fixtures/launch-realtime-event-source.json
+        run: |
+          node scripts/launch-contract-core4-stub.cjs > artifacts/launch-contract-suite/core4-stub.log 2>&1 &
+          echo $! > artifacts/launch-contract-suite/core4-stub.pid
+
+      - name: Start main API server
+        env:
+          JWT_SECRET: 12345678901234567890123456789012
+          OTEL_ENABLED: "false"
+          NODE_ENV: test
+          CORE4_API_URL: http://127.0.0.1:18556
+        run: |
+          ./backend/node_modules/.bin/tsx -e "import { startMainApiServer } from './backend/server/main_api_server.ts'; startMainApiServer(4001, '127.0.0.1');" > artifacts/launch-contract-suite/main-api.log 2>&1 &
+          echo $! > artifacts/launch-contract-suite/main-api.pid
+
+      - name: Start compute contribution server
+        env:
+          PORT: 6003
+          OTEL_ENABLED: "false"
+          NODE_ENV: test
+        run: |
+          ./backend/node_modules/.bin/tsx backend/server/compute_contribution_server.js > artifacts/launch-contract-suite/compute.log 2>&1 &
+          echo $! > artifacts/launch-contract-suite/compute.pid
+
+      - name: Wait for HTTP services
+        run: |
+          for target in "http://127.0.0.1:18556/health" "http://127.0.0.1:4001/health" "http://127.0.0.1:6003/health"; do
+            for attempt in $(seq 1 45); do
+              if curl --silent --fail --max-time 2 "$target" > /dev/null; then
+                echo "ready: $target"
+                break
+              fi
+              if [ "$attempt" -eq 45 ]; then
+                echo "::error::timed out waiting for $target"
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Run launch contract suite
+        env:
+          BACKEND_REPO_DIR: backend
+          MOBILE_REPO_DIR: mobile
+          CORE4_REPO_DIR: core4
+          INFRA_REPO_DIR: ${{ github.workspace }}
+          MAIN_API_BASE_URL: http://127.0.0.1:4001
+          MAIN_API_WS_URL: ws://127.0.0.1:4001/ws
+          COMPUTE_API_BASE_URL: http://127.0.0.1:6003
+          REPORT_DIR: artifacts/launch-contract-suite
+        run: |
+          set -o pipefail
+          node scripts/run-launch-contract-suite.cjs | tee artifacts/launch-contract-suite/command-output.txt
+
+      - name: Publish suite summary
+        if: always()
+        run: |
+          if [ -f artifacts/launch-contract-suite/summary.md ]; then
+            cat artifacts/launch-contract-suite/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload launch contract artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: launch-contract-suite
+          path: artifacts/launch-contract-suite/
+
+      - name: Cleanup background services
+        if: always()
+        run: |
+          for pid_file in artifacts/launch-contract-suite/*.pid; do
+            if [ -f "$pid_file" ]; then
+              kill "$(cat "$pid_file")" 2>/dev/null || true
+            fi
+          done

@@ -1,0 +1,34 @@
+# =============================================================================
+# Achievement-payout reconciler overlay (infra#973), OPT-IN, OFF unless passed
+# =============================================================================
+# Starts wrfcoin-backend's reward-payout reconciler (backend
+# server/services/reward-payout-reconciler.ts). Every 60 s it re-POSTs
+# achievement claims stuck in `pending`/`settling` to core4 POST /rewards/payout.
+# Re-posting is safe: core4 dedups on claim_id. But this IS the on-chain reward
+# path: turning it on makes pending achievement payouts actually settle. That
+# is exactly what #973 is for, and it is why enabling it is an owner decision
+# in a deploy window, never a default.
+#
+# Precondition: the RUNNING core4 image includes core4#2081 (merge 5ff889926,
+# `POST /rewards/payout`). The release/cut pin 9ef92a235 contains it
+# (`git merge-base --is-ancestor 5ff889926 9ef92a235`). Confirm the node's
+# image revision label before enabling; see UPGRADE_RUNBOOK.md.
+#
+# It does not touch consensus: no block, vote, or scoring rule changes. The
+# backend is the only client, authenticated with WRFCOIN_OPERATOR_TOKEN as
+# today.
+#
+#   docker compose -f testnet/docker-compose.testnet.yml <host overlays...> \
+#     -f testnet/docker-compose.payout-reconciler.yml up -d --no-deps wrfcoin-backend
+#
+# Proof it is on: the backend logs 'Reward payout reconciler started' and then
+# 'Reward payout reconciler is active'. Disable by recreating without this file.
+# (An operator can instead set REWARD_PAYOUT_RECONCILE_ENABLED=true in .env; the
+# overlay is preferred because it shows in the container's
+# com.docker.compose.project.config_files label.)
+# =============================================================================
+
+services:
+  wrfcoin-backend:
+    environment:
+      REWARD_PAYOUT_RECONCILE_ENABLED: "true"

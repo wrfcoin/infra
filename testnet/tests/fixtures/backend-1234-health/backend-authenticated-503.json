@@ -1,0 +1,70 @@
+{
+  "success": false,
+  "data": {
+    "status": "unhealthy",
+    "dependencies": {
+      "cache": {
+        "status": "degraded",
+        "details": {
+          "status": "degraded",
+          "cache": {
+            "redis": false,
+            "memory": true
+          },
+          "performance": {
+            "avgResponseTime": 0,
+            "totalRequests": 0,
+            "errorRate": 0
+          },
+          "uptime": 6691
+        }
+      },
+      "core4": {
+        "status": "down",
+        "expected": true,
+        "reachable": false,
+        "url": "http://127.0.0.1:59998/health",
+        "httpStatus": null,
+        "lastCheckedAt": "2026-09-26T17:44:10.969Z",
+        "lastError": "connect ECONNREFUSED 127.0.0.1:59998"
+      },
+      "database": {
+        "status": "down",
+        "latency_ms": 2,
+        "error": "connect ECONNREFUSED 127.0.0.1:59999"
+      }
+    },
+    "services": {
+      "cache": {
+        "status": "degraded",
+        "cache": {
+          "redis": false,
+          "memory": true
+        },
+        "performance": {
+          "avgResponseTime": 0,
+          "totalRequests": 0,
+          "errorRate": 0
+        },
+        "uptime": 6691
+      },
+      "core4": {
+        "status": "down",
+        "expected": true,
+        "reachable": false,
+        "url": "http://127.0.0.1:59998/health",
+        "httpStatus": null,
+        "lastCheckedAt": "2026-09-26T17:44:10.969Z",
+        "lastError": "connect ECONNREFUSED 127.0.0.1:59998"
+      },
+      "database": {
+        "status": "down",
+        "latency_ms": 2,
+        "error": "connect ECONNREFUSED 127.0.0.1:59999"
+      }
+    },
+    "timestamp": "2026-09-26T17:44:10.970Z"
+  },
+  "message": "Service degraded or unhealthy",
+  "timestamp": "2026-09-26T17:44:10.970Z"
+}

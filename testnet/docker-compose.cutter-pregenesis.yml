@@ -1,0 +1,14 @@
+# OWNER CUT WINDOW ONLY. Append last, after docker-compose.genesis.yml.
+# Start only wrfcoin-node; remove this overlay and pin the real hash after block 1.
+services:
+  wrfcoin-node:
+    env_file: !override [bootstrap.cutter.env]
+    environment:
+      WRFCOIN_CUTTER_PREGENESIS: "1"
+      WRFCOIN_GENESIS_HASH: "0000000000000000000000000000000000000000000000000000000000000000"
+  wrfcoin-seed:
+    env_file: !reset []
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - 'echo "FATAL: seed startup is disabled in the pre-genesis cutter overlay." >&2; exit 1'

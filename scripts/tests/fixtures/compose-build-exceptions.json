@@ -1,0 +1,85 @@
+{
+  "_comment": "Declared exceptions for scripts/check-compose-build-inputs.py. Every entry needs a reason. Fix or retire the file, then delete the entry.",
+  "exceptions": [
+    {
+      "file": "infra/monitoring/docker-compose.comprehensive-monitoring.yml",
+      "service": "wrfcoin-metrics-collector",
+      "reason": "KNOWN OFFENDER (infra#982), not yet fixed or retired; file is referenced by deploy/test scripts so not moved to attic. build.dockerfile missing: Dockerfile.metrics-collector -> infra/monitoring/Dockerfile.metrics-collector"
+    },
+    {
+      "file": "infra/monitoring/docker-compose.comprehensive-monitoring.yml",
+      "service": "pipeline-monitor",
+      "reason": "KNOWN OFFENDER (infra#982), not yet fixed or retired; file is referenced by deploy/test scripts so not moved to attic. build.dockerfile missing: Dockerfile.pipeline-monitor -> infra/monitoring/Dockerfile.pipeline-monitor"
+    },
+    {
+      "file": "infra/monitoring/docker-compose.comprehensive-monitoring.yml",
+      "service": "contract-monitor",
+      "reason": "KNOWN OFFENDER (infra#982), not yet fixed or retired; file is referenced by deploy/test scripts so not moved to attic. build.dockerfile missing: Dockerfile.contract-monitor -> infra/monitoring/Dockerfile.contract-monitor"
+    },
+    {
+      "file": "infra/monitoring/docker-compose.contract-testing.yml",
+      "service": "contract-test-dashboard",
+      "reason": "KNOWN OFFENDER (infra#982), not yet fixed or retired; file is referenced by deploy/test scripts so not moved to attic. build.dockerfile missing: Dockerfile.contract-dashboard -> infra/monitoring/Dockerfile.contract-dashboard"
+    },
+    {
+      "file": "infra/monitoring/docker-compose.contract-testing.yml",
+      "service": "contract-webhook-handler",
+      "reason": "KNOWN OFFENDER (infra#982), not yet fixed or retired; file is referenced by deploy/test scripts so not moved to attic. build.dockerfile missing: Dockerfile.contract-webhook -> infra/monitoring/Dockerfile.contract-webhook"
+    },
+    {
+      "file": "infra/monitoring/docker-compose.monitoring-complete.yml",
+      "service": "webhook-receiver",
+      "reason": "KNOWN OFFENDER (infra#982), not yet fixed or retired; file is referenced by deploy/test scripts so not moved to attic. build.context missing: ./webhook-receiver/ -> infra/monitoring/webhook-receiver"
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-node",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-seed",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-backend",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-frontend",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-faucet",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-cross-chain",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-compute",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-ml",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-node-discovery",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    },
+    {
+      "file": "testnet/docker-compose.local-paths.example.yml",
+      "service": "wrfcoin-explorer",
+      "reason": "Public launch example (infra#1332, owner option A): build context requires operator-supplied WRFCOIN_ROOT, the absolute parent of sibling source checkouts outside this repository. No private installation default is permitted. PUBLIC_DEPLOYMENT_EXAMPLES.md documents prerequisites; isolated Compose config verified missing-variable refusal and explicit-root rendering. This exception covers only the example context, not a claim that source checkouts exist or build successfully."
+    }
+  ]
+}

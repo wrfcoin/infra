@@ -1,0 +1,271 @@
+name: Node Image Ship-Feature Guard
+
+# infra#1034 (refs wrfcoin/core4#3229, core4#3224). Proves the node image infra ships
+# carries no test-only core4 feature -- today `panic-drill` (a release launch_api that
+# panics its inbound P2P consumer on demand) and `dev-endpoints`.
+#
+# WHY A BUILT BINARY, NOT JUST THE DOCKERFILE
+# -------------------------------------------
+# core4's scripts/check_release_endpoints.py has two modes:
+#   --profile-file FILE  reads `--features` lists in a build file. It is blind to
+#                        indirection: `ARG FEATURES="...,panic-drill"` plus
+#                        `--features "${FEATURES}"` exits 0 (reproduced for #1034).
+#   --binary FILE        scans the built launch_api for the drill's trigger literal,
+#                        which exists only when the feature was compiled in
+#                        (`#[cfg(all(feature = "p2p", feature = "panic-drill"))]`).
+#                        This is the proof; nothing upstream of the compiler can hide
+#                        from it.
+# So this job runs both: two cheap pre-build file checks, then the real build and a
+# binary scan.
+#
+# WHICH core4 SOURCES, AND WHY TWO
+# --------------------------------
+# * BUILD SOURCE = testnet/cut-pins.env WRFCOIN_CUT_CORE4_COMMIT, read at run time.
+#   That is the core4 revision the shipped node image is built from (infra#764), so
+#   the binary scanned here is the one that ships, and a PR that moves the cut pin
+#   re-runs this job (cut-pins.env is in `paths:`).
+# * CHECKER = core4 at CHECKER_SHA below, the #3229 merge that taught the checker
+#   about panic-drill and --profile-file. The cut pin predates #3229, so the cut's own
+#   copy of the checker knows neither. The checker's `--root` for the binary scan is
+#   the BUILD checkout, because the scan masks the RPC_SURFACE.md bytes the binary
+#   embeds, and those must be the build revision's bytes. Bump CHECKER_SHA
+#   deliberately when core4 changes the checker; never point it at a branch.
+# Neither checkout is a network fetch from anywhere but wrfcoin/core4 at a full SHA.
+#
+# RUNNER AND COST
+# ---------------
+# build runner self-hosted only: hosted runners are billing-VOID on this account, so a hosted
+# job here would be a green tick with zero executed steps. No other build runner job builds
+# the node image (Oracle Attester Image Gate is hosted and builds the attester target),
+# so there is no image to reuse: this job does the one node build. BuildKit builds only
+# the `runtime` target's stages (not attester-builder), and build runner's daemon keeps the
+# layer cache, so a rerun at the same cut pin reuses the cargo layer. The job is
+# path-filtered to the files that can change what it proves; the file-level guard also
+# runs unfiltered on every PR inside Scripts Tests (scripts/tests/test_node_image_ship_features.py).
+# The image is tagged locally, never pushed, and its tag is removed at the end.
+#
+# BUILD CONTEXT (infra#1034 N3): the build installs testnet/workspace.dockerignore as
+# wrfcoin/.dockerignore first, exactly as testnet/bootstrap.sh does before a shipping
+# build, so the context sent to the daemon is the shipped one (no core4/.git etc.).
+#
+# CLEANUP (N2): the extraction container's id goes to $GITHUB_ENV the moment it exists,
+# and an always() step removes the container, then the image tag. Anything it cannot
+# remove is logged as a ::warning:: naming the object; it never disappears into `|| true`.
+#
+# BUILDER CACHE (N4): nothing on build runner prunes the Docker builder cache (checked
+# 2026-09-25: no crontab, no cron.d entry, no systemd timer; wrfcoin-tmp-reaper only
+# reaps /tmp). The data-root is /mnt/wrfcoin-build-docker (94G). The same always() step
+# runs `docker builder prune --all --keep-storage` so the cache is bounded at
+# BUILDER_CACHE_KEEP. `--all` is what makes it a bound: without it Docker only considers
+# dangling cache records, and in-use records could keep the total above the limit. It
+# evicts least-recently-used build cache down to the limit; it removes no image, no
+# container and no volume, and it keeps enough for several cut-pin builds.
+# The step runs with `set +e` and checks each command itself, so one failing docker
+# command never skips the prune or the summary line.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/docker/Dockerfile.core'
+      - 'infra/docker/docker-compose.yml'
+      - 'testnet/cut-pins.env'
+      - 'testnet/docker-compose.override.yml'
+      - 'testnet/docker-compose.oracle-attester.yml'
+      - 'scripts/check_node_image_ship_features.py'
+      - 'scripts/check_panic_drill_marker_pin.py'
+      - 'testnet/workspace.dockerignore'
+      - '.github/workflows/node-image-ship-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Refs infra#1113: abandon superseded PR builds, preserve every other run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # core4 #3229 merge: check_release_endpoints.py with panic-drill, --binary marker, --profile-file.
+  CHECKER_SHA: 24237c2d606c1c1e6c6a601cb3ed70cbddfc3b65
+  # N4: upper bound on build runner's shared BuildKit cache after this job (most-recently-used kept).
+  BUILDER_CACHE_KEEP: 20GB
+
+jobs:
+  guard:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: Node image ship-feature guard (self-hosted)
+    runs-on: [self-hosted, n5pro]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v7
+        with:
+          path: wrfcoin/infra
+          persist-credentials: false
+
+      - name: Read the shipped core4 revision from cut-pins.env
+        id: pin
+        run: |
+          set -euo pipefail
+          sha=$(sed -n 's/^WRFCOIN_CUT_CORE4_COMMIT=\([0-9a-f]\{40\}\)$/\1/p' wrfcoin/infra/testnet/cut-pins.env)
+          if [ "$(printf '%s\n' "$sha" | grep -c .)" -ne 1 ]; then
+            echo "::error::testnet/cut-pins.env must carry exactly one 40-hex WRFCOIN_CUT_CORE4_COMMIT; got: '${sha}'"
+            exit 1
+          fi
+          echo "core4=${sha}" >> "$GITHUB_OUTPUT"
+          echo "build source: wrfcoin/core4@${sha} (cut pin); checker: wrfcoin/core4@${CHECKER_SHA}"
+
+      # Outside the build context (wrfcoin/), so it is never sent to the daemon.
+      - name: Checkout core4 checker (pinned)
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+          ref: ${{ env.CHECKER_SHA }}
+          token: ${{ secrets.WRFCOIN_CORE4_READ_TOKEN || github.token }}
+          path: core4-checker
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/check_release_endpoints.py
+            docs/security/RPC_SURFACE.md
+            native-chain/Cargo.toml
+            native-chain/Dockerfile
+            native-chain/Dockerfile.producer-key-pop
+            .github/workflows/release-signing.yml
+            scripts/build-release.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Pre-build guard — build files (infra guard + core4 --profile-file)
+        run: |
+          set -euo pipefail
+          CK=core4-checker/scripts/check_release_endpoints.py
+          D=wrfcoin/infra/infra/docker/Dockerfile.core
+          test "$(git -C core4-checker rev-parse HEAD)" = "$CHECKER_SHA"
+          python3 "$CK" --self-test
+          # Infra's guard: any non-comment token, so ARG/ENV/compose-arg indirection fails too.
+          python3 wrfcoin/infra/scripts/check_node_image_ship_features.py --checker "$CK" \
+            "$D" \
+            wrfcoin/infra/testnet/docker-compose.override.yml \
+            wrfcoin/infra/testnet/docker-compose.oracle-attester.yml \
+            wrfcoin/infra/infra/docker/docker-compose.yml
+          # core4's own rule on infra's build file.
+          python3 "$CK" --root core4-checker --profile-file "$D"
+
+      - name: Pre-build guard — RED controls
+        # Both guards must refuse a Dockerfile.core that enables panic-drill literally;
+        # only the infra guard sees the ARG form. If core4's --profile-file starts
+        # catching the ARG form too, that is announced, not failed.
+        run: |
+          set -euo pipefail
+          CK=core4-checker/scripts/check_release_endpoints.py
+          G=wrfcoin/infra/scripts/check_node_image_ship_features.py
+          D=wrfcoin/infra/infra/docker/Dockerfile.core
+          ctl="$RUNNER_TEMP/ship-guard-controls"; mkdir -p "$ctl"
+          old='--features "full-mining,p2p,hsm,upgrade-notice-fetch"'
+          test "$(grep -cF -- "$old" "$D")" -eq 1 || { echo "::error::control anchor drifted in Dockerfile.core"; exit 1; }
+          sed 's/--features "full-mining,p2p,hsm,upgrade-notice-fetch"/--features "full-mining,p2p,hsm,upgrade-notice-fetch,panic-drill"/' "$D" > "$ctl/lit.Dockerfile"
+          sed -e 's/^FROM builder-base AS node-builder$/&\nARG FEATURES="full-mining,p2p,hsm,upgrade-notice-fetch,panic-drill"/' \
+              -e 's/--features "full-mining,p2p,hsm,upgrade-notice-fetch"/--features "${FEATURES}"/' "$D" > "$ctl/arg.Dockerfile"
+          grep -q '^ARG FEATURES="full-mining,p2p,hsm,upgrade-notice-fetch,panic-drill"$' "$ctl/arg.Dockerfile"
+
+          expect() {  # expect <rc> <label> <cmd...>
+            local want=$1 label=$2; shift 2
+            set +e; "$@" >"$ctl/out" 2>&1; local rc=$?; set -e
+            cat "$ctl/out"
+            if [ "$rc" -ne "$want" ]; then echo "::error::${label}: exit ${rc}, expected ${want}"; exit 1; fi
+            echo "  ok  ${label}: exit ${rc}"
+          }
+          expect 1 "infra guard / literal"  python3 "$G" --checker "$CK" "$ctl/lit.Dockerfile"
+          expect 1 "infra guard / ARG"      python3 "$G" --checker "$CK" "$ctl/arg.Dockerfile"
+          expect 1 "core4 --profile-file / literal" python3 "$CK" --root core4-checker --profile-file "$ctl/lit.Dockerfile"
+          set +e; python3 "$CK" --root core4-checker --profile-file "$ctl/arg.Dockerfile" >/dev/null 2>&1; rc=$?; set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "  known gap  core4 --profile-file / ARG: exit 0 (blind to ARG indirection; infra guard and binary scan cover it)"
+          else
+            echo "::notice::core4 --profile-file now refuses the ARG form (exit ${rc}); the infra#1034 gap note can be retired"
+          fi
+
+      - name: Checkout core4 build source (cut pin)
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+          ref: ${{ steps.pin.outputs.core4 }}
+          token: ${{ secrets.WRFCOIN_CORE4_READ_TOKEN || github.token }}
+          path: wrfcoin/core4
+          persist-credentials: false
+
+      - name: Pin check — the pinned drill marker matches the build source (N1)
+        # A core4 that renamed the drill trigger (or the feature) without a CHECKER_SHA
+        # bump would make the binary scan look for a string no build can contain.
+        run: |
+          set -euo pipefail
+          python3 wrfcoin/infra/scripts/check_panic_drill_marker_pin.py \
+            --core4 wrfcoin/core4 \
+            --checker core4-checker/scripts/check_release_endpoints.py
+
+      - name: Build the node runtime image (local, never pushed)
+        run: |
+          set -euo pipefail
+          test "$(git -C wrfcoin/core4 rev-parse HEAD)" = "${{ steps.pin.outputs.core4 }}"
+          # N3: the shipped build context, not the raw checkout tree.
+          install -m 0644 wrfcoin/infra/testnet/workspace.dockerignore wrfcoin/.dockerignore
+          cmp wrfcoin/infra/testnet/workspace.dockerignore wrfcoin/.dockerignore
+          tag="wrfcoin/node-ship-guard:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "TAG=${tag}" >> "$GITHUB_ENV"
+          DOCKER_BUILDKIT=1 docker build \
+            --file wrfcoin/infra/infra/docker/Dockerfile.core \
+            --target runtime \
+            --tag "$tag" \
+            wrfcoin
+
+      - name: Scan the shipped launch_api (check_release_endpoints --binary)
+        run: |
+          set -euo pipefail
+          CK=core4-checker/scripts/check_release_endpoints.py
+          out="$RUNNER_TEMP/ship-guard-bin"; mkdir -p "$out"
+          cid=$(docker create "$TAG")
+          echo "CID=${cid}" >> "$GITHUB_ENV"   # N2: the always() cleanup removes it even if cp fails
+          docker cp "$cid:/usr/local/bin/wrfcoin-node" "$out/launch_api"
+          ls -l "$out/launch_api"
+          # --root is the BUILD checkout: its RPC_SURFACE.md is what the binary embeds.
+          python3 "$CK" --root wrfcoin/core4 --binary "$out/launch_api"
+
+          # RED control on the same real binary: add the drill trigger literal and the
+          # scan must refuse it. Proves the scan is reading this binary, not passing blind.
+          marker=$(python3 -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("c",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.PANIC_DRILL_MARKER)' "$CK")
+          test -n "$marker"
+          cp "$out/launch_api" "$out/drill.bin"
+          printf '\0%s\0' "$marker" >> "$out/drill.bin"
+          set +e; python3 "$CK" --root wrfcoin/core4 --binary "$out/drill.bin"; rc=$?; set -e
+          if [ "$rc" -ne 1 ]; then echo "::error::binary RED control: exit ${rc}, expected 1"; exit 1; fi
+          echo "  ok  binary RED control: drill marker refused (exit ${rc})"
+
+      - name: Clean up container, image tag and builder cache
+        if: always()
+        run: |
+          # The runner invokes `bash -e`; turn errexit OFF so every command below runs and
+          # reports its own status (review N-a of #1037).
+          set +e
+          set -uo pipefail
+          : "${GITHUB_STEP_SUMMARY:=/dev/null}"
+          leaks=0
+          if [ -n "${CID:-}" ]; then
+            if docker rm -f "$CID" >/dev/null; then echo "removed container ${CID}"
+            else echo "::warning::could not remove extraction container ${CID} (leaked on CT102)"; leaks=$((leaks+1)); fi
+          fi
+          if [ -n "${TAG:-}" ] && docker image inspect "$TAG" >/dev/null 2>&1; then
+            if docker image rm "$TAG"; then echo "removed image ${TAG}"
+            else echo "::warning::could not remove image ${TAG} (leaked on CT102)"; leaks=$((leaks+1)); fi
+          fi
+          cache_report() {
+            local df
+            if df=$(docker system df 2>&1); then printf '%s\n' "$df" | grep -E '^(TYPE|Build Cache)'
+            else echo "::warning::docker system df failed: ${df}"; fi
+          }
+          echo "builder cache before prune:"; cache_report
+          if docker builder prune --force --all --keep-storage "$BUILDER_CACHE_KEEP"; then :
+          else echo "::warning::docker builder prune --all --keep-storage ${BUILDER_CACHE_KEEP} failed; CT102 builder cache is unbounded this run"; leaks=$((leaks+1)); fi
+          echo "builder cache after prune:";  cache_report
+          echo "- cleanup: ${leaks} object(s) not removed" >> "$GITHUB_STEP_SUMMARY"
+          exit 0

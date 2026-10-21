@@ -1,0 +1,11 @@
+{
+  "compose_files": [
+    "/REPLACE/infra/testnet/docker-compose.testnet.yml",
+    "/REPLACE/owner-host-overrides.yml",
+    "/REPLACE/infra/testnet/docker-compose.reference-shadow.yml"
+  ],
+  "image_ids": {
+    "oracle-reference": "REPLACE_WITH_OWNER_REVIEWED_CACHED_IMAGE_ID",
+    "wrfcoin-backend": "REPLACE_WITH_OWNER_REVIEWED_CACHED_IMAGE_ID"
+  }
+}

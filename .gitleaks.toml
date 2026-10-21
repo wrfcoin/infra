@@ -1,0 +1,14 @@
+title = "WRFCoin infra gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentional placeholders and local test constants"
+regexes = [
+  '''REPLACE_with_[A-Za-z0-9_]+''',
+  '''ci-test-secret''',
+  '''ci-jwt-secret-32chars-padded-ok''',
+  '''dGhlIHNhbXBsZSBub25jZQ==''',
+  '''0x5FbDB2315678afecb367f032d93F642f64180aa3''',
+]

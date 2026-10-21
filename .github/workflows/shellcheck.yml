@@ -1,0 +1,72 @@
+permissions:
+  contents: read
+
+name: Shellcheck
+
+on:
+  push:
+    branches: [main]
+    paths: ['**/*.sh']
+  pull_request:
+    paths: ['**/*.sh']
+
+jobs:
+  shellcheck:
+    name: Lint Shell Scripts
+    # build runner self-hosted (2026-08-30): PR-blocking guards must stay REAL when
+    # hosted minutes are exhausted (zero-step billing failures otherwise).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install shellcheck
+        # Preinstalled on build runner (the runner user has no sudo); the install
+        # branch keeps the hosted-runner path working unchanged.
+        run: command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+
+      - name: Shellcheck testnet scripts (blocking)
+        run: |
+          shellcheck --severity=warning --shell=bash \
+            testnet/setup-env.sh \
+            testnet/expose-lan.sh \
+            testnet/scripts/reset-node-from-genesis.sh \
+            testnet/tests/test_reset_node_from_genesis.sh \
+            testnet/tests/test_reset_node_from_genesis_archives.sh \
+            testnet/scripts/preflight-infra-snapshot-move.sh
+
+      - name: Shellcheck oracle attester entrypoint (blocking)
+        run: shellcheck --severity=warning --shell=sh infra/docker/hsm-service-entrypoint.sh
+
+      - name: Test canonical-genesis reset orchestration
+        run: bash testnet/tests/test_reset_node_from_genesis.sh
+
+      - name: Test canonical-genesis reset archive semantics
+        run: bash testnet/tests/test_reset_node_from_genesis_archives.sh
+
+      - name: Verify self-hosted runner script review fixes
+        run: |
+          shellcheck --severity=warning --shell=bash \
+            scripts/setup-self-hosted-runner.sh \
+            scripts/test-self-hosted-runner-review-fixes.sh
+          bash scripts/test-self-hosted-runner-review-fixes.sh
+
+      - name: Shellcheck utility scripts (non-blocking)
+        run: |
+          find scripts/ -name '*.sh' -print0 | \
+            xargs -0 shellcheck --severity=warning --shell=bash || true
+          echo "Utility scripts checked (non-blocking)"
+
+  test-setup-env:
+    name: Validate setup-env.sh Output
+    # build runner self-hosted (2026-08-30): see the shellcheck job above.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install setup-env validation dependencies
+        # apache2-utils (htpasswd) is preinstalled on build runner (no sudo for the
+        # runner user); the install branch keeps the hosted path unchanged.
+        run: command -v htpasswd >/dev/null || { sudo apt-get update && sudo apt-get install -y apache2-utils; }
+
+      - name: Run setup-env validation
+        run: bash scripts/test-setup-env.sh

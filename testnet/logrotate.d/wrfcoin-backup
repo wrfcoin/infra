@@ -1,0 +1,17 @@
+# WRFCoin Testnet — logrotate config for the nightly backup cron log.
+#
+# Install: sudo cp testnet/logrotate.d/wrfcoin-backup /etc/logrotate.d/
+# Or reference directly: logrotate /root/wrfcoin/infra/testnet/logrotate.d/wrfcoin-backup
+#
+# The backup cron writes here:
+#   0 3 * * * cd /root/wrfcoin/infra/testnet && bash backup.sh >> /var/log/wrfcoin-backup.log 2>&1
+
+/var/log/wrfcoin-backup.log {
+    size 50M
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

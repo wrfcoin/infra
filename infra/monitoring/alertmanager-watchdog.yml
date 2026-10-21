@@ -1,0 +1,27 @@
+# AlertManager configuration snippet for WRFCoin Watchdog integration
+# Add this receiver to your AlertManager config to route alerts to the
+# watchdog's LLM-powered correlation engine.
+#
+# The watchdog receives alerts on port 8090, batches them over a 60-second
+# window, then sends the batch to an LLM for root cause analysis and
+# cascade detection.
+#
+# Usage: Include this in your alertmanager.yml receivers section, then
+# add a route that sends to 'watchdog-llm'.
+
+receivers:
+  - name: watchdog-llm
+    webhook_configs:
+      - url: http://watchdog:8090/alerts
+        send_resolved: true
+        http_config:
+          follow_redirects: false
+
+# Example route (add to your routes section):
+# route:
+#   receiver: default
+#   routes:
+#     - match_re:
+#         severity: warning|critical
+#       receiver: watchdog-llm
+#       continue: true  # Also send to default receiver

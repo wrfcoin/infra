@@ -1,0 +1,439 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Consensus Monitoring",
+    "tags": ["wrfcoin", "consensus", "validators"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "15s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "name": "validator",
+          "type": "query",
+          "query": "label_values(wrfcoin_consensus_validator_participation_rate, validator_id)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "consensus_type",
+          "type": "query",
+          "query": "label_values(wrfcoin_consensus_active_consensus_type, consensus_type)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Validator Events",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_consensus_validator_slashed_total[5m]) > 0"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Consensus Type",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_consensus_active_consensus_type",
+            "legendFormat": "{{consensus_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [{ "color": "green", "value": 0 }]
+            },
+            "unit": "short",
+            "mappings": [
+              { "type": "value", "value": "0", "text": "PoW" },
+              { "type": "value", "value": "1", "text": "PoS" },
+              { "type": "value", "value": "2", "text": "PoI" },
+              { "type": "value", "value": "3", "text": "PoP" },
+              { "type": "value", "value": "4", "text": "PoU" },
+              { "type": "value", "value": "5", "text": "DPoS" }
+            ]
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Active Validators",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_consensus_active_validators_count",
+            "legendFormat": "Active Validators"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 10 },
+                { "color": "green", "value": 21 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Validator Participation Rate",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_consensus_validator_participation_rate)",
+            "legendFormat": "Participation Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.8 },
+                { "color": "green", "value": 0.95 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "Total Stake",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(wrfcoin_consensus_stake_amount)",
+            "legendFormat": "Total Stake"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [{ "color": "green", "value": 0 }]
+            },
+            "unit": "short",
+            "decimals": 2
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "Consensus Round Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_consensus_rounds_completed_total[$__rate_interval])",
+            "legendFormat": "Completed Rounds/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_consensus_rounds_failed_total[$__rate_interval])",
+            "legendFormat": "Failed Rounds/sec"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_consensus_round_duration_seconds_bucket[$__rate_interval])) by (le))",
+            "legendFormat": "95th Percentile Duration"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Rate/Duration",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 6,
+        "title": "BFT Algorithm Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_consensus_bft_algorithm_latency_seconds",
+            "legendFormat": "BFT Latency - {{algorithm}}"
+          },
+          {
+            "expr": "rate(wrfcoin_consensus_bft_messages_total[$__rate_interval])",
+            "legendFormat": "BFT Messages/sec - {{message_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Latency (s) / Messages/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 7,
+        "title": "Validator Individual Performance",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "wrfcoin_consensus_validator_participation_rate",
+            "legendFormat": "{{validator_id}}",
+            "format": "table",
+            "instant": true
+          },
+          {
+            "expr": "wrfcoin_consensus_stake_amount",
+            "legendFormat": "{{validator_id}}",
+            "format": "table",
+            "instant": true
+          },
+          {
+            "expr": "wrfcoin_consensus_validator_uptime_seconds",
+            "legendFormat": "{{validator_id}}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 80 }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Participation Rate"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percentunit"
+                },
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "red", "value": null },
+                      { "color": "yellow", "value": 0.8 },
+                      { "color": "green", "value": 0.95 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 }
+      },
+      {
+        "id": 8,
+        "title": "Stake Distribution",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "wrfcoin_consensus_stake_amount",
+            "legendFormat": "{{validator_id}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 }
+      },
+      {
+        "id": 9,
+        "title": "Slashing Events",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "increase(wrfcoin_consensus_validator_slashed_total[1h])",
+            "legendFormat": "Slashed Validators/hour"
+          },
+          {
+            "expr": "wrfcoin_consensus_slashing_penalty_amount",
+            "legendFormat": "Penalty Amount - {{validator_id}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Count/Amount",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 }
+      },
+      {
+        "id": 10,
+        "title": "Consensus Algorithm Efficiency",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_consensus_finality_time_seconds",
+            "legendFormat": "Finality Time"
+          },
+          {
+            "expr": "wrfcoin_consensus_energy_consumption_watts",
+            "legendFormat": "Energy Consumption"
+          },
+          {
+            "expr": "wrfcoin_consensus_security_level",
+            "legendFormat": "Security Level"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Various Units",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 }
+      },
+      {
+        "id": 11,
+        "title": "Validator Rewards",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_consensus_rewards_distributed_total[$__rate_interval])",
+            "legendFormat": "Rewards Distributed/sec"
+          },
+          {
+            "expr": "wrfcoin_consensus_validator_rewards_pending",
+            "legendFormat": "Pending Rewards - {{validator_id}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Rewards",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 }
+      }
+    ]
+  }
+}

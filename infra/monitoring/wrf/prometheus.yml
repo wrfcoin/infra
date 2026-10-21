@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    suite: wrf-useful-work
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: wrf-compute-agent
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3333']
+        labels:
+          component: compute-agent
+          role: useful-work
+
+  - job_name: wrf-execution-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:9100']
+        labels:
+          component: execution-engine
+          role: useful-work

@@ -1,0 +1,7 @@
+# Pin the node image to the locally-built tag actually present on this host.
+# The base compose references wrfcoin/native-chain:testnet, but the desktop
+# peer runs the local build wrfcoin/native-chain:testnet-local (no registry
+# pushes per deploy policy). Used only to recreate the desktop node in place.
+services:
+  wrfcoin-node:
+    image: wrfcoin/native-chain:testnet-local

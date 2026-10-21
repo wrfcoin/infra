@@ -1,0 +1,143 @@
+# WRFCoin Frontend Dashboard
+# Multi-stage build for the testnet frontend service.
+#
+# Build context: workspace root (/root/wrfcoin) so that
+# COPY frontend/ captures the full frontend directory.
+
+# =============================================================================
+# Stage 1: Build
+# =============================================================================
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS build
+
+WORKDIR /app
+
+# Copy frontend package files for dependency install
+COPY frontend/package*.json ./
+
+RUN npm ci
+
+# Copy frontend source code
+COPY frontend/ .
+
+# Empty default — frontend uses relative URLs (/api/...) so nginx proxies
+# requests to the backend. Only override for direct-to-backend development.
+ARG VITE_API_URL=
+ENV VITE_API_URL=$VITE_API_URL
+
+# First-party ed25519 wallet login + transfer signing identity (frontend#346,
+# backend#1205). The web wallet refuses to sign a login challenge unless its
+# Chain ID / Network lines match these, and fails closed if they are unset,
+# so they must equal what the backend's wallet auth resolves to on testnet:
+# chain 777 (WRFCOIN_WALLET_AUTH_CHAIN_ID -> WRFCOIN_CHAIN_ID ->
+# PAYMASTER_CHAIN_ID) and network "testnet" (WRFCOIN_WALLET_AUTH_NETWORK ->
+# WRFCOIN_NETWORK_ID -> NETWORK_ID).
+ARG VITE_WRFCOIN_CHAIN_ID=777
+ARG VITE_WRFCOIN_NETWORK_ID=testnet
+ENV VITE_WRFCOIN_CHAIN_ID=$VITE_WRFCOIN_CHAIN_ID
+ENV VITE_WRFCOIN_NETWORK_ID=$VITE_WRFCOIN_NETWORK_ID
+
+# Relying-party origin the wallet expects in the login challenge. Must equal
+# the backend's WRFCOIN_WALLET_AUTH_ORIGIN (compose passes the same
+# expression). The web wallet takes it ONLY from this build value (no
+# window.location fallback), so an empty value makes ed25519 login refuse:
+# deliberate fail-closed, never a silent guess.
+ARG VITE_WALLET_AUTH_ORIGIN=
+ENV VITE_WALLET_AUTH_ORIGIN=$VITE_WALLET_AUTH_ORIGIN
+
+# Internal-surface switches (infra#974, frontend#348/#381). Empty (the default)
+# is the public site. They may be exactly `true` ONLY in a staging build:
+# WRFCOIN_FRONTEND_BUILD_VARIANT=staging. For the default `public` variant the
+# guard below refuses the build if any VITE_ENABLE_* is non-empty, in the build
+# environment or in a .env file vite would load. The flags are build-stage only;
+# the serve stage records them as labels for render-release-manifest.sh.
+ARG WRFCOIN_FRONTEND_BUILD_VARIANT=public
+ARG VITE_ENABLE_FULL_STUDIO=
+ARG VITE_ENABLE_DEMO_SURFACES=
+ARG VITE_ENABLE_OPERATOR_PREVIEW=
+ARG VITE_ENABLE_CONTRACT_SURFACES=
+ENV VITE_ENABLE_FULL_STUDIO=$VITE_ENABLE_FULL_STUDIO
+ENV VITE_ENABLE_DEMO_SURFACES=$VITE_ENABLE_DEMO_SURFACES
+ENV VITE_ENABLE_OPERATOR_PREVIEW=$VITE_ENABLE_OPERATOR_PREVIEW
+ENV VITE_ENABLE_CONTRACT_SURFACES=$VITE_ENABLE_CONTRACT_SURFACES
+# Stage 1.5 public read-only stage (infra#983, frontend#349/#360): /explore,
+# /explorer, /map, /search and station detail. NOT a VITE_ENABLE_* surface, so
+# the public variant may set it, but the guard accepts only empty (off, the
+# default) or exactly `true`. Turning it on is the owner's call; the edge's
+# station reads are separately gated by PUBLIC_READONLY_API (default off).
+ARG VITE_PUBLIC_READONLY_PATHS=
+ENV VITE_PUBLIC_READONLY_PATHS=$VITE_PUBLIC_READONLY_PATHS
+# Onboarding faucet claim step (frontend#437 W28, owner ruling 2026-10-02 #14).
+# Same contract as VITE_PUBLIC_READONLY_PATHS: empty (off: the step says the
+# faucet is not funded yet, the default) or exactly `true`. Turning it on is
+# the owner's call once the faucet is funded.
+ARG VITE_FAUCET_OPEN=
+ENV VITE_FAUCET_OPEN=$VITE_FAUCET_OPEN
+COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
+RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
+    sh /usr/local/bin/frontend-build-flags-guard /app
+
+RUN npm run build
+
+# =============================================================================
+# Stage 2: Serve
+# =============================================================================
+# Pinned 2026-04-13. Next CVE review: 2026-05-13 (see infra#336 for cadence).
+FROM nginx:1.31-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+
+# Release provenance (infra#991): source testnet/scripts/export-build-provenance.sh
+# before a release build. Unset args leave empty labels, which
+# render-release-manifest.sh classifies UNAVAILABLE (never FRESH). No build-time
+# guard: joiner, attester and CI builds pass no args and must keep building.
+ARG WRFCOIN_BUILD_REVISION
+ARG WRFCOIN_BUILD_CREATED
+LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
+      org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
+
+# Build variant and internal-surface flags (infra#974). The release manifest
+# accepts a frontend image only with variant=public and every
+# org.wrfcoin.frontend.* flag label empty; an unlabelled image is UNAVAILABLE.
+ARG WRFCOIN_FRONTEND_BUILD_VARIANT=public
+ARG VITE_ENABLE_FULL_STUDIO=
+ARG VITE_ENABLE_DEMO_SURFACES=
+ARG VITE_ENABLE_OPERATOR_PREVIEW=
+ARG VITE_ENABLE_CONTRACT_SURFACES=
+LABEL org.wrfcoin.frontend.variant="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
+      org.wrfcoin.frontend.full-studio="$VITE_ENABLE_FULL_STUDIO" \
+      org.wrfcoin.frontend.demo-surfaces="$VITE_ENABLE_DEMO_SURFACES" \
+      org.wrfcoin.frontend.operator-preview="$VITE_ENABLE_OPERATOR_PREVIEW" \
+      org.wrfcoin.frontend.contract-surfaces="$VITE_ENABLE_CONTRACT_SURFACES"
+# Stage 1.5 provenance, deliberately OUTSIDE org.wrfcoin.frontend.*: every
+# non-empty label under that prefix makes the release manifest call the image
+# STALE, and the read-only stage is a releasable public build (infra#983).
+ARG VITE_PUBLIC_READONLY_PATHS=
+LABEL org.wrfcoin.stage.public-readonly="$VITE_PUBLIC_READONLY_PATHS"
+# Faucet claim provenance, outside org.wrfcoin.frontend.* for the same reason.
+ARG VITE_FAUCET_OPEN=
+LABEL org.wrfcoin.stage.faucet-open="$VITE_FAUCET_OPEN"
+
+# Install curl for healthcheck
+RUN apk add --no-cache curl
+
+# Create non-root user
+RUN addgroup -g 1001 -S wrfcoin && \
+    adduser -S -D -H -u 1001 -h /app -s /sbin/nologin -G wrfcoin wrfcoin
+
+# Configure nginx to run as non-root
+RUN touch /var/run/nginx.pid && \
+    chown -R wrfcoin:wrfcoin /var/cache/nginx /var/run/nginx.pid /var/log/nginx && \
+    chmod -R 755 /var/cache/nginx /var/log/nginx
+
+# Copy built files
+COPY --from=build --chown=wrfcoin:wrfcoin /app/dist /usr/share/nginx/html
+
+# Copy nginx config from the infra repo (build context is workspace root)
+COPY --chown=wrfcoin:wrfcoin infra/testnet/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+
+USER wrfcoin
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD curl -sf http://localhost:5000/health || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

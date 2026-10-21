@@ -1,0 +1,440 @@
+# WRFCoin Service Dependencies Prometheus Configuration
+# Generated automatically
+
+{
+  'scrape_configs':
+    [
+      {
+        'job_name': 'prometheus',
+        'static_configs': [{ 'targets': ['localhost:9090'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '15s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'monitoring',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '0',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'high',
+            },
+          ],
+      },
+      {
+        'job_name': 'wrfcoin-core',
+        'static_configs': [{ 'targets': ['localhost:5000'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '10s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'core',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '1',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'critical',
+            },
+          ],
+      },
+      {
+        'job_name': 'iot-sensor-networks',
+        'static_configs': [{ 'targets': ['localhost:3002'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'iot',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '1',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'node-discovery',
+        'static_configs': [{ 'targets': ['localhost:9001'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'discovery',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '1',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'wrfcoin-main-api',
+        'static_configs': [{ 'targets': ['localhost:4001'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '10s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'api',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '2',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'critical',
+            },
+          ],
+      },
+      {
+        'job_name': 'cross-chain-protocol',
+        'static_configs': [{ 'targets': ['localhost:3000'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '15s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'bridge',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '2',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'high',
+            },
+          ],
+      },
+      {
+        'job_name': 'weather-service',
+        'static_configs': [{ 'targets': ['localhost:3001'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'data',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '2',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'compute-networks',
+        'static_configs': [{ 'targets': ['localhost:6000'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'network',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '2',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'ai-ml-networks',
+        'static_configs': [{ 'targets': ['localhost:6001'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'network',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '2',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'storage-networks',
+        'static_configs': [{ 'targets': ['localhost:7000'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'storage',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '2',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'api-gateway',
+        'static_configs': [{ 'targets': ['localhost:4000'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '15s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'gateway',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '3',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'high',
+            },
+          ],
+      },
+      {
+        'job_name': 'ml-inference',
+        'static_configs': [{ 'targets': ['localhost:8080'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'compute',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '3',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'etl-pipeline',
+        'static_configs': [{ 'targets': ['localhost:5000'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'data',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '3',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'governance-server',
+        'static_configs': [{ 'targets': ['localhost:8000'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'governance',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '3',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'nas-storage',
+        'static_configs': [{ 'targets': ['localhost:7001'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '60s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'storage',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '3',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'low',
+            },
+          ],
+      },
+      {
+        'job_name': 'nft-service',
+        'static_configs': [{ 'targets': ['localhost:4002'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'microservice',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '4',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+      {
+        'job_name': 'user-service',
+        'static_configs': [{ 'targets': ['localhost:4003'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '15s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'microservice',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '4',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'high',
+            },
+          ],
+      },
+      {
+        'job_name': 'weather-earnings',
+        'static_configs': [{ 'targets': ['localhost:8080'] }],
+        'metrics_path': '/metrics',
+        'scrape_interval': '30s',
+        'relabel_configs':
+          [
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'service_tier',
+              'replacement': 'rewards',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'dependency_level',
+              'replacement': '4',
+            },
+            {
+              'source_labels': ['__address__'],
+              'target_label': 'criticality',
+              'replacement': 'medium',
+            },
+          ],
+      },
+    ],
+}

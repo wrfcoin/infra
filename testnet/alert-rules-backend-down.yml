@@ -1,0 +1,48 @@
+# WRFCoin Testnet — Backend Recovery Alerts
+#
+# These alerts cover the backend crash, DB, and blackbox health paths that
+# masked the R65 outage. Keep them on the testnet compose stack so the backend
+# failure mode becomes noisy within minutes instead of hours.
+
+groups:
+  - name: wrfcoin_backend_recovery
+    rules:
+      - alert: BackendDown
+        expr: up{job="wrfcoin-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "WRFCoin backend is down"
+          description: "Prometheus cannot scrape wrfcoin-backend for more than 2 minutes."
+
+      - alert: BackendCrashLoop
+        expr: rate(container_restart_count{name=~"wrfcoin-testnet-backend"}[10m]) > 0.1
+        for: 0m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "WRFCoin backend is crash-looping"
+          description: "Backend restart rate is above 0.1 restarts/sec over the last 10 minutes."
+
+      - alert: BackendDBUnreachable
+        expr: pg_up{instance="postgres-exporter:9187"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "WRFCoin backend database is unreachable"
+          description: "PostgreSQL has not been reachable from Prometheus for at least 1 minute."
+
+      - alert: BackendHealthBlackbox
+        expr: probe_success{instance="http://wrfcoin-backend:4001/health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "WRFCoin backend health probe is failing"
+          description: "Blackbox probing of http://wrfcoin-backend:4001/health has failed for more than 2 minutes."

@@ -1,0 +1,314 @@
+{
+  "dashboard": {
+    "title": "WRFCoin Quality Gates Dashboard",
+    "description": "Comprehensive code quality monitoring for WRFCoin blockchain platform",
+    "version": "1.0.0",
+    "refresh_interval": "5m"
+  },
+  "panels": [
+    {
+      "id": "overall-quality-score",
+      "title": "Overall Quality Score",
+      "type": "gauge",
+      "description": "Composite quality score based on coverage, linting, and complexity metrics",
+      "thresholds": {
+        "critical": 50,
+        "warning": 70,
+        "good": 85
+      },
+      "targets": [
+        {
+          "source": "github_actions",
+          "metric": "quality_score",
+          "aggregation": "latest"
+        }
+      ]
+    },
+    {
+      "id": "code-coverage",
+      "title": "Code Coverage",
+      "type": "multi-gauge",
+      "description": "Code coverage across different languages and test suites",
+      "thresholds": {
+        "critical": 60,
+        "warning": 80,
+        "good": 90
+      },
+      "targets": [
+        {
+          "name": "JavaScript/TypeScript",
+          "source": "jest",
+          "metric": "coverage.lines.pct"
+        },
+        {
+          "name": "Rust",
+          "source": "cargo_tarpaulin",
+          "metric": "coverage.percentage"
+        },
+        {
+          "name": "Smart Contracts",
+          "source": "hardhat",
+          "metric": "coverage.statements.pct"
+        }
+      ]
+    },
+    {
+      "id": "lint-issues-trend",
+      "title": "Lint Issues Trend",
+      "type": "time-series",
+      "description": "Tracking of linting issues over time",
+      "time_range": "7d",
+      "targets": [
+        {
+          "name": "ESLint Issues",
+          "source": "eslint",
+          "metric": "issues.count",
+          "color": "#ff6b6b"
+        },
+        {
+          "name": "Clippy Issues",
+          "source": "clippy",
+          "metric": "warnings.count",
+          "color": "#4ecdc4"
+        },
+        {
+          "name": "Solhint Issues",
+          "source": "solhint",
+          "metric": "issues.count",
+          "color": "#45b7d1"
+        }
+      ]
+    },
+    {
+      "id": "security-vulnerabilities",
+      "title": "Security Vulnerabilities",
+      "type": "stat",
+      "description": "Security issues detected by various scanners",
+      "color_mode": "value",
+      "thresholds": {
+        "steps": [
+          { "color": "green", "value": 0 },
+          { "color": "yellow", "value": 1 },
+          { "color": "red", "value": 5 }
+        ]
+      },
+      "targets": [
+        {
+          "name": "npm audit",
+          "source": "npm_audit",
+          "metric": "vulnerabilities.total"
+        },
+        {
+          "name": "SonarQube",
+          "source": "sonarqube",
+          "metric": "security_hotspots"
+        },
+        {
+          "name": "Slither",
+          "source": "slither",
+          "metric": "vulnerabilities.high"
+        }
+      ]
+    },
+    {
+      "id": "technical-debt",
+      "title": "Technical Debt",
+      "type": "bar-chart",
+      "description": "Technical debt metrics from SonarQube analysis",
+      "targets": [
+        {
+          "name": "Code Smells",
+          "source": "sonarqube",
+          "metric": "code_smells"
+        },
+        {
+          "name": "Duplicated Lines",
+          "source": "sonarqube",
+          "metric": "duplicated_lines_density"
+        },
+        {
+          "name": "Complexity",
+          "source": "sonarqube",
+          "metric": "complexity"
+        }
+      ]
+    },
+    {
+      "id": "test-execution-trend",
+      "title": "Test Execution Metrics",
+      "type": "time-series",
+      "description": "Test execution performance and success rates",
+      "time_range": "30d",
+      "targets": [
+        {
+          "name": "Jest Test Duration",
+          "source": "jest",
+          "metric": "execution_time",
+          "unit": "seconds"
+        },
+        {
+          "name": "Cargo Test Duration",
+          "source": "cargo",
+          "metric": "test_duration",
+          "unit": "seconds"
+        },
+        {
+          "name": "Hardhat Test Duration",
+          "source": "hardhat",
+          "metric": "test_duration",
+          "unit": "seconds"
+        }
+      ]
+    },
+    {
+      "id": "quality-gate-status",
+      "title": "Quality Gate Status",
+      "type": "status-grid",
+      "description": "Current status of all quality gates",
+      "targets": [
+        {
+          "name": "SonarQube Quality Gate",
+          "source": "sonarqube",
+          "metric": "quality_gate_status"
+        },
+        {
+          "name": "Coverage Threshold",
+          "source": "jest",
+          "metric": "coverage_threshold_met"
+        },
+        {
+          "name": "Lint Check",
+          "source": "eslint",
+          "metric": "lint_passed"
+        },
+        {
+          "name": "Rust Clippy",
+          "source": "clippy",
+          "metric": "clippy_passed"
+        },
+        {
+          "name": "Security Scan",
+          "source": "security",
+          "metric": "scan_passed"
+        }
+      ]
+    },
+    {
+      "id": "build-success-rate",
+      "title": "Build Success Rate",
+      "type": "stat",
+      "description": "CI/CD pipeline success rate over time",
+      "unit": "percent",
+      "color_mode": "value",
+      "thresholds": {
+        "steps": [
+          { "color": "red", "value": 80 },
+          { "color": "yellow", "value": 90 },
+          { "color": "green", "value": 95 }
+        ]
+      },
+      "targets": [
+        {
+          "source": "github_actions",
+          "metric": "workflow_success_rate",
+          "time_range": "7d"
+        }
+      ]
+    }
+  ],
+  "alerts": [
+    {
+      "name": "Quality Score Critical",
+      "condition": "overall_quality_score < 50",
+      "frequency": "5m",
+      "channels": ["slack", "email"],
+      "message": "Quality score has dropped below critical threshold (50)"
+    },
+    {
+      "name": "Coverage Below Threshold",
+      "condition": "code_coverage < 80",
+      "frequency": "10m",
+      "channels": ["slack"],
+      "message": "Code coverage has dropped below 80%"
+    },
+    {
+      "name": "High Lint Issues",
+      "condition": "lint_issues > 20",
+      "frequency": "15m",
+      "channels": ["slack"],
+      "message": "Lint issues have exceeded 20, code quality may be degrading"
+    },
+    {
+      "name": "Security Vulnerabilities",
+      "condition": "security_vulnerabilities > 0",
+      "frequency": "immediate",
+      "channels": ["slack", "email", "pagerduty"],
+      "message": "Security vulnerabilities detected in codebase"
+    },
+    {
+      "name": "Build Failure Rate High",
+      "condition": "build_success_rate < 90",
+      "frequency": "30m",
+      "channels": ["slack"],
+      "message": "Build success rate has dropped below 90%"
+    }
+  ],
+  "data_sources": [
+    {
+      "name": "github_actions",
+      "type": "github_api",
+      "config": {
+        "repository": "wrfcoin/wrfcoin",
+        "workflow_files": [
+          "sonarqube-analysis.yml",
+          "pr-checks.yml",
+          "quality-gate-monitoring.yml"
+        ]
+      }
+    },
+    {
+      "name": "sonarqube",
+      "type": "sonarqube_api",
+      "config": {
+        "base_url": "${SONAR_HOST_URL}",
+        "project_key": "wrfcoin-blockchain-platform"
+      }
+    },
+    {
+      "name": "jest",
+      "type": "file_watcher",
+      "config": {
+        "coverage_file": "coverage/coverage-summary.json",
+        "test_results": "coverage/test-results.json"
+      }
+    },
+    {
+      "name": "cargo",
+      "type": "file_watcher",
+      "config": {
+        "coverage_file": "coverage/tarpaulin-report.xml",
+        "test_results": "target/nextest/default/junit.xml"
+      }
+    },
+    {
+      "name": "hardhat",
+      "type": "file_watcher",
+      "config": {
+        "coverage_file": "coverage/contracts/coverage-summary.json"
+      }
+    }
+  ],
+  "export_config": {
+    "formats": ["prometheus", "json", "csv"],
+    "endpoints": [
+      {
+        "path": "/metrics",
+        "format": "prometheus"
+      },
+      {
+        "path": "/api/quality-metrics",
+        "format": "json"
+      }
+    ]
+  }
+}

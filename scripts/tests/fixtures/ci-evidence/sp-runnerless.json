@@ -1,0 +1,40 @@
+{
+  "provenance": {
+    "fetched_at": "2026-10-03T11:01:24.962033+00:00",
+    "repo": "wrfcoin/storage-providers",
+    "pr": 83,
+    "run": 37111653070,
+    "job": 111170572398,
+    "note": "SP was queued at LEAD snapshot, now cancelled; absence of runner/steps persisted. Repository run lost PR attachment after merge; #83 is independently bound by its exact head a82a663f."
+  },
+  "pr": {
+    "number": 83,
+    "head": {
+      "sha": "a82a663fdd8244516f99ddec1fa734431ffc6c60"
+    },
+    "base": {
+      "sha": "f72f724842e9edc403dccabab88f912bd3013ce4"
+    }
+  },
+  "check": {
+    "id": 111170572398,
+    "name": "build",
+    "head_sha": "a82a663fdd8244516f99ddec1fa734431ffc6c60",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "details_url": "https://github.com/wrfcoin/storage-providers/actions/runs/37111653070/job/111170572398"
+  },
+  "job": {
+    "id": 111170572398,
+    "run_id": 37111653070,
+    "check_run_url": "https://api.github.com/repos/wrfcoin/storage-providers/check-runs/111170572398",
+    "name": "build",
+    "head_sha": "a82a663fdd8244516f99ddec1fa734431ffc6c60",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "runner_name": "",
+    "steps": []
+  },
+  "checkout_sha": null,
+  "parents": []
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "Id": "sha256:ea07474820df05f71be93598cc2b42a4f6b21bb151f69532096dda4349a21ec7",
+    "RepoTags": ["__IMAGE__"],
+    "RepoDigests": [],
+    "Created": "2026-09-24T18:02:11.412Z",
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Config": {
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+      "Labels": {"org.opencontainers.image.created": "2026-09-24T18:02:11Z", "org.opencontainers.image.revision": "__REVISION__", "org.wrfcoin.frontend.variant": "public", "org.wrfcoin.frontend.full-studio": "", "org.wrfcoin.frontend.demo-surfaces": "", "org.wrfcoin.frontend.operator-preview": "", "org.wrfcoin.frontend.some-new-flag": "1"}
+    }
+  }
+]

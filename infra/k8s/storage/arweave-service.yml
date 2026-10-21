@@ -1,0 +1,19 @@
+---
+# Arweave Gateway Service (internal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: arweave-gateway
+  namespace: storage
+  labels:
+    app: arweave-gateway
+    component: storage
+spec:
+  type: ClusterIP
+  selector:
+    app: arweave-gateway
+  ports:
+    - name: http
+      port: 1984
+      targetPort: 1984
+      protocol: TCP

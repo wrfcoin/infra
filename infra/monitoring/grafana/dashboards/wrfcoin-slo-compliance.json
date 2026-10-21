@@ -1,0 +1,796 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "WRFCoin SLO Compliance Dashboard",
+    "description": "Comprehensive SLO monitoring and compliance tracking for the WRFCoin platform",
+    "tags": ["wrfcoin", "slo", "compliance", "performance", "sli"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m", "15m"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "7d", "30d"]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "SLO Breaches",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertstate='firing', slo_type=~'.+'}",
+          "tagKeys": "category,slo_type",
+          "titleFormat": "SLO Breach: {{slo_type}}",
+          "textFormat": "{{summary}}"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Overall SLO Compliance",
+        "type": "gauge",
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "avg(wrfcoin:slo:overall_compliance_rate) * 100",
+            "legendFormat": "Overall Compliance"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "orange", "value": 75 },
+                { "color": "yellow", "value": 90 },
+                { "color": "green", "value": 95 }
+              ]
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "decimals": 1
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "horizontal",
+          "showThresholdLabels": true,
+          "showThresholdMarkers": true
+        }
+      },
+      {
+        "id": 2,
+        "title": "Active SLO Breaches",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 3, "x": 6, "y": 0 },
+        "targets": [
+          {
+            "expr": "count(ALERTS{alertstate='firing', slo_type=~'.+'}) or vector(0)",
+            "legendFormat": "Active Breaches"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1 },
+                { "color": "orange", "value": 3 },
+                { "color": "red", "value": 5 }
+              ]
+            },
+            "unit": "short",
+            "displayName": "Active Breaches"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Error Budget Remaining",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 3, "x": 9, "y": 0 },
+        "targets": [
+          {
+            "expr": "(1 - (sum(rate(wrfcoin_blockchain_transactions_failed_total[24h])) / sum(rate(wrfcoin_blockchain_transactions_processed_total[24h])))) * 100",
+            "legendFormat": "Error Budget %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "orange", "value": 50 },
+                { "color": "yellow", "value": 75 },
+                { "color": "green", "value": 90 }
+              ]
+            },
+            "unit": "percent",
+            "decimals": 1,
+            "displayName": "Error Budget"
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "SLO Status Summary",
+        "type": "table",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "targets": [
+          {
+            "expr": "ALERTS{alertstate=~'firing|pending', slo_type=~'.+'}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "__name__": true,
+                "job": true,
+                "instance": true
+              },
+              "indexByName": {},
+              "renameByName": {
+                "alertname": "Alert",
+                "alertstate": "State",
+                "category": "Category",
+                "severity": "Severity",
+                "slo_target": "Target",
+                "slo_type": "SLO Type"
+              }
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "left"
+            }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "State" },
+              "properties": [
+                {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "color-text"
+                  }
+                },
+                {
+                  "id": "mappings",
+                  "value": [
+                    { "options": { "firing": { "color": "red", "index": 0, "text": "FIRING" } }, "type": "value" },
+                    { "options": { "pending": { "color": "yellow", "index": 1, "text": "PENDING" } }, "type": "value" }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 5,
+        "title": "Blockchain SLOs",
+        "type": "row",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 8 },
+        "collapsed": false
+      },
+      {
+        "id": 6,
+        "title": "Transaction Throughput (TPS)",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 8, "x": 0, "y": 9 },
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_transactions_processed_total[5m])",
+            "legendFormat": "Current TPS"
+          },
+          {
+            "expr": "500",
+            "legendFormat": "SLO Target (500 TPS)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "green", "value": 500 }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "SLO Target (500 TPS)" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } },
+                { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 7,
+        "title": "Transaction Success Rate",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 4, "x": 8, "y": 9 },
+        "targets": [
+          {
+            "expr": "(rate(wrfcoin_blockchain_transactions_processed_total[5m]) - rate(wrfcoin_blockchain_transactions_failed_total[5m])) / rate(wrfcoin_blockchain_transactions_processed_total[5m]) * 100",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "orange", "value": 95 },
+                { "color": "yellow", "value": 99 },
+                { "color": "green", "value": 99.5 }
+              ]
+            },
+            "unit": "percent",
+            "min": 90,
+            "max": 100,
+            "decimals": 2
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "showThresholdLabels": true,
+          "text": { "titleSize": 14 }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Block Production Rate",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 4, "x": 12, "y": 9 },
+        "targets": [
+          {
+            "expr": "wrfcoin:blockchain:block_production_rate_5m",
+            "legendFormat": "Blocks/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.25 },
+                { "color": "green", "value": 0.33 }
+              ]
+            },
+            "unit": "short",
+            "decimals": 3,
+            "displayName": "Blocks/sec (SLO: 0.33)"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "API Latency p95",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 9 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
+            "legendFormat": "p95 Latency"
+          },
+          {
+            "expr": "100",
+            "legendFormat": "SLO Target (100ms)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "ms",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "red", "value": 100 }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "SLO Target (100ms)" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } },
+                { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 10,
+        "title": "Cache SLOs",
+        "type": "row",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+        "collapsed": false
+      },
+      {
+        "id": 11,
+        "title": "Cache Hit Ratio",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+        "targets": [
+          {
+            "expr": "wrfcoin_cache_hit_rate",
+            "legendFormat": "{{cache_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "orange", "value": 70 },
+                { "color": "yellow", "value": 80 },
+                { "color": "green", "value": 85 }
+              ]
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "decimals": 1,
+            "displayName": "Hit Ratio (SLO: 85%)"
+          }
+        }
+      },
+      {
+        "id": 12,
+        "title": "Cache Hit Rate Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 10, "x": 6, "y": 16 },
+        "targets": [
+          {
+            "expr": "wrfcoin:cache:hit_rate_5m",
+            "legendFormat": "{{cache_type}}"
+          },
+          {
+            "expr": "85",
+            "legendFormat": "SLO Target (85%)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "percent"
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "SLO Target (85%)" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } },
+                { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 13,
+        "title": "Cache Latency p95",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 16 },
+        "targets": [
+          {
+            "expr": "wrfcoin:cache:latency_p95_5m * 1000",
+            "legendFormat": "{{cache_type}} - {{operation}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "ms"
+          }
+        }
+      },
+      {
+        "id": 14,
+        "title": "Bridge SLOs",
+        "type": "row",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+        "collapsed": false
+      },
+      {
+        "id": 15,
+        "title": "Bridge Success Rate",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 6, "x": 0, "y": 23 },
+        "targets": [
+          {
+            "expr": "wrfcoin:cross_chain:bridge_success_rate_5m * 100",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "orange", "value": 95 },
+                { "color": "yellow", "value": 98 },
+                { "color": "green", "value": 99 }
+              ]
+            },
+            "unit": "percent",
+            "min": 90,
+            "max": 100,
+            "decimals": 2,
+            "displayName": "Bridge Success (SLO: 99%)"
+          }
+        }
+      },
+      {
+        "id": 16,
+        "title": "Bridge Latency p95",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 10, "x": 6, "y": 23 },
+        "targets": [
+          {
+            "expr": "wrfcoin:cross_chain:bridge_processing_time_95th_5m",
+            "legendFormat": "{{source_chain}} -> {{target_chain}}"
+          },
+          {
+            "expr": "300",
+            "legendFormat": "SLO Target (5 min)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "s"
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "SLO Target (5 min)" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } },
+                { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 17,
+        "title": "Bridge Transactions (24h)",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 23 },
+        "targets": [
+          {
+            "expr": "sum(increase(wrfcoin_cross_chain_bridge_transfers_completed_total[24h]))",
+            "legendFormat": "Completed"
+          },
+          {
+            "expr": "sum(increase(wrfcoin_cross_chain_bridge_transfers_failed_total[24h]))",
+            "legendFormat": "Failed"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "short",
+            "decimals": 0
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+      {
+        "id": 18,
+        "title": "Infrastructure SLOs",
+        "type": "row",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 },
+        "collapsed": false
+      },
+      {
+        "id": 19,
+        "title": "Database Connection Pool",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 6, "x": 0, "y": 30 },
+        "targets": [
+          {
+            "expr": "wrfcoin:database:pool_utilization",
+            "legendFormat": "Pool Usage"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 70 },
+                { "color": "orange", "value": 85 },
+                { "color": "red", "value": 90 }
+              ]
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "displayName": "Pool Usage (SLO: <90%)"
+          }
+        }
+      },
+      {
+        "id": 20,
+        "title": "Database Query Latency p95",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 10, "x": 6, "y": 30 },
+        "targets": [
+          {
+            "expr": "wrfcoin:database:query_latency_p95_5m * 1000",
+            "legendFormat": "{{query_type}}"
+          },
+          {
+            "expr": "100",
+            "legendFormat": "SLO Target (100ms)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "ms"
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "SLO Target (100ms)" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } },
+                { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 21,
+        "title": "Service Availability",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 30 },
+        "targets": [
+          {
+            "expr": "avg(avg_over_time(up{job=~'wrfcoin-.*'}[1h])) * 100",
+            "legendFormat": "Overall Availability"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "orange", "value": 95 },
+                { "color": "yellow", "value": 99 },
+                { "color": "green", "value": 99.9 }
+              ]
+            },
+            "unit": "percent",
+            "decimals": 3,
+            "displayName": "Availability (SLO: 99.9%)"
+          }
+        }
+      },
+      {
+        "id": 22,
+        "title": "GraphQL Performance",
+        "type": "row",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+        "collapsed": false
+      },
+      {
+        "id": 23,
+        "title": "GraphQL Query Complexity",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 12, "x": 0, "y": 37 },
+        "targets": [
+          {
+            "expr": "wrfcoin:graphql:complexity_p95_5m",
+            "legendFormat": "{{operation_name}}"
+          },
+          {
+            "expr": "1000",
+            "legendFormat": "Max Allowed (1000)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "short"
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "Max Allowed (1000)" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+                { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 24,
+        "title": "GraphQL Rejection Rate",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 12, "x": 12, "y": 37 },
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_graphql_rejected_queries_total[5m])",
+            "legendFormat": "{{reason}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "stacking": { "mode": "normal", "group": "A" }
+            },
+            "unit": "reqps"
+          }
+        }
+      },
+      {
+        "id": 25,
+        "title": "SLO Trend Analysis",
+        "type": "row",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 43 },
+        "collapsed": false
+      },
+      {
+        "id": 26,
+        "title": "SLO Compliance Trend (7 days)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 44 },
+        "targets": [
+          {
+            "expr": "(rate(wrfcoin_blockchain_transactions_processed_total[1h]) - rate(wrfcoin_blockchain_transactions_failed_total[1h])) / rate(wrfcoin_blockchain_transactions_processed_total[1h]) * 100",
+            "legendFormat": "Transaction Success Rate"
+          },
+          {
+            "expr": "avg(wrfcoin_cache_hit_rate)",
+            "legendFormat": "Cache Hit Rate"
+          },
+          {
+            "expr": "avg(avg_over_time(up{job=~'wrfcoin-.*'}[1h])) * 100",
+            "legendFormat": "Service Availability"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 5
+            },
+            "unit": "percent",
+            "min": 80,
+            "max": 100
+          }
+        },
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "calcs": ["mean", "min", "max", "lastNotNull"]
+          }
+        }
+      }
+    ]
+  },
+  "overwrite": true,
+  "folderId": 0
+}

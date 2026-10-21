@@ -1,0 +1,47 @@
+# =============================================================================
+# Boot-smoke isolation overlay (backend#910 finding 3)
+# =============================================================================
+# Used ONLY by testnet/preflight-compose-smoke.sh, always together with an
+# isolated project name (-p). It makes a real `docker compose up` of the smoke
+# services safe on a host that is already running the production stack:
+#
+#   - `container_name: !reset` — the base compose pins fixed names
+#     (wrfcoin-testnet-postgres, ...). A second project with the same names
+#     cannot start; resetting lets Compose generate project-scoped names.
+#   - `ports: !reset []` — no published host ports, so the smoke can never
+#     collide with (or be mistaken for) the live services. The health probe
+#     runs INSIDE the containers/network instead.
+#   - `restart: !override no` — a crashing smoke container must stay crashed
+#     and fail the probe, not resurrect and flap.
+#
+# Requires Compose v2.24+ (!reset / !override). The workstation runs v5.x.
+# =============================================================================
+
+services:
+  postgres:
+    container_name: !reset null
+    ports: !reset []
+    restart: !override "no"
+
+  redis:
+    container_name: !reset null
+    ports: !reset []
+    restart: !override "no"
+
+  wrfcoin-backend:
+    container_name: !reset null
+    ports: !reset []
+    restart: !override "no"
+    # Core4 and db-migrate are intentionally absent from this boot smoke. The
+    # script also invokes `up --no-deps`; this override makes the rendered
+    # backend closure truthful even if an operator inspects it independently.
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # The base healthcheck uses curl -f, so the deliberately accepted 503
+    # Core4-down contract can never become healthy. Process liveness is checked
+    # by the driver; one exact HTTP response below decides 200/503 validity.
+    healthcheck:
+      disable: true

@@ -1,0 +1,243 @@
+# node-probes-gate.yml — the Docker-free half of build-boot-gate.yml, on its
+# own trigger (infra#881 remediation, split out 2026-08-31)
+#
+# WHY A SEPARATE FILE
+# --------------------
+# This job used to live inside build-boot-gate.yml as a second JOB, split
+# onto the free self-hosted runner while the hosted `gate` job stayed on
+# `ubuntu-latest`. That job-level split did not deliver the "$0 hosted cost
+# for an explorer/faucet-only PR" claim it was sold on: GitHub bills a
+# *scheduled* hosted job the rounded-up minute regardless of how many of its
+# steps are `if:`-skipped, and `gate`'s steps 0-2 (self-test, Dockerfile
+# discovery, hadolint) have no `if:` guard at all, so `gate` was scheduled
+# and billed on EVERY PR that triggered the shared workflow -- including a
+# PR that only touched `testnet/explorer/**` or
+# `testnet/services/faucet/**`. Measured: a pre-split hosted run finished in
+# 33s total, of which only 7s was the Node-only work this job does; removing
+# 7 seconds from a job that already rounds up to one billed minute removes
+# no billed minutes.
+#
+# The fix is a WORKFLOW-FILE split, not a job split: this file has its own
+# `on.pull_request.paths` trigger, disjoint from build-boot-gate.yml's. A PR
+# that touches only explorer/faucet paths now causes GitHub to evaluate
+# ONLY this file -- build-boot-gate.yml's trigger never matches, so its
+# `gate` job is never scheduled, never `if:`-skipped, never billed, because
+# the workflow it lives in never ran. See build-boot-gate.yml's own
+# "WORKFLOW-FILE SPLIT" and "MINUTES DISCIPLINE" notes for the full
+# reasoning, including the one real tradeoff this split makes (an
+# explorer/faucet-only PR no longer triggers `gate`'s repo-wide Dockerfile
+# discovery sweep as a free side effect of a shared trigger).
+#
+# See build-boot-gate.yml's own header for the shared history this gate
+# grew out of (infra#741, the #708/#707/#701 control set) and its own
+# "WHAT THIS GATE ACTUALLY CATCHES" note for what THAT file still catches
+# (#708, #701) now that #707 and #838 live here instead.
+#
+# WHAT THIS GATE CATCHES
+# -----------------------
+#   #707  CAUGHT by step 4 (boot probe). Demonstrated locally by re-injecting
+#         the pre-fix `app.get("*")` into the real explorer; exercised on any
+#         PR that touches a watched .js or manifest, and on every edit to
+#         this file.
+#   #838  CAUGHT by step 5, as of testnet/explorer/og-image.test.js
+#         (infra#880). Step 4's boot probe only `require()`s server.js -- it
+#         registers routes but never calls `getImageResponse()`, which
+#         server.js invokes lazily, only when a request actually hits
+#         /og/block or /og/tx. A major bump of @vercel/og (0.11.1 -> 1.0.2)
+#         that breaks `ImageResponse` construction at RENDER time -- not at
+#         require time, not at install, not at boot -- passed step 4,
+#         /health, and Docker's own HEALTHCHECK. Step 5's `node --test` boots
+#         the real exported `app`, seeds `cache` with a fake block/tx (no
+#         live node needed), and makes a real HTTP request through the real
+#         /og/block and /og/tx routes, asserting a real PNG (status,
+#         content-type, byte length, magic bytes) comes back. Proven
+#         load-bearing by mutation: bumping package.json to 1.0.2 locally
+#         reproduces `Dynamic require of "fs" is not supported` from
+#         harfbuzzjs and fails both new tests; restoring 0.11.1 passes all
+#         12. #838 itself stays BLOCKED and open -- this repo does not
+#         change the pinned version, only runs the check that would have
+#         caught it.
+#
+# RUNNER
+# ------
+# `wrfcoin/infra` has one self-hosted runner registered, `n5pro-ct102-infra`
+# (`gh api repos/wrfcoin/infra/actions/runners`), online, on the same build runner
+# box that already hosts core4's and backend's runners. GitHub Actions
+# runner registration is PER-REPOSITORY: a job in this repo can only ever be
+# picked up by a runner registered to THIS repo, so there is no cross-repo
+# scheduling collision even though all three share the `n5pro` label and the
+# same physical box. This job needs nothing Docker touches, which is exactly
+# why it can run here while `gate`'s steps 0-3 cannot -- see
+# build-boot-gate.yml's own investigation of gh-runner's Docker access for
+# why those steps stay hosted.
+#
+# A self-hosted job with no available runner does not fail -- it sits
+# "Queued" until GitHub's own platform-level queued-job timeout eventually
+# cancels it (documented as up to 24h), which is a VOID of a different shape
+# than a hosted zero-step billing VOID: `gh pr checks` shows a
+# pending/queued state rather than a fast pass/fail, and
+# `gh api .../actions/runs/<id>/jobs` shows `"status": "queued",
+# "conclusion": null` rather than `"conclusion": "failure"` with 0 steps.
+# `n5pro-ct102-infra` is confirmed online right now, so this is not live,
+# but it is the failure mode to watch for if that runner ever drops offline.
+
+name: Build/Boot Gate — Node probes
+
+on:
+  pull_request:
+    paths:
+      # Narrowed from `testnet/explorer/**` and `testnet/services/faucet/**`,
+      # but DELIBERATELY still wider than "package.json only": #707 changed
+      # only package.json + package-lock.json, and the throw it introduced
+      # happened at route registration. Any .js in these trees, or either
+      # manifest, can break the boot probe -- so all of them trigger it, and
+      # docs/fixtures in the same trees do not.
+      - 'testnet/explorer/**/*.js'
+      - 'testnet/explorer/package.json'
+      - 'testnet/explorer/package-lock.json'
+      - 'testnet/services/faucet/**/*.js'
+      - 'testnet/services/faucet/package.json'
+      - 'testnet/services/faucet/package-lock.json'
+      # --- self ---------------------------------------------------------------
+      #     A change to this gate must exercise the WHOLE gate: see the
+      #     `gate_self` forcing in the detect step below. Does NOT also force
+      #     build-boot-gate.yml -- the two files now test unrelated
+      #     concerns (Docker/Caddy vs. Node boot/tests), so a change to one
+      #     has no bearing on whether the other needs re-exercising.
+      - '.github/workflows/node-probes-gate.yml'
+      - 'scripts/ci-node-install.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-probes-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  node-probes:
+    # API access required by this job only.
+    permissions:
+      contents: read
+      pull-requests: read
+    name: Build/Boot Gate — Node probes (self-hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Detect changed surfaces
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json files --jq '.files[].path' | tee changed-files.txt
+          echo "--- changed: $(wc -l < changed-files.txt) file(s)"
+
+          has() { grep -qE "$1" changed-files.txt && echo true || echo false; }
+
+          SELF=$(has '^\.github/workflows/node-probes-gate\.yml$|^scripts/ci-node-install\.sh$')
+          on() { if [ "$SELF" = true ]; then echo true; else has "$1"; fi; }
+          {
+            echo "gate_self=$SELF"
+            echo "explorer=$(on '^testnet/explorer/.*(\.js|package(-lock)?\.json)$')"
+            echo "faucet=$(on '^testnet/services/faucet/.*(\.js|package(-lock)?\.json)$')"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      # =======================================================================
+      # 4. NODE SERVICE BOOT PROBE  — catches #707
+      # =======================================================================
+      # The ONLY step here that runs application code, because this defect class
+      # is not statically reachable. Express 5's path-to-regexp rejects a bare
+      # "*" at ROUTE REGISTRATION, so the throw happens while the module is being
+      # evaluated — before any request, before any port bind. Demonstrated:
+      #   app.get("*", h)  under express@5.2.1
+      #   -> PathError [TypeError]: Missing parameter name at index 1: *
+      # No lint, no type check and no image build sees this. Requiring the module
+      # does.
+      #
+      # #707 changed ONLY package.json + package-lock.json — no Dockerfile, no
+      # compose file. An image-only path filter would not have triggered at all,
+      # which is why `testnet/explorer/**` is in the `paths:` list above.
+      #
+      # Exit-code contract (both services guard `app.listen` behind
+      # `require.main === module`, but do not depend on that):
+      #   0   require completed, registration clean            -> PASS
+      #   124 timed out, i.e. it got past registration and is listening -> PASS
+      #   *   anything else, i.e. it threw                     -> FAIL
+      #
+      # `node-version: '22'` is unchanged from before this job moved — the
+      # runner's own system Node (v24.20.0) is NOT what this step uses;
+      # actions/setup-node still pins and downloads 22 into the runner's local
+      # tool-cache, same as it always resolved on the hosted runner.
+      - uses: actions/setup-node@v7
+        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true'
+        with:
+          node-version: '22'
+
+      - name: Boot probe — Node services
+        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true'
+        env:
+          EXPLORER: ${{ steps.changed.outputs.explorer }}
+          FAUCET: ${{ steps.changed.outputs.faucet }}
+        run: |
+          set -euo pipefail
+          rc=0
+          probe() {
+            local dir="$1"
+            echo "::group::boot probe — $dir"
+            bash scripts/ci-node-install.sh "$dir" --omit=dev
+            set +e
+            ( cd "$dir" && timeout 20 node -e 'require("./server.js")' )
+            local code=$?
+            set -e
+            case "$code" in
+              0)   echo "  PASS  $dir — module evaluated, route registration clean" ;;
+              124) echo "  PASS  $dir — reached listen (timed out as expected)" ;;
+              *)   echo "::error file=$dir/server.js::boot probe failed (exit $code) — the service throws before serving"; rc=1 ;;
+            esac
+            echo "::endgroup::"
+          }
+          [ "$EXPLORER" = "true" ] && probe testnet/explorer
+          [ "$FAUCET" = "true" ]   && probe testnet/services/faucet
+          exit $rc
+
+      # -----------------------------------------------------------------------
+      # 5. Existing tests, including infra#838's OG-image smoke test.
+      # -----------------------------------------------------------------------
+      # testnet/explorer/{server,index-xss,og-image}.test.js and
+      # testnet/services/faucet/{server,signing-golden}.test.js are committed and
+      # declare `"test": "node --test"`, but NO workflow on main invokes them
+      # other than this step. They are free once node_modules/the npm cache is
+      # warm from the probe above -- and on this persistent self-hosted runner,
+      # unlike the previous ephemeral hosted one, that cache now survives
+      # between PRs too.
+      #
+      # og-image.test.js (infra#838) is the one that renders an actual PNG
+      # through the real /og/block and /og/tx routes -- see the "WHAT THIS
+      # GATE ACTUALLY CATCHES" note at the top of this file for why step 4's
+      # boot probe cannot see this defect class and this step is what does.
+      #
+      # Never pipe this through `tail`/`head` — a piped gate has reported RED runs
+      # as exit 0 in this org. Use tee + PIPESTATUS if output must be captured.
+      - name: Run existing service tests
+        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true'
+        env:
+          EXPLORER: ${{ steps.changed.outputs.explorer }}
+          FAUCET: ${{ steps.changed.outputs.faucet }}
+        run: |
+          set -euo pipefail
+          rc=0
+          run_tests() {
+            local dir="$1"
+            echo "::group::node --test — $dir"
+            ( bash scripts/ci-node-install.sh "$dir" && cd "$dir" && node --test ) || rc=1
+            echo "::endgroup::"
+          }
+          [ "$EXPLORER" = "true" ] && run_tests testnet/explorer
+          [ "$FAUCET" = "true" ]   && run_tests testnet/services/faucet
+          exit $rc

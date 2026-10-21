@@ -1,0 +1,54 @@
+# Requires the reviewed ipfs-storage base profile and archive-capable backend image.
+# Neither this overlay nor the base compose starts a worker by default.
+services:
+  db-migrate:
+    environment:
+      WRFCOIN_EXPECTED_DB_MIGRATION: "0028_weather_archive_day_index"
+  weather-ipfs-archive:
+    image: wrfcoin/backend:testnet-local
+    profiles: ["weather-archive"]
+    command: ["node", "dist/weather_ipfs_archive.cjs"]
+    user: "1001:1001"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=192"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/wrfcoin?sslmode=disable
+      WRFCOIN_WEATHER_ARCHIVE_ENABLED: "true"
+      WRFCOIN_WEATHER_ARCHIVE_DIR: /app/weather-archive
+      WRFCOIN_STORAGE_NODE_URL: http://storage-node:7001
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+      storage-node:
+        condition: service_started
+    volumes:
+      - weather-ipfs-receipts:/app/weather-archive
+    networks:
+      - wrfcoin-testnet
+    # The worker serves no HTTP; do not inherit the API image's curl check.
+    healthcheck:
+      disable: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=32m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  weather-ipfs-receipts: {}

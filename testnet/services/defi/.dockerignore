@@ -1,0 +1,8 @@
+*
+!.cache/
+!.cache/source/
+!.cache/source/**
+!.cache/registry/
+!.cache/registry/**
+!healthcheck.rs
+!Dockerfile

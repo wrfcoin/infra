@@ -1,0 +1,11 @@
+---
+# Storage Providers Namespace
+# All IPFS, Filecoin, and Arweave workloads run here
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storage
+  labels:
+    app.kubernetes.io/part-of: wrfcoin
+    app.kubernetes.io/managed-by: kubectl
+    purpose: storage-providers

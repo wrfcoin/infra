@@ -1,0 +1,36 @@
+name: Private Scripts Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# No PR event, no PR checkout, and no persistent worker in a public repository.
+# These unchanged suites read inputs excluded by the public snapshot policy or
+# require an owner-provided pinned native CLI. They are not hosted PR evidence.
+jobs:
+  private-suites:
+    if: github.event.repository.private && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, n5pro]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Record private runner prerequisites
+        run: |
+          python3 -c 'import pytest, yaml; print("pytest=" + pytest.__version__ + " PyYAML=" + yaml.__version__)'
+          docker compose version
+      - name: Check reviewed suite inventory
+        run: python3 scripts/ci-suites.py check
+      - name: Private-input Python suites
+        run: python3 scripts/ci-suites.py run --profile private --kind python
+      - name: Private-input shell suites
+        if: ${{ !cancelled() }}
+        env:
+          ESBUILD_ENTRY_FIXTURE: scripts/tests/fixtures/esbuild-entries/backend-tree.txt
+        run: python3 scripts/ci-suites.py run --profile private --kind shell
+      - name: Private snapshot-move fixture
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci-suites.py run --profile private --kind fixtures

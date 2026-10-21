@@ -1,0 +1,33 @@
+# Requirements for Wrfcoin Alert Webhook Handler
+
+# Web framework
+Flask>=3.1.3
+Werkzeug>=3.1.9
+
+# HTTP requests
+requests>=2.34.2
+urllib3>=2.8.0
+
+# JSON handling
+simplejson==4.2.0
+
+# Date/time handling
+python-dateutil==2.9.0.post0
+
+# Logging and monitoring
+structlog==26.1.0
+
+# Configuration management
+python-dotenv==1.2.4
+
+# WSGI server for production
+gunicorn>=26.2.0
+
+# Metrics collection (optional)
+prometheus-client==0.26.0
+
+# Security
+cryptography>=50.0.2
+
+# Development dependencies (for debugging)
+# pdb==0.1  # Remove this line - pdb is built into Python

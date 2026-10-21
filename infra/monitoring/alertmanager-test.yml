@@ -1,0 +1,49 @@
+# Test AlertManager Configuration for Safe Testing
+# Use this configuration for testing without notification spam
+
+global:
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: '${SMTP_FROM}'
+  smtp_auth_username: '${SMTP_USERNAME}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+
+  # Slack configuration — set via environment variable or secret mount
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+
+  resolve_timeout: 5m
+
+# Templates for custom alert formatting
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Test route configuration - MUCH quieter!
+route:
+  group_by: ['alertname']
+  group_wait: 30s # Wait longer before sending
+  group_interval: 5m # Group alerts together
+  repeat_interval: 24h # Only repeat once per day
+  receiver: 'test-receiver'
+
+# Test receivers - only send to one channel during testing
+receivers:
+  - name: 'test-receiver'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#blockchain-monitoring'
+        title: 'TEST: {{ .GroupLabels.alertname }}'
+        text: |
+          🧪 **TEST ALERT** 🧪
+          {{ range .Alerts }}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *This is a test - not a real alert*
+          {{ end }}
+        send_resolved: true
+
+# Inhibition rules to prevent spam during testing
+inhibit_rules:
+  - source_match:
+      alertname: 'TestAlert'
+    target_match_re:
+      alertname: '.*'
+    equal: ['instance']

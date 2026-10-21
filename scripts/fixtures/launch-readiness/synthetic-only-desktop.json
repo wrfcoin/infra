@@ -1,0 +1,210 @@
+{
+  "schema": "wrfcoin.testnet.deploy_status_snapshot.v1",
+  "node_name": "desktop-synthetic-fixture",
+  "source_repos": [
+    {
+      "name": "infra",
+      "path": "/fixture/infra",
+      "exists": true,
+      "branch": "main",
+      "detached": false,
+      "dirty": false,
+      "sha": "infra-sha",
+      "short_sha": "infra",
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0
+    },
+    {
+      "name": "backend",
+      "path": "/fixture/backend",
+      "exists": true,
+      "branch": "main",
+      "detached": false,
+      "dirty": false,
+      "sha": "backend-sha",
+      "short_sha": "back",
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0
+    },
+    {
+      "name": "core4",
+      "path": "/fixture/core4",
+      "exists": true,
+      "branch": "main",
+      "detached": false,
+      "dirty": false,
+      "sha": "core4-sha",
+      "short_sha": "core",
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0
+    },
+    {
+      "name": "frontend",
+      "path": "/fixture/frontend",
+      "exists": true,
+      "branch": "main",
+      "detached": false,
+      "dirty": false,
+      "sha": "frontend-sha",
+      "short_sha": "fron",
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0
+    }
+  ],
+  "compose": {
+    "available": true,
+    "ps": {
+      "data": [
+        {
+          "Name": "wrfcoin-testnet-node",
+          "Service": "wrfcoin-node",
+          "State": "running",
+          "Status": "Up (healthy)"
+        },
+        {
+          "Name": "wrfcoin-testnet-prometheus",
+          "Service": "prometheus",
+          "State": "running",
+          "Status": "Up (healthy)"
+        },
+        {
+          "Name": "wrfcoin-testnet-alertmanager",
+          "Service": "alertmanager",
+          "State": "running",
+          "Status": "Up (healthy)"
+        },
+        {
+          "Name": "wrfcoin-testnet-alert-receiver",
+          "Service": "alert-receiver",
+          "State": "running",
+          "Status": "Up (healthy)"
+        }
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "node_readyz",
+      "ok": true,
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "name": "node_health",
+      "ok": true,
+      "status": 200,
+      "body": {
+        "status": "ready",
+        "chain_height": 500
+      }
+    },
+    {
+      "name": "node_network_info",
+      "ok": true,
+      "status": 200,
+      "body": {
+        "peer_count": 1,
+        "chain_height": 500,
+        "sync_status": "synced"
+      }
+    },
+    {
+      "name": "node_blockchain",
+      "ok": true,
+      "status": 200,
+      "body": {
+        "height": 500,
+        "tip_hash": "synthetic-tip-500"
+      }
+    },
+    {
+      "name": "backend_health",
+      "ok": true,
+      "status": 200,
+      "body": {
+        "status": "healthy"
+      }
+    },
+    {
+      "name": "alert_receiver_health",
+      "ok": true,
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "forwarding": true,
+        "delivery_evidence": {
+          "rule_firing": {
+            "status": "injected_local_canary"
+          },
+          "receiver_acceptance": {
+            "status": "accepted",
+            "critical_firing": true,
+            "observed_at": "2026-09-17T12:00:00+00:00",
+            "request_id": "fixture-canary-1"
+          },
+          "outbound_forwarding": {
+            "status": "succeeded",
+            "http_status": 204,
+            "observed_at": "2026-09-17T12:00:00+00:00",
+            "request_id": "fixture-canary-1"
+          },
+          "human_delivery": {
+            "status": "operator_verification_required"
+          }
+        },
+        "last_successful_critical_delivery": {
+          "status": "succeeded",
+          "request_id": "fixture-canary-1",
+          "rule_firing": {
+            "status": "injected_local_canary",
+            "request_id": "fixture-canary-1"
+          },
+          "receiver_acceptance": {
+            "status": "accepted",
+            "critical_firing": true,
+            "observed_at": "2026-09-17T12:00:00+00:00",
+            "request_id": "fixture-canary-1"
+          },
+          "outbound_forwarding": {
+            "status": "succeeded",
+            "http_status": 204,
+            "observed_at": "2026-09-17T12:00:00+00:00",
+            "request_id": "fixture-canary-1"
+          },
+          "human_delivery": {
+            "status": "operator_verification_required",
+            "request_id": "fixture-canary-1"
+          }
+        }
+      }
+    }
+  ],
+  "node_log_scan": {
+    "ok": true,
+    "match_count": 0,
+    "matches": []
+  },
+  "production_observation": {
+    "observation_window": {
+      "since": "30m",
+      "ended_at": "2026-09-17T12:00:00+00:00",
+      "attribution": "regression fixture"
+    },
+    "synthetic_collector": {
+      "enabled": false,
+      "successful_cycles": 0
+    },
+    "real_collectors": {
+      "enabled": false,
+      "services": [],
+      "contributions_observed": 0
+    }
+  },
+  "generated_at": "2026-09-17T12:00:00+00:00"
+}

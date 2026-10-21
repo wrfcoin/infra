@@ -1,0 +1,712 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Blockchain Overview",
+    "tags": ["wrfcoin", "blockchain", "overview"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "description": "Wrfcoin blockchain overview with transaction metrics, P2P network health, and consensus monitoring. P2P partition resilience is also validated in CI via the p2p-partition-gate.yml workflow.",
+    "version": 2,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "name": "node",
+          "type": "query",
+          "query": "label_values(wrfcoin_blockchain_block_height, instance)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "chain",
+          "type": "query",
+          "query": "label_values(wrfcoin_cross_chain_bridge_transfers_total, source_chain)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_system_start_time[1h]) > 0"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Blockchain Core Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_blockchain_block_height",
+            "legendFormat": "Block Height - {{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1000000 },
+                { "color": "red", "value": 10000000 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Transaction Pool Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_blockchain_mempool_size",
+            "legendFormat": "Mempool Size"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1000 },
+                { "color": "red", "value": 5000 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Network Peers",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_network_peer_count",
+            "legendFormat": "Connected Peers"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 5 },
+                { "color": "green", "value": 20 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "System Health Score",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_system_health_score)",
+            "legendFormat": "Health Score"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.7 },
+                { "color": "green", "value": 0.9 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "Transaction Throughput (TPS)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_transactions_processed_total[$__rate_interval])",
+            "legendFormat": "TPS - {{instance}}"
+          },
+          {
+            "expr": "rate(wrfcoin_blockchain_transactions_failed_total[$__rate_interval])",
+            "legendFormat": "Failed TPS - {{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Transactions/sec",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 6,
+        "title": "Block Production Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_blocks_produced_total[$__rate_interval])",
+            "legendFormat": "Blocks/sec - {{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Blocks/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 7,
+        "title": "Consensus Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_consensus_validator_participation_rate",
+            "legendFormat": "Participation Rate"
+          },
+          {
+            "expr": "rate(wrfcoin_consensus_rounds_completed_total[$__rate_interval])",
+            "legendFormat": "Consensus Rounds/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Rate",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 17 }
+      },
+      {
+        "id": 8,
+        "title": "Cross-Chain Bridge Status",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_cross_chain_bridge_transfers_completed_total[$__rate_interval])",
+            "legendFormat": "Completed Transfers/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_cross_chain_bridge_failures_total[$__rate_interval])",
+            "legendFormat": "Failed Transfers/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Transfers/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 17 }
+      },
+      {
+        "id": 9,
+        "title": "Network Latency Distribution",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_network_message_latency_seconds_bucket[$__rate_interval])",
+            "legendFormat": "{{le}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "scaleDistribution": {
+                "type": "linear"
+              }
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 17 }
+      },
+      {
+        "id": 10,
+        "title": "Weather Data Quality",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_weather_data_quality_score",
+            "legendFormat": "Quality Score"
+          },
+          {
+            "expr": "wrfcoin_weather_active_sensors_count",
+            "legendFormat": "Active Sensors"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Score/Count",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 }
+      },
+      {
+        "id": 11,
+        "title": "Security Metrics",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_auth_failures_total[$__rate_interval])",
+            "legendFormat": "Auth Failures/sec"
+          },
+          {
+            "expr": "wrfcoin_security_hsm_status",
+            "legendFormat": "HSM Status"
+          },
+          {
+            "expr": "rate(wrfcoin_security_suspicious_activities_total[$__rate_interval])",
+            "legendFormat": "Suspicious Activities/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Events/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 }
+      },
+      {
+        "id": 12,
+        "title": "System Resource Usage",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_cpu_usage_percent",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "wrfcoin_system_memory_usage_percent",
+            "legendFormat": "Memory Usage %"
+          },
+          {
+            "expr": "wrfcoin_system_disk_usage_percent",
+            "legendFormat": "Disk Usage %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Percentage",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 }
+      },
+      {
+        "id": 13,
+        "title": "Distributed Tracing Health",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_spans_created_total[5m])",
+            "legendFormat": "Spans Created/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_tracing_spans_exported_total[5m])",
+            "legendFormat": "Spans Exported/sec"
+          },
+          {
+            "expr": "wrfcoin_tracing_active_spans_count",
+            "legendFormat": "Active Spans"
+          }
+
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Spans/sec & Count",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 4,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 }
+      },
+      {
+        "id": 15,
+        "title": "ZK Verification Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_zk_verified_proofs_total[$__rate_interval])",
+            "legendFormat": "ZK Proofs/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Proofs/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 }
+      },
+      {
+        "id": 16,
+        "title": "Oracle Slashing Events",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_slashing_events_total[$__rate_interval])",
+            "legendFormat": "Slashing Events/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "red", "value": 0.01 }
+              ]
+            },
+            "custom": {
+              "axisLabel": "Events/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 }
+      },
+      {
+        "id": 14,
+        "title": "Recent High-Impact Traces",
+        "type": "traces",
+        "datasource": "Jaeger",
+        "targets": [
+          {
+            "query": "service_name=\"wrfcoin-blockchain\" AND duration>500ms",
+            "queryType": "",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            }
+          }
+        },
+        "gridPos": { "h": 10, "w": 24, "x": 0, "y": 49 }
+      },
+      {
+        "id": 17,
+        "title": "Failed Transactions Total",
+        "type": "stat",
+        "description": "Total count of transactions that failed validation or were rejected. Sourced from core4 failed_transactions_total counter (core4#667).",
+        "targets": [
+          {
+            "expr": "wrfcoin_blockchain_transactions_failed_total",
+            "legendFormat": "Failed Tx"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 100 },
+                { "color": "red", "value": 1000 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 59 }
+      },
+      {
+        "id": 18,
+        "title": "Failed Transaction Rate",
+        "type": "timeseries",
+        "description": "Rate of failed transactions over time with alert threshold coloring. Yellow at 0.5/sec, red at 2/sec.",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_transactions_failed_total[$__rate_interval])",
+            "legendFormat": "Failed Tx/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.5 },
+                { "color": "red", "value": 2.0 }
+              ]
+            },
+            "custom": {
+              "axisLabel": "Failures/sec",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never",
+              "thresholdsStyle": {
+                "mode": "area"
+              }
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 18, "x": 6, "y": 59 }
+      },
+      {
+        "id": 19,
+        "title": "P2P Network Peers Over Time",
+        "type": "timeseries",
+        "description": "Connected peer count trending over time. Drops indicate potential network partitions. The P2P partition CI gate (p2p-partition-gate.yml) validates partition recovery in CI.",
+        "targets": [
+          {
+            "expr": "wrfcoin_network_peer_count",
+            "legendFormat": "Connected Peers"
+          },
+          {
+            "expr": "min_over_time(wrfcoin_network_peer_count[5m])",
+            "legendFormat": "Min Peers (5m)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 5 },
+                { "color": "green", "value": 20 }
+              ]
+            },
+            "custom": {
+              "axisLabel": "Peers",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never",
+              "thresholdsStyle": {
+                "mode": "area"
+              }
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 67 }
+      },
+      {
+        "id": 20,
+        "title": "P2P Network Health",
+        "type": "gauge",
+        "description": "Normalized P2P network health score. Peer count divided by 50 (target healthy peer count), clamped to 0-1.",
+        "targets": [
+          {
+            "expr": "clamp_max(wrfcoin_network_peer_count / 50, 1)",
+            "legendFormat": "Network Health"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.3 },
+                { "color": "green", "value": 0.6 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 67 }
+      }
+    ]
+  }
+}

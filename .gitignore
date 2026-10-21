@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+__pycache__/
+
+# Build
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Local runtime secrets / generated wallets
+infra/compute-agent/.keys/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Docker
+*.log
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Compute agent runtime artifacts (generated on first launch)
+infra/compute-agent/.keys/
+infra/compute-agent/package-lock.json
+
+# AlertManager runtime secrets — create these files manually before running
+# See infra/monitoring/alertmanager/secrets/.gitkeep for instructions
+infra/monitoring/alertmanager/secrets/*
+!infra/monitoring/alertmanager/secrets/.gitkeep
+
+# ---- Archived env files (testnet rotations) ---------------------------------
+.env.*.archive
+.env.testnet*.archive
+
+# Build provenance written by testnet/join.sh (infra#764): the core4 commit
+# the local node image was built from. Machine-local, never committed.
+testnet/.core4-commit
+.env.bak*
+
+# ---- HSM tokens / signing keys ----------------------------------------------
+**/hsm/tokens/
+softhsm2.conf
+peer_identity.key
+peer_id*.key
+
+# ---- Forensic tarballs (NEVER commit) ---------------------------------------
+*-backup-*.tar.gz
+*-backup-*.tar
+wrfcoin-archives/

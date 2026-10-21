@@ -1,0 +1,721 @@
+# WRFCoin Load Testing Kubernetes Manifests
+# Task 43 Subtask 14: Set Up Load Testing Infrastructure and Scaling Capabilities
+
+---
+# Namespace for Load Testing
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wrfcoin-load-testing
+  labels:
+    purpose: load-testing
+    project: wrfcoin
+
+---
+# ConfigMap for K6 Load Testing Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-load-test-config
+  namespace: wrfcoin-load-testing
+data:
+  k6.config.js: |
+    export const PERFORMANCE_THRESHOLDS = {
+      http_req_duration: ['p(95)<800', 'p(99)<2000'],
+      http_req_failed: ['rate<0.01'],
+      iot_sensor_response: ['p(95)<100'],
+      main_api_response: ['p(95)<200'],
+      sensor_posts_per_minute: ['rate>=2000']
+    };
+
+    export const LOAD_SCENARIOS = {
+      sensor_flood: {
+        executor: 'constant-arrival-rate',
+        rate: 2000,
+        timeUnit: '1m',
+        duration: '30m',
+        preAllocatedVUs: 100,
+        maxVUs: 200
+      },
+      cross_service: {
+        executor: 'ramping-vus',
+        startVUs: 10,
+        stages: [
+          { duration: '2m', target: 50 },
+          { duration: '5m', target: 100 },
+          { duration: '10m', target: 150 },
+          { duration: '2m', target: 0 }
+        ]
+      },
+      progressive_load: {
+        executor: 'ramping-vus',
+        startVUs: 10,
+        stages: [
+          { duration: '2m', target: 25 },
+          { duration: '3m', target: 50 },
+          { duration: '3m', target: 100 },
+          { duration: '3m', target: 200 },
+          { duration: '3m', target: 300 },
+          { duration: '3m', target: 400 },
+          { duration: '2m', target: 0 }
+        ]
+      }
+    };
+
+  prometheus.config.js: |
+    import { check } from 'k6';
+    import { Trend, Counter } from 'k6/metrics';
+
+    // Custom metrics for infrastructure monitoring
+    export const infrastructureMetrics = {
+      loadGeneratorCPU: new Trend('load_generator_cpu_percent'),
+      loadGeneratorMemory: new Trend('load_generator_memory_percent'),
+      targetServiceCPU: new Trend('target_service_cpu_percent'),
+      targetServiceMemory: new Trend('target_service_memory_percent'),
+      databaseConnections: new Trend('database_connections_count'),
+      redisConnections: new Trend('redis_connections_count'),
+      networkThroughput: new Trend('network_throughput_mbps'),
+      costPerHour: new Trend('infrastructure_cost_per_hour')
+    };
+
+---
+# Service Account for K6 Load Testing
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k6-load-tester
+  namespace: wrfcoin-load-testing
+
+---
+# ClusterRole for K6 Load Testing (monitoring access)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k6-load-tester
+rules:
+  - apiGroups: ['']
+    resources: ['nodes', 'pods', 'services', 'endpoints']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['apps']
+    resources: ['deployments', 'replicasets']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['metrics.k8s.io']
+    resources: ['*']
+    verbs: ['get', 'list']
+
+---
+# ClusterRoleBinding for K6 Load Testing
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k6-load-tester
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k6-load-tester
+subjects:
+  - kind: ServiceAccount
+    name: k6-load-tester
+    namespace: wrfcoin-load-testing
+
+---
+# HorizontalPodAutoscaler for K6 Load Generators
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: k6-load-generator-hpa
+  namespace: wrfcoin-load-testing
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: k6-load-generator
+  minReplicas: 1
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+
+---
+# Deployment for K6 Load Generators
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k6-load-generator
+  namespace: wrfcoin-load-testing
+  labels:
+    app: k6-load-generator
+    component: load-generator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: k6-load-generator
+  template:
+    metadata:
+      labels:
+        app: k6-load-generator
+        component: load-generator
+    spec:
+      serviceAccountName: k6-load-tester
+      nodeSelector:
+        role: load-generator
+      tolerations:
+        - key: load-generator
+          operator: Equal
+          value: 'true'
+          effect: NoSchedule
+      containers:
+        - name: k6
+          image: grafana/k6:0.45.0
+          resources:
+            requests:
+              memory: '1Gi'
+              cpu: '1000m'
+            limits:
+              memory: '4Gi'
+              cpu: '2000m'
+          env:
+            - name: K6_PROMETHEUS_RW_SERVER_URL
+              value: 'http://prometheus-server.monitoring:9090/api/v1/write'
+            - name: K6_PROMETHEUS_RW_PUSH_INTERVAL
+              value: '5s'
+            - name: K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM
+              value: 'true'
+            - name: K6_OUT
+              value: 'experimental-prometheus-rw'
+            - name: TARGET_HOSTNAME
+              value: 'wrfcoin-api-service.default'
+            - name: IOT_HOSTNAME
+              value: 'wrfcoin-iot-service.default'
+            - name: LOAD_SCENARIO
+              value: 'sensor_flood'
+            - name: CONCURRENT_USERS
+              value: '1000'
+            - name: TEST_DURATION
+              value: '30m'
+          volumeMounts:
+            - name: k6-scripts
+              mountPath: /scripts
+            - name: k6-config
+              mountPath: /config
+          command: ['/bin/sh']
+          args:
+            - -c
+            - |
+              echo "Starting K6 Load Generator..."
+              echo "Target: $TARGET_HOSTNAME"
+              echo "Scenario: $LOAD_SCENARIO"
+              echo "Users: $CONCURRENT_USERS"
+              echo "Duration: $TEST_DURATION"
+
+              # Wait for target services to be ready
+              until nc -z $TARGET_HOSTNAME 80; do
+                echo "Waiting for target service..."
+                sleep 5
+              done
+
+              # Execute load test
+              k6 run --config /config/k6.config.js /scripts/$LOAD_SCENARIO.js
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - k6
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pgrep
+                - k6
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: k6-scripts
+          configMap:
+            name: k6-test-scripts
+        - name: k6-config
+          configMap:
+            name: k6-load-test-config
+
+---
+# ConfigMap for K6 Test Scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-test-scripts
+  namespace: wrfcoin-load-testing
+data:
+  sensor_flood.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+    import { Rate } from 'k6/metrics';
+
+    const errorRate = new Rate('errors');
+
+    export let options = {
+      scenarios: {
+        sensor_flood: {
+          executor: 'constant-arrival-rate',
+          rate: 2000, // 2000 requests per minute
+          timeUnit: '1m',
+          duration: '30m',
+          preAllocatedVUs: 100,
+          maxVUs: 200,
+        },
+      },
+      thresholds: {
+        http_req_duration: ['p(95)<100'],
+        errors: ['rate<0.01'],
+      },
+    };
+
+    export default function() {
+      const sensorData = {
+        stationId: `weather-station-${Math.floor(Math.random() * 1000)}`,
+        timestamp: Date.now(),
+        temperature: Math.random() * 40 - 10, // -10 to 30 Celsius
+        humidity: Math.random() * 100,
+        pressure: 1013 + Math.random() * 100 - 50,
+        windSpeed: Math.random() * 50,
+        windDirection: Math.random() * 360,
+        rainfall: Math.random() * 10,
+        location: {
+          lat: 40 + Math.random() * 10,
+          lng: -74 + Math.random() * 10
+        }
+      };
+
+      const params = {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        tags: {
+          test_type: 'sensor_flood',
+        },
+      };
+
+      const response = http.post(
+        `http://${__ENV.IOT_HOSTNAME}/api/sensor-data`,
+        JSON.stringify(sensorData),
+        params
+      );
+
+      check(response, {
+        'status is 200': (r) => r.status === 200,
+        'response time < 100ms': (r) => r.timings.duration < 100,
+      }) || errorRate.add(1);
+
+      sleep(Math.random() * 2);
+    }
+
+  cross_service.js: |
+    import http from 'k6/http';
+    import { check, group, sleep } from 'k6';
+    import { Rate } from 'k6/metrics';
+
+    const errorRate = new Rate('errors');
+
+    export let options = {
+      scenarios: {
+        cross_service: {
+          executor: 'ramping-vus',
+          startVUs: 10,
+          stages: [
+            { duration: '2m', target: 50 },
+            { duration: '5m', target: 100 },
+            { duration: '10m', target: 150 },
+            { duration: '2m', target: 0 },
+          ],
+        },
+      },
+      thresholds: {
+        http_req_duration: ['p(95)<500'],
+        errors: ['rate<0.05'],
+      },
+    };
+
+    export default function() {
+      group('Weather Data Workflow', function() {
+        // 1. Submit sensor data
+        const sensorData = {
+          stationId: `station-${__VU}`,
+          temperature: Math.random() * 40 - 10,
+          timestamp: Date.now()
+        };
+        
+        const sensorResponse = http.post(
+          `http://${__ENV.IOT_HOSTNAME}/api/sensor-data`,
+          JSON.stringify(sensorData)
+        );
+        
+        check(sensorResponse, {
+          'sensor submission successful': (r) => r.status === 200,
+        }) || errorRate.add(1);
+        
+        sleep(1);
+        
+        // 2. Query weather data
+        const queryResponse = http.get(
+          `http://${__ENV.TARGET_HOSTNAME}/api/weather/latest?station=${sensorData.stationId}`
+        );
+        
+        check(queryResponse, {
+          'weather query successful': (r) => r.status === 200,
+        }) || errorRate.add(1);
+        
+        sleep(1);
+        
+        // 3. Trigger reward calculation
+        const rewardResponse = http.post(
+          `http://${__ENV.TARGET_HOSTNAME}/api/rewards/calculate`,
+          JSON.stringify({ stationId: sensorData.stationId })
+        );
+        
+        check(rewardResponse, {
+          'reward calculation successful': (r) => r.status === 200,
+        }) || errorRate.add(1);
+      });
+    }
+
+---
+# WRFCoin Services with Auto-Scaling
+# Main API Service Auto-Scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wrfcoin-main-api-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wrfcoin-main-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+
+---
+# IoT Sensors Service Auto-Scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wrfcoin-iot-sensors-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wrfcoin-iot-sensors
+  minReplicas: 5
+  maxReplicas: 30
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+    - type: Pods
+      pods:
+        metric:
+          name: sensor_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: '100'
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Percent
+          value: 20
+          periodSeconds: 60
+
+---
+# Cross-Chain Service Auto-Scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wrfcoin-cross-chain-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wrfcoin-cross-chain
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 85
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 90
+
+---
+# Compute Networks Service Auto-Scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wrfcoin-compute-networks-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wrfcoin-compute-networks
+  minReplicas: 2
+  maxReplicas: 25
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 90
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 75
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 30
+          periodSeconds: 120
+
+---
+# Service Monitor for Prometheus Integration
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wrfcoin-load-testing-metrics
+  namespace: wrfcoin-load-testing
+  labels:
+    app: wrfcoin-load-testing
+spec:
+  selector:
+    matchLabels:
+      app: k6-load-generator
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+      honorLabels: true
+
+---
+# PodMonitor for K6 Load Generator Metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: k6-load-generator-pod-monitor
+  namespace: wrfcoin-load-testing
+spec:
+  selector:
+    matchLabels:
+      app: k6-load-generator
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+
+---
+# PrometheusRule for Load Testing Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: load-testing-alerts
+  namespace: wrfcoin-load-testing
+spec:
+  groups:
+    - name: load-testing.rules
+      rules:
+        - alert: HighErrorRate
+          expr: rate(http_req_failed[5m]) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: 'High error rate during load testing'
+            description: 'Error rate is above 5% for more than 2 minutes'
+
+        - alert: HighLatency
+          expr: histogram_quantile(0.95, rate(http_req_duration_bucket[5m])) > 1000
+          for: 3m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'High latency during load testing'
+            description: '95th percentile latency is above 1000ms'
+
+        - alert: LoadGeneratorDown
+          expr: up{job="k6-load-generator"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: 'Load generator is down'
+            description: 'K6 load generator pod is not responding'
+
+        - alert: TargetServiceDown
+          expr: up{job="wrfcoin-services"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: 'Target service is down'
+            description: 'WRFCoin target service is not responding'
+
+        - alert: HighResourceUtilization
+          expr: (rate(container_cpu_usage_seconds_total[5m]) * 100) > 90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'High CPU utilization'
+            description: 'Container CPU usage is above 90% for more than 5 minutes'
+
+        - alert: MemoryUsageHigh
+          expr: (container_memory_working_set_bytes / container_spec_memory_limit_bytes) * 100 > 90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'High memory utilization'
+            description: 'Container memory usage is above 90% for more than 5 minutes'
+
+---
+# NetworkPolicy for Load Testing Security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: load-testing-network-policy
+  namespace: wrfcoin-load-testing
+spec:
+  podSelector:
+    matchLabels:
+      app: k6-load-generator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 6565 # K6 metrics port
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: default
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090 # Prometheus
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 53 # DNS
+        - protocol: UDP
+          port: 53 # DNS

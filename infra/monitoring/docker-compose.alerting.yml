@@ -1,0 +1,348 @@
+# Docker Compose for Enhanced Wrfcoin Alerting System
+# Integrates Prometheus, AlertManager, and webhook handlers with distributed tracing
+
+version: '3.8'
+
+services:
+  # Enhanced Prometheus with trace-aware alerting
+  prometheus-enhanced:
+    image: prom/prometheus:v2.48.0
+    container_name: wrfcoin-prometheus-enhanced
+    ports:
+      - '9090:9090'
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus/data'
+      - '--storage.tsdb.retention.time=90d'
+      - '--storage.tsdb.retention.size=100GB'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      # SECURITY: --web.enable-lifecycle and --web.enable-admin-api removed (unauth endpoints)
+      - '--web.enable-remote-write-receiver'
+      - '--enable-feature=exemplar-storage'
+      - '--enable-feature=remote-write-receiver'
+    volumes:
+      - ./prometheus-enhanced.yml:/etc/prometheus/prometheus.yml:ro
+      - ${WRFCOIN_PROMETHEUS_BEARER_TOKEN_FILE:-../../testnet/prometheus-bearer-token}:/etc/prometheus/bearer_token:ro
+      - ./alert-rules-enhanced.yml:/etc/prometheus/alert-rules-enhanced.yml:ro
+      - ./alert-rules-gfs-fetcher.yml:/etc/prometheus/alert-rules-gfs-fetcher.yml:ro
+      - ./sli-slo-alerts.yml:/etc/prometheus/sli-slo-alerts.yml:ro
+      - ../docker/wrfcoin_alerts.yml:/etc/prometheus/wrfcoin_alerts.yml:ro
+      - prometheus-enhanced-data:/prometheus/data
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--quiet',
+          '--tries=1',
+          '--spider',
+          'http://localhost:9090/-/healthy',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - 'prometheus.io/scrape=true'
+      - 'prometheus.io/port=9090'
+      - 'prometheus.io/path=/metrics'
+
+  # Enhanced AlertManager with trace correlation
+  alertmanager-enhanced:
+    image: prom/alertmanager:v0.26.0
+    container_name: wrfcoin-alertmanager-enhanced
+    ports:
+      - '9093:9093'
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager/data'
+      - '--web.external-url=http://localhost:9093'
+      - '--web.route-prefix=/'
+      - '--cluster.listen-address=0.0.0.0:9094'
+      - '--log.level=info'
+    volumes:
+      - ./alertmanager-enhanced.yml:/etc/alertmanager/config.yml:ro
+      - ./templates:/etc/alertmanager/templates:ro
+      - alertmanager-enhanced-data:/alertmanager/data
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    depends_on:
+      - alert-webhook-handler
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--quiet',
+          '--tries=1',
+          '--spider',
+          'http://localhost:9093/-/healthy',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Alert webhook handler with trace correlation
+  alert-webhook-handler:
+    build:
+      context: .
+      dockerfile: Dockerfile.webhook-handler
+    container_name: wrfcoin-alert-webhook-handler
+    ports:
+      - '5001:5001'
+    environment:
+      - PORT=5001
+      - DEBUG=false
+      - JAEGER_QUERY_URL=http://jaeger:16686
+      - TEMPO_QUERY_URL=http://tempo:3200
+      - GRAFANA_URL=http://grafana-tracing:3000
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      - WEBHOOK_HMAC_SECRET=${WEBHOOK_HMAC_SECRET:?WEBHOOK_HMAC_SECRET required}
+      - WEBHOOK_MAX_SKEW_SECONDS=${WEBHOOK_MAX_SKEW_SECONDS:-300}
+      - FLASK_APP=alert-webhook-handler.py
+      - FLASK_ENV=production
+    volumes:
+      - ./alert-webhook-handler.py:/app/alert-webhook-handler.py:ro
+      - webhook-handler-logs:/app/logs
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    depends_on:
+      - jaeger
+      - tempo
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:5001/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Jaeger for distributed tracing (from tracing compose)
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: wrfcoin-jaeger-alerting
+    ports:
+      - '16686:16686' # Jaeger UI
+      - '14268:14268' # Jaeger HTTP
+      - '14250:14250' # Jaeger gRPC
+      - '6831:6831/udp' # Jaeger agent UDP
+      - '6832:6832/udp' # Jaeger agent UDP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - SPAN_STORAGE_TYPE=memory
+      - MEMORY_MAX_TRACES=50000
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    volumes:
+      - jaeger-alerting-data:/tmp
+
+  # Tempo for alternative tracing backend
+  tempo:
+    image: grafana/tempo:2.3.0
+    container_name: wrfcoin-tempo-alerting
+    command: ['-config.file=/etc/tempo.yaml']
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo.yaml:ro
+      - tempo-alerting-data:/tmp/tempo
+    ports:
+      - '127.0.0.1:3200:3200' # Tempo HTTP
+      - '127.0.0.1:4317:4317' # OTLP gRPC
+      - '127.0.0.1:4318:4318' # OTLP HTTP
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+  # Grafana with enhanced alerting integration
+  grafana-alerting:
+    image: grafana/grafana:10.2.0
+    container_name: wrfcoin-grafana-alerting
+    ports:
+      - '3001:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor,alertingBigTransactions
+      - GF_ALERTING_ENABLED=true
+      - GF_UNIFIED_ALERTING_ENABLED=true
+      - GF_ALERTING_EXECUTE_ALERTS=true
+    volumes:
+      - grafana-alerting-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources-tracing.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./grafana/alerting:/etc/grafana/provisioning/alerting:ro
+    depends_on:
+      - prometheus-enhanced
+      - jaeger
+      - tempo
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: wrfcoin-node-exporter
+    ports:
+      - '9100:9100'
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/etc/node-exporter/'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - node-exporter-textfiles:/etc/node-exporter
+    depends_on:
+      gfs-fetch-health-init:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+  gfs-fetch-health:
+    build:
+      context: .
+      dockerfile: Dockerfile.gfs-fetch-healthcheck
+    container_name: wrfcoin-gfs-fetch-health
+    user: "1001:1001"
+    depends_on:
+      gfs-fetch-health-init:
+        condition: service_completed_successfully
+    environment:
+      - GFS_HEALTH_MODE=${GFS_HEALTH_MODE:-dry-run}
+      - GFS_HEALTH_RUN_ONCE=0
+      - GFS_HEALTH_LOOP_INTERVAL_SECONDS=${GFS_HEALTH_LOOP_INTERVAL_SECONDS:-300}
+      - GFS_HEALTH_MAX_AGE_SECONDS=${GFS_HEALTH_MAX_AGE_SECONDS:-900}
+      - GFS_METRICS_OUTPUT_PATH=/var/lib/node_exporter/textfile_collector/gfs_fetch_health.prom
+      - GFS_HEALTH_STATE_DIR=/var/lib/gfs-fetch-health
+      - GFS_HEALTH_DRY_RUN_FIXTURE=${GFS_HEALTH_DRY_RUN_FIXTURE:-/app/testdata/gfs-success.grib2.fixture}
+      - GFS_ENDPOINT=${GFS_ENDPOINT:-https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl}
+      - GFS_TIMEOUT_SECONDS=${GFS_TIMEOUT_SECONDS:-20}
+    volumes:
+      - node-exporter-textfiles:/var/lib/node_exporter/textfile_collector
+      - gfs-fetch-health-state:/var/lib/gfs-fetch-health
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+  gfs-fetch-health-init:
+    image: alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    container_name: wrfcoin-gfs-fetch-health-init
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        chown -R 1001:1001 /var/lib/node_exporter/textfile_collector /var/lib/gfs-fetch-health
+        test -w /var/lib/node_exporter/textfile_collector
+        test -w /var/lib/gfs-fetch-health
+    volumes:
+      - node-exporter-textfiles:/var/lib/node_exporter/textfile_collector
+      - gfs-fetch-health-state:/var/lib/gfs-fetch-health
+    restart: "no"
+
+  # Blackbox Exporter for external service monitoring
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.24.0
+    container_name: wrfcoin-blackbox-exporter
+    ports:
+      - '9115:9115'
+    volumes:
+      - ./blackbox-config.yml:/etc/blackbox_exporter/config.yml:ro
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+  # Alert notification services
+  webhook-proxy:
+    image: nginx:alpine
+    container_name: wrfcoin-webhook-proxy
+    ports:
+      - '8080:80'
+    volumes:
+      - ./nginx-webhook.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - wrfcoin-monitoring
+    depends_on:
+      - alert-webhook-handler
+    restart: unless-stopped
+
+  # Log aggregation for alert correlation
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: wrfcoin-loki-alerting
+    ports:
+      - '3100:3100'
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-alerting-data:/loki
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+  # Promtail for log collection
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: wrfcoin-promtail-alerting
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+      - webhook-handler-logs:/app/logs:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+networks:
+  wrfcoin-monitoring:
+    external: true
+
+volumes:
+  prometheus-enhanced-data:
+    driver: local
+  alertmanager-enhanced-data:
+    driver: local
+  grafana-alerting-data:
+    driver: local
+  jaeger-alerting-data:
+    driver: local
+  tempo-alerting-data:
+    driver: local
+  loki-alerting-data:
+    driver: local
+  webhook-handler-logs:
+    driver: local
+  node-exporter-textfiles:
+    driver: local
+  gfs-fetch-health-state:
+    driver: local
+
+# Health checks configuration
+x-healthcheck-config: &healthcheck-config
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+# Common environment configuration
+x-common-env: &common-env
+  TZ: UTC
+  PROMETHEUS_URL: http://prometheus-enhanced:9090
+  ALERTMANAGER_URL: http://alertmanager-enhanced:9093
+  GRAFANA_URL: http://grafana-alerting:3000
+  JAEGER_URL: http://jaeger:16686
+  TEMPO_URL: http://tempo:3200

@@ -1,0 +1,87 @@
+# GOLDEN FIXTURE (infra#1327): the default N5 `block-heartbeat` service as rendered by
+# scripts/tests/test-block-heartbeat-compose.sh under its fixed dummy env, generated from the
+# overlay as it was BEFORE the rotation PR (merge-base ac481c069). The test FAILS on any difference.
+# Body below is JSON (valid YAML); '#' lines are ignored by the test.
+# Regenerate: BASELINE_OVERLAY=<path to the intended overlay file> bash scripts/tests/test-block-heartbeat-compose.sh > body
+#   then keep this header and replace the body.
+# WARNING: any change to this fixture means EVERY deployed N5 heartbeat is recreated on its next
+# `compose up` (config drift recreates the container; cf. the h41993 halt). That is owner-visible:
+# do not change it without owner sign-off.
+{
+  "profiles": [
+    "block-heartbeat-n5"
+  ],
+  "cap_drop": [
+    "ALL"
+  ],
+  "command": [
+    "node",
+    "/app/heartbeat.cjs"
+  ],
+  "depends_on": {
+    "wrfcoin-node": {
+      "condition": "service_healthy",
+      "required": true
+    }
+  },
+  "deploy": {
+    "resources": {
+      "limits": {
+        "cpus": 0.25,
+        "memory": "67108864"
+      }
+    },
+    "placement": {}
+  },
+  "entrypoint": null,
+  "environment": {
+    "BLOCK_HEARTBEAT_INTERVAL_SECONDS": "77",
+    "WRFCOIN_API_HOST": "wrfcoin-node",
+    "WRFCOIN_API_PORT": "8556",
+    "WRFCOIN_CHAIN_ID": "777",
+    "WRFCOIN_MINER_ADDRESS": "0x680d51f7543ca70029866956376306d47ce60ed0",
+    "WRFCOIN_NETWORK_ID": "testnet",
+    "WRFCOIN_OPERATOR_TOKEN": "render-only-operator"
+  },
+  "healthcheck": {
+    "test": [
+      "CMD",
+      "node",
+      "/app/heartbeat.cjs",
+      "--healthcheck"
+    ],
+    "timeout": "5s",
+    "interval": "30s",
+    "retries": 3,
+    "start_period": "1m30s"
+  },
+  "image": "node:20-alpine",
+  "logging": {
+    "driver": "json-file",
+    "options": {
+      "max-file": "2",
+      "max-size": "5m"
+    }
+  },
+  "networks": {
+    "wrfcoin-testnet": null
+  },
+  "read_only": true,
+  "restart": "unless-stopped",
+  "security_opt": [
+    "no-new-privileges:true"
+  ],
+  "tmpfs": [
+    "/tmp:noexec,nosuid,size=1m"
+  ],
+  "volumes": [
+    {
+      "type": "bind",
+      "source": "/path/to/wrfcoin-deploy/infra/testnet/services/block-heartbeat",
+      "target": "/app",
+      "read_only": true,
+      "bind": {}
+    }
+  ],
+  "working_dir": "/app"
+}

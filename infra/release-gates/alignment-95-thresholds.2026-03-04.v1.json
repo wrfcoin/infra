@@ -1,0 +1,27 @@
+{
+  "gate_version": "2026-03-04.v1",
+  "description": "Alignment-95 production promotion gate thresholds",
+  "override_procedure_doc": "infra/release-gates/override-procedure.md",
+  "metrics": {
+    "privacy_defaults_ratio": {
+      "path": "privacy.defaults_ratio",
+      "min": 0.99,
+      "description": "Share of eligible transactions defaulting to privacy-preserving mode"
+    },
+    "permissionless_health_ratio": {
+      "path": "permissionless.health_ratio",
+      "min": 0.985,
+      "description": "Permissionless participation success ratio under normal load"
+    },
+    "sanctions_parity_drift_score": {
+      "path": "parity.drift_score",
+      "max": 0.08,
+      "description": "Maximum actor-class/offense-severity sanctions parity drift"
+    },
+    "forecast_breadth_coverage_ratio": {
+      "path": "forecast.coverage_ratio",
+      "min": 0.9,
+      "description": "Soil/ocean/hydrology forecast pipeline coverage ratio"
+    }
+  }
+}

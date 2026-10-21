@@ -1,0 +1,2 @@
+# Synthetic RFC 5737 fixture; never contact this address.
+/ip4/198.51.100.42/tcp/9000/p2p/12D3KooWSyntheticPublic

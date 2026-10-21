@@ -1,0 +1,151 @@
+# syntax=docker/dockerfile:1
+# ^ REQUIRED. The `RUN cat > ... << 'PYEOF'` heredoc below is a BuildKit
+#   frontend feature. Without this directive the daemon's built-in frontend
+#   is used and the build dies with `unknown instruction: """Soil` at line 59.
+# Dockerfile.soil-model — Python/ML-based soil monitoring and prediction
+#
+# Multi-stage build with Python 3.12 slim base.
+# Includes scientific computing libraries for soil analysis.
+#
+# Final image size: ~400MB
+#
+# Usage:
+#   docker build -f Dockerfile.soil-model -t wrfcoin/soil-model:latest .
+#   docker run -v ./input:/data/input -v ./output:/data/output wrfcoin/soil-model:latest
+
+# =============================================================================
+# Stage 1: Builder — install dev packages and compile Python dependencies
+# =============================================================================
+# python:3.12-slim
+FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgdal-dev \
+    libhdf5-dev \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --prefix=/install \
+    numpy==1.26.4 \
+    scipy==1.13.1 \
+    scikit-learn==1.5.2 \
+    netCDF4==1.7.1 \
+    rasterio==1.3.10 \
+    xarray==2024.7.0 \
+    pandas==2.2.2
+
+# =============================================================================
+# Stage 2: Runtime — slim image with pre-built Python packages
+# =============================================================================
+# python:3.12-slim
+FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install runtime libraries only (no build toolchain)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgdal36 \
+    libhdf5-310 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /install /usr/local
+
+RUN python -c 'import scipy; assert scipy.__version__ == "1.13.1"; print(f"scipy import OK: {scipy.__version__}")'
+
+# Create data and app directories
+RUN mkdir -p /data/input /data/output /app
+
+# Create prediction script
+RUN cat > /app/run_prediction.py << 'PYEOF'
+#!/usr/bin/env python3
+"""Soil model prediction script.
+
+Reads a JSON config file, runs soil variable predictions, and writes
+results to the output directory.
+"""
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Soil model prediction")
+    parser.add_argument("--config", required=True, help="Path to config JSON file")
+    args = parser.parse_args()
+
+    # Read configuration
+    with open(args.config, "r") as f:
+        config = json.load(f)
+
+    region = config.get("region", "unknown")
+    horizon_hours = config.get("horizon_hours", 24)
+    variables = config.get("variables", [])
+    grid_resolution = config.get("grid_resolution", 1000)
+    depth_layers = config.get("depth_layers", [0.1, 0.3, 0.6, 1.0, 2.0])
+
+    print(f"Running soil model for region={region}, horizon={horizon_hours}h")
+    print(f"Grid resolution: {grid_resolution}m, Depth layers: {depth_layers}")
+
+    # Generate sample output for each variable
+    results = {
+        "region": region,
+        "horizon_hours": horizon_hours,
+        "grid_resolution": grid_resolution,
+        "depth_layers": depth_layers,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "predictions": {},
+    }
+
+    for var in variables:
+        results["predictions"][var] = {
+            "mean": 0.0,
+            "std": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "unit": _get_unit(var),
+        }
+
+    # Write results
+    output_dir = os.environ.get("OUTPUT_DIR", "/data/output")
+    output_path = os.path.join(output_dir, f"soil_predictions_{region}.json")
+
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    print(f"Results written to {output_path}")
+
+
+def _get_unit(variable):
+    units = {
+        "soil_moisture": "m3/m3",
+        "organic_carbon": "g/kg",
+        "ph": "pH",
+        "nitrogen": "mg/kg",
+        "crop_yield_estimate": "tonnes/ha",
+    }
+    return units.get(variable, "unknown")
+
+
+if __name__ == "__main__":
+    main()
+PYEOF
+
+RUN chmod +x /app/run_prediction.py
+
+WORKDIR /app
+
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
+    CMD python3 -c "import numpy; import scipy; print('ok')" || exit 1
+
+# Run as non-root user
+RUN useradd -m -s /bin/bash soiluser && chown -R soiluser:soiluser /app /data
+USER soiluser
+
+CMD ["python3", "/app/run_prediction.py", "--config", "/data/input/config.json"]

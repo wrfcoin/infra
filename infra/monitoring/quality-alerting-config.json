@@ -1,0 +1,206 @@
+{
+  "channels": {
+    "console": {
+      "enabled": true,
+      "format": "detailed"
+    },
+    "slack": {
+      "enabled": false,
+      "webhook_url": null,
+      "channel": "#quality-alerts",
+      "username": "Quality Gates Bot",
+      "icon_emoji": ":warning:",
+      "mention_users": ["@channel"],
+      "mention_on_critical": true
+    },
+    "email": {
+      "enabled": false,
+      "smtp_host": null,
+      "smtp_port": 587,
+      "smtp_secure": false,
+      "smtp_user": null,
+      "smtp_pass": null,
+      "from": null,
+      "to": [],
+      "cc": [],
+      "subject_prefix": "[WRFCoin Quality Alert]"
+    },
+    "webhook": {
+      "enabled": false,
+      "url": null,
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "WRFCoin-Quality-Alerts/1.0"
+      },
+      "timeout": 30000
+    },
+    "github": {
+      "enabled": false,
+      "token": null,
+      "repository": "wrfcoin/wrfcoin",
+      "create_issues": false,
+      "comment_on_pr": true,
+      "labels": ["quality-gate", "automated"]
+    },
+    "teams": {
+      "enabled": false,
+      "webhook_url": null,
+      "theme_color": "ff6b6b"
+    }
+  },
+  "thresholds": {
+    "quality_score": {
+      "critical": 50,
+      "warning": 70,
+      "good": 85
+    },
+    "coverage": {
+      "javascript": {
+        "critical": 60,
+        "warning": 80,
+        "good": 90
+      },
+      "rust": {
+        "critical": 50,
+        "warning": 70,
+        "good": 85
+      },
+      "contracts": {
+        "critical": 70,
+        "warning": 85,
+        "good": 95
+      }
+    },
+    "lint_issues": {
+      "critical": 20,
+      "warning": 10,
+      "good": 0
+    },
+    "security_vulnerabilities": {
+      "critical": 1,
+      "warning": 0
+    },
+    "build_failure_rate": {
+      "critical": 20,
+      "warning": 10,
+      "good": 0
+    },
+    "test_failures": {
+      "critical": 5,
+      "warning": 2,
+      "good": 0
+    }
+  },
+  "rate_limiting": {
+    "max_alerts_per_hour": 10,
+    "cooldown_minutes": 30,
+    "burst_threshold": 3,
+    "burst_cooldown_minutes": 60
+  },
+  "escalation": {
+    "enabled": true,
+    "rules": [
+      {
+        "condition": "consecutive_critical_alerts >= 3",
+        "action": "escalate_to_oncall",
+        "channels": ["slack", "email"]
+      },
+      {
+        "condition": "quality_score < 30",
+        "action": "immediate_escalation",
+        "channels": ["slack", "email", "teams"]
+      },
+      {
+        "condition": "security_vulnerabilities > 5",
+        "action": "security_escalation",
+        "channels": ["slack", "email", "webhook"]
+      }
+    ]
+  },
+  "filtering": {
+    "ignore_alerts": [],
+    "alert_only_on_degradation": true,
+    "minimum_change_threshold": 5,
+    "suppress_duplicate_alerts": true
+  },
+  "scheduling": {
+    "quiet_hours": {
+      "enabled": false,
+      "start": "22:00",
+      "end": "08:00",
+      "timezone": "UTC",
+      "emergency_override": true
+    },
+    "weekends": {
+      "reduced_alerts": true,
+      "critical_only": true
+    }
+  },
+  "templates": {
+    "slack": {
+      "critical": {
+        "title": "🚨 Critical Quality Gate Alert",
+        "color": "danger",
+        "footer": "Immediate action required"
+      },
+      "warning": {
+        "title": "⚠️ Quality Gate Warning",
+        "color": "warning",
+        "footer": "Please review and address"
+      }
+    },
+    "email": {
+      "critical": {
+        "subject": "🚨 CRITICAL: Quality Gate Failure - {metric}",
+        "priority": "high"
+      },
+      "warning": {
+        "subject": "⚠️ WARNING: Quality Gate Alert - {metric}",
+        "priority": "normal"
+      }
+    }
+  },
+  "metrics_sources": {
+    "quality_metrics_reporter": {
+      "enabled": true,
+      "script_path": "scripts/quality-metrics-reporter.js",
+      "timeout": 300000
+    },
+    "github_actions": {
+      "enabled": true,
+      "api_token": null,
+      "repository": "wrfcoin/wrfcoin",
+      "workflows": [
+        "quality-gate-monitoring.yml",
+        "sonarqube-analysis.yml",
+        "pr-checks.yml"
+      ]
+    },
+    "sonarqube": {
+      "enabled": false,
+      "base_url": null,
+      "project_key": "wrfcoin-blockchain-platform",
+      "auth_token": null
+    }
+  },
+  "dashboard_integration": {
+    "enabled": true,
+    "dashboard_url": "http://localhost:8090",
+    "update_dashboard_on_alert": true,
+    "embed_charts": false
+  },
+  "logging": {
+    "level": "info",
+    "file_path": "logs/quality-alerts.log",
+    "max_file_size": "10MB",
+    "max_files": 5,
+    "include_stack_trace": true
+  },
+  "testing": {
+    "test_mode": false,
+    "test_channels": ["console"],
+    "mock_webhooks": false,
+    "dry_run": false
+  }
+}

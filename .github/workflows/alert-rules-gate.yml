@@ -1,0 +1,54 @@
+permissions:
+  contents: read
+
+name: Alert Rules Gate
+
+# Lint + unit-test the testnet Prometheus alert rules (infra#617).
+# Deliberately a separate slim workflow (not a job in testnet-docker-validate)
+# so Dockerfile lint/build jobs don't burn CI minutes on rule-only edits.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'testnet/alert-rules*.yml'
+      - 'testnet/prometheus.testnet.yml'
+      - '.github/workflows/alert-rules-gate.yml'
+  pull_request:
+    paths:
+      - 'testnet/alert-rules*.yml'
+      - 'testnet/prometheus.testnet.yml'
+      - '.github/workflows/alert-rules-gate.yml'
+
+# Refs infra#1113: superseded PRs share a group; every other run is isolated,
+# including pending main/dispatch/schedule jobs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  promtool:
+    name: promtool check + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: promtool check rules (all rule files loaded by prometheus.testnet.yml)
+        run: |
+          docker run --rm -v "$PWD/testnet:/t:ro" --entrypoint promtool prom/prometheus:latest \
+            check rules \
+            /t/alert-rules.yml \
+            /t/alert-rules-blockchain-health.yml \
+            /t/alert-rules-backend-down.yml
+
+      - name: promtool test rules (unit tests)
+        run: |
+          shopt -s nullglob
+          tests=(testnet/*.test.yml)
+          if [ ${#tests[@]} -eq 0 ]; then
+            echo "no rule unit tests found" >&2; exit 1
+          fi
+          for f in "${tests[@]}"; do
+            docker run --rm -v "$PWD/testnet:/t:ro" --entrypoint promtool prom/prometheus:latest \
+              test rules "/t/$(basename "$f")"
+          done

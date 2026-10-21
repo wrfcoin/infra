@@ -1,0 +1,308 @@
+# WRFCoin Testnet — Prometheus Alert Rules
+#
+# All WRFCoin metric names verified against
+# core4/shared-protocol/src/monitoring/mod.rs
+
+groups:
+  - name: service_availability
+    rules:
+      - alert: ServiceDown
+        expr: |
+          up{job=~"wrfcoin-node|wrfcoin-backend|wrfcoin-weather-earnings|loki|node-exporter|cadvisor|postgres-exporter|wrfcoin-backend-health|wrfcoin-service-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Prometheus cannot scrape {{ $labels.job }} (target {{ $labels.instance }}). The container may have crashed or failed its healthcheck."
+
+      # Liveness of services whose /metrics cannot stand in for it (infra#1078):
+      # governance and iot have no /metrics route, and the faucet's needs a
+      # token that can drift. Their /health is probed by blackbox instead.
+      - alert: ServiceHealthProbeFailed
+        expr: probe_success{job="wrfcoin-service-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health probe failed for {{ $labels.instance }}"
+          description: "blackbox-exporter got no 2xx from {{ $labels.instance }} for 2+ minutes. The service is down or unhealthy."
+
+      # The faucet's /metrics is token-gated (FAUCET_METRICS_TOKEN must equal
+      # prometheus-bearer-token). A failed scrape is a metrics/auth defect, not
+      # an outage, so it is a log-only warning; the faucet's liveness pages via
+      # ServiceHealthProbeFailed. Its balance alerts go blind while this fires.
+      - alert: FaucetMetricsScrapeFailing
+        expr: up{job="wrfcoin-faucet"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus cannot scrape faucet /metrics"
+          description: "wrfcoin-faucet /metrics scrape failing for 10+ minutes (403 = FAUCET_METRICS_TOKEN differs from prometheus-bearer-token; infra#1078). Faucet balance alerts are blind until fixed."
+
+      # Explicit scrape coverage alerts for infra#476.
+      # Keep these separate from ServiceDown so operators can immediately
+      # identify exporter coverage regressions.
+      - alert: NodeExporterScrapeDown
+        expr: up{job="node-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: scrape-coverage
+        annotations:
+          summary: "node-exporter scrape target is down"
+          description: "Prometheus cannot scrape node-exporter ({{ $labels.instance }}) for 2+ minutes."
+
+      - alert: CAdvisorScrapeDown
+        expr: up{job="cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: scrape-coverage
+        annotations:
+          summary: "cAdvisor scrape target is down"
+          description: "Prometheus cannot scrape cadvisor ({{ $labels.instance }}) for 2+ minutes; verify infra#421 port-conflict status."
+
+  - name: wrfcoin_testnet
+    rules:
+      - alert: ChainStalled
+        expr: changes(wrfcoin_blockchain_block_height[5m]) == 0 and wrfcoin_blockchain_block_height > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block production has stalled"
+          description: "Block height has not changed in 10 minutes (5m range + 5m for). Current height: {{ $value }}."
+
+      - alert: NoPeers
+        expr: wrfcoin_network_peer_count == 0
+        # Give the node a short post-reboot/redial window before paging. The
+        # post-reboot verifier requires peer_count > 0 for the final GO line.
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node has zero connected peers"
+          description: "The node has been isolated with no P2P peers for over 5 minutes."
+
+      - alert: HostMemoryPressureWarning
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          resource: memory
+          scope: host
+        annotations:
+          summary: "Host memory pressure sustained above 85%"
+          description: "Host memory usage has stayed above 85% for 10 minutes. Current: {{ $value | humanizePercentage }}. Check memory-heavy containers with: docker stats --no-stream."
+
+      - alert: HostMemoryPressureCritical
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.92
+        for: 15m
+        labels:
+          severity: critical
+          resource: memory
+          scope: host
+        annotations:
+          summary: "Host memory pressure sustained above 92%"
+          description: "Host memory usage has stayed above 92% for 15 minutes. Current: {{ $value | humanizePercentage }}. Immediate action: reduce container memory pressure or scale down non-essential workloads."
+
+      - alert: ContainerRssNearLimitWarning
+        expr: |
+          (
+            container_memory_working_set_bytes{name=~"wrfcoin-testnet-.*",image!=""}
+            /
+            container_spec_memory_limit_bytes{name=~"wrfcoin-testnet-.*",image!=""}
+          ) > 0.80
+          and on (name, instance)
+          container_spec_memory_limit_bytes{name=~"wrfcoin-testnet-.*",image!=""} > 0
+        for: 10m
+        labels:
+          severity: warning
+          resource: memory
+          scope: container
+        annotations:
+          summary: "Container RSS sustained above 80% of memory limit"
+          description: "Container {{ $labels.name }} has sustained RSS >80% of its memory limit for 10 minutes. Current ratio: {{ $value | humanizePercentage }}. Check `docker stats --no-stream` and container memory_limit settings."
+
+      - alert: ContainerRssNearLimitCritical
+        expr: |
+          (
+            container_memory_working_set_bytes{name=~"wrfcoin-testnet-.*",image!=""}
+            /
+            container_spec_memory_limit_bytes{name=~"wrfcoin-testnet-.*",image!=""}
+          ) > 0.92
+          and on (name, instance)
+          container_spec_memory_limit_bytes{name=~"wrfcoin-testnet-.*",image!=""} > 0
+        for: 15m
+        labels:
+          severity: critical
+          resource: memory
+          scope: container
+        annotations:
+          summary: "Container RSS sustained above 92% of memory limit"
+          description: "Container {{ $labels.name }} has sustained RSS >92% of its memory limit for 15 minutes. Current ratio: {{ $value | humanizePercentage }}. Immediate action: reduce workload or increase container memory allocation before OOM."
+
+      - alert: RootDiskPressureWarning
+        expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint="/"} / node_filesystem_size_bytes{fstype!="tmpfs",mountpoint="/"})) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          resource: disk
+          scope: host
+          mountpoint: /
+        annotations:
+          summary: "Root filesystem pressure sustained above 80%"
+          description: "Disk usage on / has stayed above 80% for 10 minutes. Current: {{ $value | humanizePercentage }}. Start reclaiming non-essential space and inspect Docker growth with: docker system df."
+
+      - alert: RootDiskPressureCritical
+        expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint="/"} / node_filesystem_size_bytes{fstype!="tmpfs",mountpoint="/"})) > 0.90
+        for: 15m
+        labels:
+          severity: critical
+          resource: disk
+          scope: host
+          mountpoint: /
+        annotations:
+          summary: "Root filesystem pressure sustained above 90%"
+          description: "Disk usage on / has stayed above 90% for 15 minutes. Current: {{ $value | humanizePercentage }}. Immediate action: free space and prepare a controlled restore path if write failures appear."
+
+      # ZFS tank dataset alerts (#251)
+      # Monitors /mnt/tank and its sub-datasets for the blockchain, postgres, and redis data.
+      # node_exporter must be configured with --collector.filesystem (default on) and the
+      # ZFS datasets must be mounted so they appear in node_filesystem_avail_bytes.
+      - alert: ZfsTankAlmostFull
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/mnt/tank"} / node_filesystem_size_bytes{mountpoint="/mnt/tank"})) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          dataset: tank
+        annotations:
+          summary: "ZFS tank dataset usage above 85%"
+          description: "Disk usage on /mnt/tank has exceeded 85% for 5 minutes. Current: {{ $value | humanizePercentage }}. Free: {{ query \"node_filesystem_avail_bytes{mountpoint='/mnt/tank'}\" | first | value | humanize1024 }}B."
+
+      - alert: ZfsBlockchainAlmostFull
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/mnt/tank/blockchain"} / node_filesystem_size_bytes{mountpoint="/mnt/tank/blockchain"})) > 0.85
+        for: 5m
+        labels:
+          severity: critical
+          dataset: blockchain
+        annotations:
+          summary: "ZFS blockchain dataset usage above 85%"
+          description: "Disk usage on /mnt/tank/blockchain has exceeded 85% for 5 minutes. Current: {{ $value | humanizePercentage }}. The blockchain node will stop producing blocks if storage is exhausted."
+
+      - alert: ZfsPostgresAlmostFull
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/mnt/tank/postgres"} / node_filesystem_size_bytes{mountpoint="/mnt/tank/postgres"})) > 0.80
+        for: 5m
+        labels:
+          severity: critical
+          dataset: postgres
+        annotations:
+          summary: "ZFS postgres dataset usage above 80%"
+          description: "Disk usage on /mnt/tank/postgres has exceeded 80% for 5 minutes. Current: {{ $value | humanizePercentage }}. PostgreSQL will crash if disk fills completely."
+
+      - alert: ZfsRedisAlmostFull
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/mnt/tank/redis"} / node_filesystem_size_bytes{mountpoint="/mnt/tank/redis"})) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          dataset: redis
+        annotations:
+          summary: "ZFS redis dataset usage above 85%"
+          description: "Disk usage on /mnt/tank/redis has exceeded 85% for 5 minutes. Current: {{ $value | humanizePercentage }}."
+
+      - alert: HighErrorRate
+        expr: rate(wrfcoin_blockchain_transactions_failed_total[5m]) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated transaction failure rate"
+          description: "Transaction failures are averaging more than 0.5/sec over 5 minutes."
+
+      - alert: BackendHighLatency
+        expr: histogram_quantile(0.95, sum(rate(wrfcoin_http_request_duration_seconds_bucket{job="wrfcoin-backend",category!="internal"}[5m])) by (le, instance)) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "Backend p95 latency > 2s for 5m"
+          description: "p95 = {{ $value }}s on {{ $labels.instance }}"
+
+  # Block-time progression alerts (#139)
+  # BLOCK_TIME_PROGRESSION from core4/shared-protocol/src/common/constants.rs:32-42
+  #   Height 0:         4h  (14400s)
+  #   Height 1,000:     2h  (7200s)
+  #   Height 5,000:     1h  (3600s)
+  #   Height 25,000:    10m (600s)
+  #   Height 100,000:   2m  (120s)
+  #   Height 500,000:   30s
+  #   Height 1,000,000: 15s
+  #   Height 5,000,000: 5s
+  #   Height 10,000,000: 1s (terminal)
+  - name: block_time_progression
+    rules:
+      - alert: BlockTimeTransitionImminent
+        expr: >
+          (wrfcoin_blockchain_block_height > 900 and wrfcoin_blockchain_block_height < 1000)
+          or (wrfcoin_blockchain_block_height > 4900 and wrfcoin_blockchain_block_height < 5000)
+          or (wrfcoin_blockchain_block_height > 24900 and wrfcoin_blockchain_block_height < 25000)
+          or (wrfcoin_blockchain_block_height > 99900 and wrfcoin_blockchain_block_height < 100000)
+          or (wrfcoin_blockchain_block_height > 499900 and wrfcoin_blockchain_block_height < 500000)
+          or (wrfcoin_blockchain_block_height > 999900 and wrfcoin_blockchain_block_height < 1000000)
+          or (wrfcoin_blockchain_block_height > 4999900 and wrfcoin_blockchain_block_height < 5000000)
+          or (wrfcoin_blockchain_block_height > 9999900 and wrfcoin_blockchain_block_height < 10000000)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block time transition approaching"
+          description: >
+            Block height {{ $value }} is within 100 blocks of a block-time transition.
+            Block time, reward magnitude, and fee-less capacity will change at the next step.
+            Check the BLOCK_TIME_PROGRESSION table for details.
+
+      - alert: BlockTimeTransitionOccurred
+        expr: >
+          (wrfcoin_blockchain_block_height >= 1000 and wrfcoin_blockchain_block_height < 1100)
+          or (wrfcoin_blockchain_block_height >= 5000 and wrfcoin_blockchain_block_height < 5100)
+          or (wrfcoin_blockchain_block_height >= 25000 and wrfcoin_blockchain_block_height < 25100)
+          or (wrfcoin_blockchain_block_height >= 100000 and wrfcoin_blockchain_block_height < 100100)
+          or (wrfcoin_blockchain_block_height >= 500000 and wrfcoin_blockchain_block_height < 500100)
+          or (wrfcoin_blockchain_block_height >= 1000000 and wrfcoin_blockchain_block_height < 1000100)
+          or (wrfcoin_blockchain_block_height >= 5000000 and wrfcoin_blockchain_block_height < 5000100)
+          or (wrfcoin_blockchain_block_height >= 10000000 and wrfcoin_blockchain_block_height < 10000100)
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Block time transition occurred"
+          description: >
+            Block height {{ $value }} has crossed a block-time transition boundary.
+            The block time has changed. Verify that node behavior matches expectations.
+
+  # ---------------------------------------------------------------------------
+  # Block assembly drops (#625 / #2056)
+  # ---------------------------------------------------------------------------
+  # `wrfcoin_blockchain_tx_dropped_total` is a reason-labeled cumulative counter
+  # shipped in core4 for all governor/transfer txs that were admitted to mempool
+  # but dropped when block assembly apply failed. A rise means transfers can vanish
+  # from user-visible mempool with no execution. Any sustained rise deserves paging.
+  - name: wrfcoin_block_assembly
+    rules:
+      - alert: BlockAssemblyDropDetected
+        expr: sum by (job, instance, reason) (increase(wrfcoin_blockchain_tx_dropped_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: core4
+          component: block-assembly
+        annotations:
+          summary: "Transaction dropped during block assembly"
+          description: >
+            {{ $labels.reason }}-reason drops rose in the last 5m: {{ $value }}.
+            These txs were admitted to mempool, then excluded when applied during
+            block assembly. Investigate the first dropped tx and its log trace for
+            #2056.

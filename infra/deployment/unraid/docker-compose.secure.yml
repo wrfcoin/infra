@@ -1,0 +1,131 @@
+# WRF Storage Node - Secure Unraid Deployment
+# Legacy NAS service retired; only monitoring remains. Use the IPFS-only storage compose for storage.
+version: '3.8'
+
+services:
+  # Monitoring and metrics collection
+  wrf-monitoring:
+    image: prom/node-exporter:v1.8.2@sha256:065914c03336590ebed517e7df38520f0efb44465fde4123c3f6b7328f5a9396
+    container_name: wrf-monitoring
+    restart: unless-stopped
+
+    # Security
+    user: '65534:65534' # nobody user
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    mem_limit: 256m
+    cpus: 0.5
+
+    # Port for metrics (internal only)
+    expose:
+      - '9100'
+
+    # Host metrics
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # SECURITY: Removed dangerous /:/rootfs:ro mount
+
+    # Command with security options
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--web.disable-exporter-metrics'
+      - '--collector.textfile.directory=/var/lib/node_exporter/textfile_collector'
+
+    # Labels
+    labels:
+      - 'com.wrfcoin.service=monitoring'
+      - 'com.wrfcoin.description=System metrics for WRF storage node'
+
+    # Network
+    networks:
+      - wrf-isolated-network
+
+  # Log aggregation (optional but recommended)
+  wrf-logs:
+    image: fluent/fluent-bit:latest
+    container_name: wrf-logs
+    restart: unless-stopped
+
+    # Security
+    user: '65534:65534'
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    mem_limit: 256m
+    cpus: 0.5
+
+    # Configuration
+    volumes:
+      - /mnt/disks/wrf_storage/logs:/var/log/wrf:ro
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+
+    # Environment
+    environment:
+      - FLB_CONFIG_FILE=/fluent-bit/etc/fluent-bit.conf
+
+    # Labels
+    labels:
+      - 'com.wrfcoin.service=log-aggregation'
+      - 'com.wrfcoin.description=Log processing for WRF storage node'
+
+    # Network
+    networks:
+      - wrf-isolated-network
+
+# Network configuration
+networks:
+  wrf-isolated-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-wrf-isolated
+      com.docker.network.bridge.enable_ip_masquerade: 'true'
+      com.docker.network.bridge.enable_icc: 'false' # Disable inter-container communication
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1
+    labels:
+      - 'com.wrfcoin.network=isolated'
+      - 'com.wrfcoin.description=Isolated network for WRF storage services'
+
+# Volume definitions
+volumes:
+  # These volumes will be created on the dedicated WRF drive
+  wrf_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/disks/wrf_storage/data
+    labels:
+      - 'com.wrfcoin.volume=data'
+      - 'com.wrfcoin.description=Primary storage for WRF network files'
+
+  wrf_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/disks/wrf_storage/logs
+    labels:
+      - 'com.wrfcoin.volume=logs'
+      - 'com.wrfcoin.description=Log files for debugging and monitoring'
+
+  wrf_config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/disks/wrf_storage/config
+    labels:
+      - 'com.wrfcoin.volume=config'
+      - 'com.wrfcoin.description=Configuration files and settings'

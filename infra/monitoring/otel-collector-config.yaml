@@ -1,0 +1,188 @@
+# OpenTelemetry Collector Configuration for Wrfcoin
+# Receives traces, metrics, and logs and exports to various backends
+
+receivers:
+  # OTLP receivers for gRPC and HTTP
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size: 32000000 # 32MB
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - 'http://*'
+            - 'https://*'
+          allowed_headers:
+            - '*'
+
+  # Jaeger receivers
+  jaeger:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14250
+      thrift_http:
+        endpoint: 0.0.0.0:14268
+      thrift_compact:
+        endpoint: 0.0.0.0:6831
+      thrift_binary:
+        endpoint: 0.0.0.0:6832
+
+  # Zipkin receiver
+  zipkin:
+    endpoint: 0.0.0.0:9411
+
+  # Prometheus metrics
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'wrfcoin-blockchain'
+          static_configs:
+            - targets: ['host.docker.internal:9100']
+          scrape_interval: 30s
+          metrics_path: /metrics
+
+processors:
+  # Batch processor for performance
+  batch:
+    send_batch_max_size: 1000
+    timeout: 1s
+    send_batch_size: 100
+
+  # Resource processor to add metadata
+  resource:
+    attributes:
+      - key: service.name
+        value: wrfcoin-blockchain
+        action: upsert
+      - key: service.version
+        value: 1.0.0
+        action: upsert
+      - key: deployment.environment
+        value: development
+        action: upsert
+
+  # Memory limiter
+  memory_limiter:
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Probabilistic sampler for traces
+  probabilistic_sampler:
+    sampling_percentage: 10.0
+
+  # Attributes processor for enrichment
+  attributes:
+    actions:
+      - key: wrfcoin.version
+        value: 1.0.0
+        action: insert
+      - key: wrfcoin.component
+        from_attribute: service.name
+        action: insert
+
+  # Span processor for custom span modifications
+  span:
+    name:
+      from_attributes: ['http.method', 'http.route']
+      separator: ' '
+
+exporters:
+  # Jaeger exporter
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+  # OTLP exporters
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Prometheus exporter for metrics
+  prometheus:
+    endpoint: '0.0.0.0:8889'
+    const_labels:
+      environment: development
+      service: wrfcoin-collector
+
+  # Logging exporter for debugging
+  logging:
+    loglevel: info
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+  # File exporter for backup
+  file:
+    path: /tmp/otel-traces.json
+
+  # Zipkin exporter (alternative)
+  zipkin:
+    endpoint: 'http://zipkin:9411/api/v2/spans'
+    default_service_name: wrfcoin-blockchain
+
+extensions:
+  # Health check extension
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  # Performance profiler
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+  # Memory ballast for stable memory usage
+  memory_ballast:
+    size_mib: 64
+
+  # Zpages for debugging
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, pprof, memory_ballast, zpages]
+
+  pipelines:
+    # Traces pipeline
+    traces:
+      receivers: [otlp, jaeger, zipkin]
+      processors:
+        [memory_limiter, resource, attributes, probabilistic_sampler, batch]
+      exporters: [jaeger, logging]
+
+    # Metrics pipeline
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, logging]
+
+    # Logs pipeline
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [logging]
+
+  # Telemetry configuration
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888
+      level: detailed
+    traces:
+      processors: [batch]
+
+# Custom sampling configuration
+connectors:
+  spanmetrics:
+    histogram_buckets: [100us, 1ms, 2ms, 6ms, 10ms, 100ms, 250ms]
+    dimensions:
+      - name: http.method
+      - name: http.status_code
+    exemplars:
+      enabled: true
+    exclude_dimensions: ['status.code']
+    dimensions_cache_size: 1000
+    aggregation_temporality: 'AGGREGATION_TEMPORALITY_CUMULATIVE'
+    metrics_flush_interval: 15s

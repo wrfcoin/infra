@@ -1,0 +1,33 @@
+{
+  "name": "testnet",
+  "networks": {
+    "default": {
+      "name": "testnet_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "wrfcoin-node": {
+      "command": null,
+      "container_name": "wrfcoin-testnet-node",
+      "entrypoint": null,
+      "image": "wrfcoin/native-chain:testnet-local",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "node-data",
+          "target": "/app/data",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "node-data": {
+      "name": "testnet_node-data"
+    }
+  }
+}

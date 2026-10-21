@@ -1,0 +1,29 @@
+# Independent standby observer: owner install steps
+
+Refs infra#970. Owner option A: schedule the observer on Proxmox, outside the workstation that restarts, and deliver alarms to an external receiver. The workstation only holds the read-only probe helpers. These files are staged for owner installation; the lane never invokes SSH, Docker, devices, systemctl, a live endpoint or a real notification receiver.
+
+Every minute, Proxmox makes one bounded GET to the owner's LAN/tailnet node `/readyz` and one SSH command to the workstation. The remote helper calls the merged USB/container checker with explicit owner pins and selects only the oracle-attester Docker health status. The shipped attester healthcheck verifies `/proc/1/comm`; this is process liveness, not proof of advancing attestations, oracle correctness or intended token identity. Missing, stopped, unhealthy, unknown, malformed and timed-out states fail. No bulk block reads, credentials, environment or Docker error output is collected. HTTP reads are capped at16KiB/5seconds; SSH is noninteractive, requires a pinned known host, and has a22second timeout. The unit has a45second deadline.
+
+## Receiver choices and owner inputs
+
+Free option A is `receiver_type=ntfy` with an owner-selected HTTPS ntfy.sh topic containing a cryptographically random, unguessable name. Subscribe on an owner device before installation. Topics are bearer capabilities on the anonymous service: keep the complete URL out of Git, logs and shell history. The observer sends a first failure, repeats an unchanged outage at most every15minutes, and sends an acknowledged recovery. This cadence stays below the documented250 messages/day for a steady outage; frequent status transitions can still exhaust a quota. See [official publishing and limits](https://docs.ntfy.sh/publish/).
+
+Free option B is `receiver_type=healthchecks` with the owner's HTTPS ping URL for one Healthchecks.io check and email notification configured in its web UI. The free account allows20 checks ([official API limits](https://healthchecks.io/docs/api/)). Each observer run posts success or `/fail`; configure a60second period with a120second grace to detect a missing Proxmox job as well as a workstation outage. A200 response with `OK (not found)` or `OK (rate limited)` is rejected; only an actual `OK` receipt counts. See [official ping API](https://healthchecks.io/docs/http_api/).
+
+An ntfy receiver alone cannot detect the observer itself dying. Set optional `heartbeat_url` to a separate Healthchecks.io ping URL, with its period/grace and email integration configured, for that missed-job alarm. It is pinged every run regardless of ntfy deduplication. Delivery uncertainty is STOP; raw responses, URLs, SSH output and exception messages are never logged. Receiver availability, email/device delivery and account configuration remain owner validation. No paid service or credentials are added by this patch.
+
+Prepare a private0600 JSON file outside the repository, using `config.example.json` only as its schema. Replace both synthetic USB paths with the deployment's expected source nodes; set `node_ready_url` to the exact `/readyz` URL, `remote_target` to a monitoring SSH login on the workstation, and the chosen receiver/optional heartbeat URLs. Establish that login and pinned known-host/key access for the Proxmox root job. Restrict its remote key to the probe command where the owner's SSH setup supports it. Receiver address, SSH credentials, token identity and network ACLs are owner inputs. No secrets are checked in, and the empty receiver example intentionally fails validation.
+
+## One-line invocations
+
+Use the reviewed checkout on each named host. Steps print PASS or STOP and have meaningful exit codes. Do not paste private receiver values into command lines. Installation needs existing Python3, SSH, Docker on the workstation and systemd on Proxmox; it downloads nothing.
+
+1. **Workstation** helper installation: `sudo bash testnet/owner-steps/standby-alert/01-install.sh workstation`
+2. **Proxmox** installation with the private owner file: `sudo bash testnet/owner-steps/standby-alert/01-install.sh proxmox /root/standby-watch.json`
+3. **Proxmox** actual outside preflight: `sudo bash testnet/owner-steps/standby-alert/02-proxmox-preflight.sh`
+4. **Proxmox** timer enablement after preflight PASS: `sudo bash testnet/owner-steps/standby-alert/03-proxmox-enable.sh`
+5. **Proxmox** require an active timer and a successful real observer invocation: `sudo bash testnet/owner-steps/standby-alert/04-proxmox-verify.sh`
+
+The Proxmox steps refuse a machine without `/etc/pve`. Inspect sanitized failure codes with `journalctl -u wrfcoin-standby-observer.service`; routine unavailable runs intentionally mark the oneshot failed, but its timer keeps polling. The private state directory stores only notification state and timestamp. An acknowledged outage is still STOP, and a failed recovery notification is retried. The timer/service serialize runs. Maintenance is owner-controlled; to suspend polling use `sudo systemctl disable --now wrfcoin-standby-observer.timer`, then re-run enable/verify afterward. A heartbeat check must have matching maintenance handling in its external service.
+
+Preflight sends an explicitly labelled TEST notification and requires a receiver receipt before checking runtime. For Healthchecks this records a successful TEST ping, not a simulated outage. The owner must separately test its email integration in the service UI, confirm ntfy receipt on the subscribed device, and test missing-job notification with a planned timer suspension; that external acceptance is not proven by local doubles or the receiver receipt. Do not detach hardware or stop the live node for this check. No compose, image, migration, release pin or feature/schedule change is needed.

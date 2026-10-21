@@ -1,0 +1,14 @@
+# Public opt-in example. Read PUBLIC_DEPLOYMENT_EXAMPLES.md before use.
+# Installation-specific paths must be supplied explicitly.
+
+services:
+  oracle-attester:
+    user: root
+    security_opt: !reset []
+    cap_add:
+      - SETUID
+      - SETGID
+    environment:
+      WRFCOIN_HSM_MODULE_PATH: /usr/lib/x86_64-linux-gnu/libykcs11.so
+    volumes:
+      - ${WRFCOIN_PCSC_SOCKET_DIR:?Set WRFCOIN_PCSC_SOCKET_DIR to the host pcscd directory}:/run/pcscd:ro

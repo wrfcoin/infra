@@ -1,0 +1,188 @@
+{
+  "provenance": {
+    "fetched_at": "2026-10-03T11:01:28.679035+00:00",
+    "repo": "wrfcoin/infra",
+    "pr": 1239,
+    "run": 37113966874,
+    "job": 111177057564,
+    "note": "Live API subset; checkout identity extracted from bounded prefix of the actual job log."
+  },
+  "pr": {
+    "number": 1239,
+    "head": {
+      "sha": "9513f7baeb4438e004de53056f8ae9a8c3eb9097"
+    },
+    "base": {
+      "sha": "ddc61c3d255bb7090f5d11c4421eb4c7bb3080ec"
+    }
+  },
+  "check": {
+    "id": 111177057564,
+    "name": "scripts/tests suites",
+    "head_sha": "9513f7baeb4438e004de53056f8ae9a8c3eb9097",
+    "status": "completed",
+    "conclusion": "success",
+    "details_url": "https://github.com/wrfcoin/infra/actions/runs/37113966874/job/111177057564"
+  },
+  "job": {
+    "id": 111177057564,
+    "run_id": 37113966874,
+    "check_run_url": "https://api.github.com/repos/wrfcoin/infra/check-runs/111177057564",
+    "name": "scripts/tests suites",
+    "head_sha": "9513f7baeb4438e004de53056f8ae9a8c3eb9097",
+    "status": "completed",
+    "conclusion": "success",
+    "runner_name": "n5pro-ct102-infra",
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-03T09:43:23Z",
+        "completed_at": "2026-10-03T09:43:24Z"
+      },
+      {
+        "name": "Run actions/checkout@v7",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2,
+        "started_at": "2026-10-03T09:43:24Z",
+        "completed_at": "2026-10-03T09:43:25Z"
+      },
+      {
+        "name": "Install test dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-03T09:43:25Z",
+        "completed_at": "2026-10-03T09:43:25Z"
+      },
+      {
+        "name": "Python suites (pytest)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-03T09:43:25Z",
+        "completed_at": "2026-10-03T09:45:41Z"
+      },
+      {
+        "name": "Public build freshness fixture",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-03T09:45:41Z",
+        "completed_at": "2026-10-03T09:45:44Z"
+      },
+      {
+        "name": "Oracle sanity auth fixture",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-03T09:45:44Z",
+        "completed_at": "2026-10-03T09:45:45Z"
+      },
+      {
+        "name": "Snapshot trusted-signer env fixture",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-03T09:45:45Z",
+        "completed_at": "2026-10-03T09:45:48Z"
+      },
+      {
+        "name": "Genesis faucet cut pin",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-03T09:45:48Z",
+        "completed_at": "2026-10-03T09:45:51Z"
+      },
+      {
+        "name": "Cut-pins overlay renderer",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-03T09:45:51Z",
+        "completed_at": "2026-10-03T09:45:52Z"
+      },
+      {
+        "name": "Snapshot-signer attestation record",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-03T09:45:52Z",
+        "completed_at": "2026-10-03T09:45:52Z"
+      },
+      {
+        "name": "Runtime image gate fixture",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11,
+        "started_at": "2026-10-03T09:45:52Z",
+        "completed_at": "2026-10-03T09:45:52Z"
+      },
+      {
+        "name": "P2P advertised-address config fixture",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 12,
+        "started_at": "2026-10-03T09:45:52Z",
+        "completed_at": "2026-10-03T09:48:28Z"
+      },
+      {
+        "name": "Semantic health fixture",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 13,
+        "started_at": "2026-10-03T09:48:28Z",
+        "completed_at": "2026-10-03T09:48:29Z"
+      },
+      {
+        "name": "Onboarding env warnings",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 14,
+        "started_at": "2026-10-03T09:48:29Z",
+        "completed_at": "2026-10-03T09:48:29Z"
+      },
+      {
+        "name": "Infra snapshot-move preflight fixture",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 15,
+        "started_at": "2026-10-03T09:48:29Z",
+        "completed_at": "2026-10-03T09:48:30Z"
+      },
+      {
+        "name": "Shell suites (discovered)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 16,
+        "started_at": "2026-10-03T09:48:30Z",
+        "completed_at": "2026-10-03T09:54:07Z"
+      },
+      {
+        "name": "Post Run actions/checkout@v7",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 32,
+        "started_at": "2026-10-03T09:54:07Z",
+        "completed_at": "2026-10-03T09:54:07Z"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 33,
+        "started_at": "2026-10-03T09:54:07Z",
+        "completed_at": "2026-10-03T09:54:07Z"
+      }
+    ]
+  },
+  "checkout_sha": "3af6448c9a13fdf2d468c0892e1c2cc546f51d4a",
+  "parents": [
+    "ddc61c3d255bb7090f5d11c4421eb4c7bb3080ec",
+    "9513f7baeb4438e004de53056f8ae9a8c3eb9097"
+  ]
+}

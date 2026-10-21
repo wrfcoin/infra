@@ -1,0 +1,151 @@
+# N5/CT101 only. Add after the testnet, override, and cut-miner files.
+# Requires the companion core4 collector pipeline before disabling mining.
+# Producer rotation (infra#1327, opt-in, DEPLOYMENT HELD until after the first node-share payout;
+# requires core4#3590 gossip deployed first). Rotation is OFF by default.
+# N5 rotation env lives in docker-compose.block-heartbeat-rotation.n5.yml (add it to the file set to enable;
+# the N5 service here is deliberately unchanged so its default render never drifts).
+# BEFORE enabling rotation on N5, COLLECTOR_MINE (and WEATHER_COLLECTOR_MINE /
+# WEATHER_COLLECTOR_MULTI_MINE) MUST be false, or the collectors mine out of turn.
+# block-heartbeat-ws / block-heartbeat-mango (service bodies intentionally inlined: a top-level x- anchor
+# would add a key to the rendered config of every default compose set) run on THEIR OWN hosts against THEIR OWN node.
+services:
+  weather-collector:
+    environment:
+      COLLECTOR_MINE: ${WEATHER_COLLECTOR_MINE:-${COLLECTOR_MINE:-true}}
+      BLOCK_HEARTBEAT_INTERVAL_SECONDS: ${BLOCK_HEARTBEAT_INTERVAL_SECONDS:-77}
+    volumes:
+      - ${COLLECTOR_CORE4_PATH:-${CORE4_PATH:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}}/tests/security:/app/tests/security:ro
+      - ${COLLECTOR_CORE4_PATH:-${CORE4_PATH:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}}/tests/utils:/app/tests/utils:ro
+  weather-collector-multi:
+    environment:
+      COLLECTOR_MINE: ${WEATHER_COLLECTOR_MULTI_MINE:-${COLLECTOR_MINE:-true}}
+      BLOCK_HEARTBEAT_INTERVAL_SECONDS: ${BLOCK_HEARTBEAT_INTERVAL_SECONDS:-77}
+    volumes:
+      - ${COLLECTOR_CORE4_PATH:-${MULTI_COLLECTOR_CORE4:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}}/tests/security:/app/tests/security:ro
+      - ${COLLECTOR_CORE4_PATH:-${MULTI_COLLECTOR_CORE4:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}}/tests/utils:/app/tests/utils:ro
+  block-heartbeat:
+    image: node:20-alpine
+    profiles: ["block-heartbeat-n5"]
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "/app/heartbeat.cjs"]
+    networks: [wrfcoin-testnet]
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+    environment:
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      WRFCOIN_MINER_ADDRESS: '0x680d51f7543ca70029866956376306d47ce60ed0'
+      BLOCK_HEARTBEAT_INTERVAL_SECONDS: ${BLOCK_HEARTBEAT_INTERVAL_SECONDS:-77}
+    volumes:
+      - ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}/infra/testnet/services/block-heartbeat:/app:ro
+    read_only: true
+    tmpfs: ["/tmp:noexec,nosuid,size=1m"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "node", "/app/heartbeat.cjs", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+  block-heartbeat-ws:
+    profiles: ["block-heartbeat-ws"]
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "/app/heartbeat.cjs"]
+    networks: [wrfcoin-testnet]
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+    volumes:
+      - ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}/infra/testnet/services/block-heartbeat:/app:ro
+    read_only: true
+    tmpfs: ["/tmp:noexec,nosuid,size=1m"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "node", "/app/heartbeat.cjs", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+    environment:
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      WRFCOIN_MINER_ADDRESS: '0x39ee2e595a55c71256282fe5c42a398594985b1a'
+      BLOCK_HEARTBEAT_INTERVAL_SECONDS: ${BLOCK_HEARTBEAT_INTERVAL_SECONDS:-77}
+      BLOCK_HEARTBEAT_ROTATION: n5-node-a,producer-standby,mango-mini
+      BLOCK_HEARTBEAT_SELF: producer-standby
+      BLOCK_HEARTBEAT_FALLBACK_STEP_SECONDS: ${BLOCK_HEARTBEAT_FALLBACK_STEP_SECONDS:-60}
+  block-heartbeat-mango:
+    profiles: ["block-heartbeat-mango"]
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "/app/heartbeat.cjs"]
+    networks: [wrfcoin-testnet]
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+    volumes:
+      - ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}/infra/testnet/services/block-heartbeat:/app:ro
+    read_only: true
+    tmpfs: ["/tmp:noexec,nosuid,size=1m"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "node", "/app/heartbeat.cjs", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+    environment:
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      WRFCOIN_MINER_ADDRESS: '0xc536d2026661522cb8631b3c723d4af43784a990'
+      BLOCK_HEARTBEAT_INTERVAL_SECONDS: ${BLOCK_HEARTBEAT_INTERVAL_SECONDS:-77}
+      BLOCK_HEARTBEAT_ROTATION: n5-node-a,producer-standby,mango-mini
+      BLOCK_HEARTBEAT_SELF: mango-mini
+      BLOCK_HEARTBEAT_FALLBACK_STEP_SECONDS: ${BLOCK_HEARTBEAT_FALLBACK_STEP_SECONDS:-60}

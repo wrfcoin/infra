@@ -1,0 +1,93 @@
+---
+# Arweave Gateway Deployment
+# Provides permanent storage interface for critical weather records
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: arweave-gateway
+  namespace: storage
+  labels:
+    app: arweave-gateway
+    component: storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: arweave-gateway
+  template:
+    metadata:
+      labels:
+        app: arweave-gateway
+        component: storage
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "1984"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: arweave-gateway
+          image: arweave/gateway:v0.5.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 1984
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: arweave-secrets
+                optional: true
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: arweave-cache
+              mountPath: /app/cache
+          readinessProbe:
+            httpGet:
+              path: /info
+              port: 1984
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /info
+              port: 1984
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: arweave-cache
+          persistentVolumeClaim:
+            claimName: arweave-cache
+---
+# Arweave Cache PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: arweave-cache
+  namespace: storage
+  labels:
+    app: arweave-gateway
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 50Gi

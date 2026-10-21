@@ -1,0 +1,83 @@
+# =============================================================================
+# WRFCoin public-internet edge (infra#636)
+# =============================================================================
+# The ONLY publicly-bound component. Terminates TLS, rate-limits, and reverse-
+# proxies to the existing loopback/tailnet services on the wrfcoin-testnet
+# Docker network. Nothing else should have a public host port.
+#
+# PLACEHOLDERS — set in testnet/.env.testnet (see .env.testnet.example):
+#   WRFCOIN_PUBLIC_DOMAIN   apex domain, e.g. testnet.wrfcoin.org
+#   ACME_EMAIL              email for Let's Encrypt cert notifications
+#
+# Public hosts (each gets an automatic Let's Encrypt cert):
+#   ${WRFCOIN_PUBLIC_DOMAIN}      → frontend dashboard + exact onboarding API
+#   api.${WRFCOIN_PUBLIC_DOMAIN}  → exact onboarding API only
+#
+# Explorer and the faucet service deliberately have NO public host. Onboarding
+# faucet challenge/claim travel only through the exact API allowlist.
+#
+# DELIBERATELY NOT PROXIED (stay internal/tailnet only):
+#   node API :8556, wallet :4000, governance :8000, iot :3002,
+#   weather-earnings :8001, cross-chain :3000, compute :6000, ml :6001,
+#   node-discovery, Grafana/Prometheus/exporters, HSM,
+#   postgres, redis. P2P :9000/:9001 stays a direct TCP bind (not HTTP).
+#
+# The allowlist and shared snippets live in public_onboarding.caddy — one
+# boundary imported by every public edge (this file and Caddyfile.funnel).
+#
+# Rate limiting requires the caddy-ratelimit plugin — Dockerfile.caddy builds
+# it in. `xcaddy`-less vanilla caddy will error on the rate_limit directive.
+# =============================================================================
+{
+	email {$ACME_EMAIL}
+	# Uncomment for a dry run against Let's Encrypt staging (untrusted certs,
+	# no rate-limit risk while you validate DNS + firewall):
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+	# Shared rate-limit zones (caddy-ratelimit), keyed per client IP.
+	order rate_limit before basic_auth
+}
+
+# Shared boundary: security headers, body limits, exact onboarding allowlist,
+# per-IP rate limits. THE single place the public API surface is defined.
+import public_onboarding.caddy
+import downloads.caddy
+
+# =============================================================================
+# Frontend dashboard (apex)
+# =============================================================================
+{$WRFCOIN_PUBLIC_DOMAIN} {
+	import security_headers
+	import sane_limits
+	import public_onboarding_limits
+	encode gzip zstd
+
+	route {
+		import public_onboarding_api
+		import public_downloads
+		import disabled_wallet_secret_routes
+		handle {
+			reverse_proxy wrfcoin-testnet-frontend:5000 {
+				health_uri /health
+				health_interval 30s
+			}
+		}
+	}
+}
+
+# =============================================================================
+# Exact onboarding API (no generic backend fallback)
+# =============================================================================
+api.{$WRFCOIN_PUBLIC_DOMAIN} {
+	import security_headers
+	import sane_limits
+	import public_onboarding_limits
+	encode gzip zstd
+
+	route {
+		import public_onboarding_api
+		handle {
+			respond "Not found" 404
+		}
+	}
+}

@@ -1,0 +1,99 @@
+{
+  "schema_id": "wrfcoin.actor_governance_policy_bundle",
+  "schema_version": 1,
+  "policy_bundle_version": "1.0.0",
+  "created_at": "2026-03-04T10:30:00Z",
+  "actor_classes": {
+    "human": {
+      "default_sanction_profile": {
+        "temporary_ban_blocks": 240,
+        "slash_bps": 50,
+        "cooldown_blocks": 120,
+        "appeal_window_blocks": 2880
+      }
+    },
+    "ai_agent": {
+      "default_sanction_profile": {
+        "temporary_ban_blocks": 240,
+        "slash_bps": 50,
+        "cooldown_blocks": 120,
+        "appeal_window_blocks": 2880
+      }
+    },
+    "robot": {
+      "default_sanction_profile": {
+        "temporary_ban_blocks": 240,
+        "slash_bps": 50,
+        "cooldown_blocks": 120,
+        "appeal_window_blocks": 2880
+      }
+    }
+  },
+  "sanction_profiles": {
+    "warning": {
+      "temporary_ban_blocks": 60,
+      "slash_bps": 0,
+      "cooldown_blocks": 30,
+      "appeal_window_blocks": 720
+    },
+    "minor": {
+      "temporary_ban_blocks": 240,
+      "slash_bps": 50,
+      "cooldown_blocks": 120,
+      "appeal_window_blocks": 2880
+    },
+    "major": {
+      "temporary_ban_blocks": 2880,
+      "slash_bps": 300,
+      "cooldown_blocks": 720,
+      "appeal_window_blocks": 10080
+    },
+    "critical": {
+      "temporary_ban_blocks": 20160,
+      "slash_bps": 1200,
+      "cooldown_blocks": 2880,
+      "appeal_window_blocks": 20160
+    }
+  },
+  "equal_liability_matrix": {
+    "low": {
+      "human": "warning",
+      "ai_agent": "warning",
+      "robot": "warning"
+    },
+    "medium": {
+      "human": "minor",
+      "ai_agent": "minor",
+      "robot": "minor"
+    },
+    "high": {
+      "human": "major",
+      "ai_agent": "major",
+      "robot": "major"
+    },
+    "critical": {
+      "human": "critical",
+      "ai_agent": "critical",
+      "robot": "critical"
+    }
+  },
+  "rollout": {
+    "target_environment": "staging",
+    "canary_percent": 10,
+    "max_blast_radius_percent": 25,
+    "pre_deploy_checks": [
+      "schema-validation",
+      "equal-liability-matrix-parity",
+      "digest-record-match"
+    ]
+  },
+  "rollback": {
+    "previous_bundle_version": "0.9.0",
+    "max_rollback_minutes": 30,
+    "procedure_doc": "infra/policy-bundles/runbooks/rollback-actor-governance-policy.md"
+  },
+  "change_log": [
+    "Introduces actor-class parity matrix with equal-liability constraints.",
+    "Defines deterministic sanction profile set for rollout and rollback compatibility."
+  ]
+}

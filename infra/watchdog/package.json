@@ -1,0 +1,29 @@
+{
+  "license": "MIT OR Apache-2.0",
+  "name": "@wrfcoin/watchdog",
+  "version": "0.1.0",
+  "description": "WRFCoin infrastructure watchdog \u2014 LLM-assisted observability and alerting",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "js-yaml": "^5.4.3",
+    "node-cron": "^4.6.0",
+    "prom-client": "^15.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "overrides": {
+    "esbuild": ">=0.25.0"
+  }
+}

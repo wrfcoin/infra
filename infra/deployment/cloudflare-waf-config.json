@@ -1,0 +1,50 @@
+{
+  "dns": {
+    "record_type": "A",
+    "name": "@",
+    "proxied": true,
+    "comment": "Main domain with WAF protection"
+  },
+  "waf_rules": [
+    {
+      "expression": "(cf.threat_score gt 14)",
+      "action": "challenge",
+      "description": "Challenge suspicious traffic"
+    },
+    {
+      "expression": "(http.request.uri.path contains \"/api/\" and cf.bot_management.score lt 30)",
+      "action": "block",
+      "description": "Block bot traffic to API endpoints"
+    },
+    {
+      "expression": "(http.request.method eq \"POST\" and cf.threat_score gt 5)",
+      "action": "js_challenge",
+      "description": "JS challenge for POST requests from risky sources"
+    },
+    {
+      "expression": "(any(http.request.headers[\"user-agent\"][*] contains \"bot\") and not cf.bot_management.verified_bot)",
+      "action": "block",
+      "description": "Block unverified bots"
+    }
+  ],
+  "rate_limiting": [
+    {
+      "threshold": 100,
+      "period": 60,
+      "action": "simulate",
+      "match": "cf.colo.id eq 1 and http.request.uri.path eq \"/api/\""
+    },
+    {
+      "threshold": 20,
+      "period": 60,
+      "action": "block",
+      "match": "http.request.uri.path contains \"/wallet/\""
+    }
+  ],
+  "ddos_protection": {
+    "http_ddos": "on",
+    "tcp_ddos": "on",
+    "udp_ddos": "on",
+    "under_attack_mode": "off"
+  }
+}

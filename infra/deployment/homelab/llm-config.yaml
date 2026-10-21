@@ -1,0 +1,12 @@
+llm:
+  endpoint: "http://127.0.0.1:11434/v1"
+  model: "llama3.1:8b"
+  max_tokens: 2048
+  temperature: 0.1
+  timeout_seconds: 30
+
+runtime:
+  image: "ollama/ollama:latest"
+  rocm_image: "ollama/ollama:rocm"
+  model_store: "/data/llm-models"
+  api_port: 11434

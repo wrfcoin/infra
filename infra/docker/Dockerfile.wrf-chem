@@ -1,0 +1,132 @@
+# Dockerfile.wrf-chem — WRF-Chem build with RADM2 chemistry and MPI support
+# Multi-stage build, includes MPI for chemistry parallelism
+#
+# Build time: ~40-60 minutes (dmpar + chemistry data tables)
+# Final image size: ~1.5GB (MPI libraries + chemistry lookup tables)
+#
+# This image runs WRF with full atmospheric chemistry (RADM2 mechanism),
+# supporting air quality forecasting for CO, NO2, O3, PM10, PM2.5, SO2.
+#
+# Usage:
+#   docker build -f Dockerfile.wrf-chem -t wrfcoin/wrf-chem:4.5.2 .
+#   docker run wrfcoin/wrf-chem:4.5.2 -c "/wrf/main/wrf.exe --help || true"
+
+ARG WRF_VERSION=4.5.2
+ARG BASE_IMAGE=ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7
+# Pinned SHA256 for the WRF v4.5.2 source tarball from GitHub Releases.
+# See infra/docker/wrf/SHA256SUMS.txt for the current pinned values.
+ARG WRF_SHA256=8906da9e90dbfb6b3d617483c2dceae133600844b22f802e7eab31a1bb5cd48d
+
+# =============================================================================
+# Stage 1: Builder — compile WRF-Chem with dmpar (MPI) from source
+# =============================================================================
+FROM ${BASE_IMAGE} AS builder
+
+ARG WRF_VERSION
+ARG WRF_SHA256
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies for dmpar build (with MPI for chemistry)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gfortran \
+    cpp \
+    gcc \
+    g++ \
+    m4 \
+    make \
+    wget \
+    ca-certificates \
+    libnetcdf-dev \
+    libnetcdff-dev \
+    libhdf5-dev \
+    libjasper-dev \
+    libpng-dev \
+    zlib1g-dev \
+    mpich \
+    libmpich-dev \
+    csh \
+    tcsh \
+    perl \
+    file \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment variables for WRF-Chem build
+ENV NETCDF=/usr
+ENV HDF5=/usr
+ENV JASPERLIB=/usr/lib
+ENV JASPERINC=/usr/include
+ENV WRF_DIR=/build/WRF
+ENV WRFIO_NCD_LARGE_FILE_SUPPORT=1
+ENV WRF_CHEM=1
+
+WORKDIR /build
+
+# Download WRF source and verify the pinned SHA256 checksum.
+RUN wget -q "https://github.com/wrf-model/WRF/archive/refs/tags/v${WRF_VERSION}.tar.gz" \
+    -O wrf.tar.gz \
+    && echo "${WRF_SHA256}  wrf.tar.gz" | sha256sum -c - \
+    && tar xzf wrf.tar.gz \
+    && rm wrf.tar.gz \
+    && mv WRF-${WRF_VERSION} WRF
+
+WORKDIR /build/WRF
+
+# Configure WRF for dmpar gfortran (MPI required for chemistry)
+# Option 34 = dmpar gfortran on Linux x86_64
+# Second input "1" selects basic nesting
+RUN printf "34\n1\n" | ./configure
+
+# Compile WRF em_real case with chemistry (WRF_CHEM=1 triggers chem compilation)
+# NOTE: Takes 40-60 minutes. Docker layer caching avoids rebuilds when only
+# downstream layers change.
+RUN ./compile em_real 2>&1 | tee /build/compile_wrf.log \
+    && ls -la main/wrf.exe main/real.exe
+
+# =============================================================================
+# Stage 2: Runtime — minimal image with WRF-Chem binaries only
+# =============================================================================
+FROM ${BASE_IMAGE} AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime libraries (including MPI for chemistry execution)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnetcdff7 \
+    libhdf5-103-1 \
+    libjasper4 \
+    libpng16-16 \
+    mpich \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy WRF executables from builder
+COPY --from=builder /build/WRF/main/wrf.exe /wrf/main/
+COPY --from=builder /build/WRF/main/real.exe /wrf/main/
+COPY --from=builder /build/WRF/main/ndown.exe /wrf/main/
+COPY --from=builder /build/WRF/main/tc.exe /wrf/main/
+
+# Copy WRF run directory (contains required data tables, etc.)
+COPY --from=builder /build/WRF/run/ /wrf/run/
+
+# Copy healthcheck script
+COPY healthcheck-wrf.sh /usr/local/bin/healthcheck-wrf.sh
+RUN chmod +x /usr/local/bin/healthcheck-wrf.sh
+
+WORKDIR /wrf
+
+# Create data directories
+RUN mkdir -p /data/input /data/output
+
+ENV PATH="/wrf/main:/wrf/run:${PATH}"
+ENV WRF_CHEM=1
+
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
+    CMD /usr/local/bin/healthcheck-wrf.sh --wrf
+
+# Run as non-root user
+RUN useradd -m -s /bin/bash wrfuser && chown -R wrfuser:wrfuser /wrf /data
+USER wrfuser
+
+ENTRYPOINT ["/bin/bash"]

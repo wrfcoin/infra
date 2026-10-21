@@ -1,0 +1,83 @@
+version: "3.9"
+
+# Docker Compose for services that run inside the autoresearch LXC container.
+# Managed by Terraform (terraform/autoresearch/main.tf) and the provision script
+# (scripts/provision-autoresearch.sh).  Start manually with:
+#   docker compose -f docker-compose.autoresearch.yml up -d
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Jupyter Lab — interactive research notebooks
+  # -------------------------------------------------------------------------
+  jupyter:
+    image: jupyter/scipy-notebook:latest
+    container_name: autoresearch-jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Local LLM runtime — OpenAI-compatible `/v1` endpoint for watchdog and
+  # homelab consumers. The image is swappable so the runtime is not locked to
+  # Ollama if the operator later wants llama.cpp, vLLM, or LocalAI.
+  # -------------------------------------------------------------------------
+  llm-runtime:
+    image: ${LLM_RUNTIME_IMAGE:-ollama/ollama:latest}
+    container_name: autoresearch-ollama
+    hostname: llm-runtime
+    ports:
+      # Publish on the host interface by default; sibling containers can still
+      # reach the service by DNS name on the compose network.
+      - "${LLM_RUNTIME_BIND_ADDRESS:-0.0.0.0}:${LLM_RUNTIME_PORT:-11434}:11434"
+    environment:
+      # Bind on all interfaces inside the container so the published port works
+      # and the OpenAI-compatible `/v1` routes are reachable.
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODELS: /root/.ollama
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}
+    volumes:
+      # Model weights should live on the NVMe-backed host path when the N5 Pro
+      # operator has mounted it. The path is created automatically if missing.
+      - ${LLM_MODELS_DIR:-/data/llm-models}:/root/.ollama
+    healthcheck:
+      # Healthcheck stays API-shaped so the runtime can be swapped without
+      # relying on an Ollama-only CLI command inside the container.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:11434/v1/models >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+        reservations:
+          memory: 4G
+
+  # -------------------------------------------------------------------------
+  # Prometheus node-exporter — host metrics for Prometheus scraping
+  # -------------------------------------------------------------------------
+  prometheus-node-exporter:
+    image: prom/node-exporter:latest
+    container_name: autoresearch-node-exporter
+    ports:
+      - "9100:9100"
+    command:
+      - "--path.rootfs=/host"
+    volumes:
+      - /:/host:ro,rslave
+    pid: host
+    restart: unless-stopped
+
+# -------------------------------------------------------------------------
+# Named volumes
+# -------------------------------------------------------------------------
+volumes: {}

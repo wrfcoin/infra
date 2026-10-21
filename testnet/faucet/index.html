@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WRFCoin Faucet</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Testnet onboarding</div>
+      <h1>Claim WRF, join the seed, and keep moving.</h1>
+      <p class="lede">
+        The faucet keeps the token drip simple: request a challenge, solve the captcha,
+        and claim testnet WRF without leaving the same page.
+      </p>
+      <div class="pill-row">
+        <span class="pill">Captcha-backed</span>
+        <span class="pill">24h wallet cooldown</span>
+        <span class="pill">1h IP throttle</span>
+      </div>
+      <div class="discord-card">
+        <div>
+          <strong>Discord gate</strong>
+          <p id="discord-copy">Connect your Discord identity before you claim.</p>
+        </div>
+        <a id="discord-link" class="discord-link" href="#" rel="noreferrer">Connect Discord</a>
+      </div>
+
+      <div class="ops-card">
+        <strong>Operator wiring</strong>
+        <p id="ops-copy">Backend, Redis, and Discord config are surfaced here so operators can see the faucet contract at a glance.</p>
+        <div class="ops-pills">
+          <span id="ops-core4" class="ops-pill">CORE4_API_URL</span>
+          <span id="ops-redis" class="ops-pill">Redis throttle</span>
+          <span id="ops-discord" class="ops-pill">Discord gate</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Faucet claim</span>
+        <a class="panel-link" id="explorer-link" href="#" rel="noreferrer">Open explorer</a>
+      </div>
+
+      <label>
+        Wallet address
+        <input id="wallet-address" autocomplete="off" spellcheck="false" placeholder="0x..." />
+      </label>
+
+      <div class="challenge-row">
+        <button id="challenge-button" class="primary">Generate challenge</button>
+        <div class="challenge-box">
+          <span class="challenge-label">Captcha</span>
+          <strong id="challenge-question">Press the button to begin.</strong>
+        </div>
+      </div>
+
+      <label>
+        Answer
+        <input id="challenge-answer" autocomplete="off" inputmode="numeric" placeholder="42" />
+      </label>
+
+      <button id="claim-button" class="secondary" disabled>Drip WRF</button>
+
+      <div id="status" class="status neutral">Waiting for the first challenge.</div>
+
+      <article id="receipt" class="receipt hidden">
+        <div class="receipt-title">Receipt</div>
+        <div class="receipt-grid">
+          <div>
+            <span>Tx hash</span>
+            <code id="receipt-hash">-</code>
+          </div>
+          <div>
+            <span>Amount</span>
+            <strong id="receipt-amount">-</strong>
+          </div>
+          <div>
+            <span>Balance</span>
+            <strong id="receipt-balance">-</strong>
+          </div>
+        </div>
+        <div class="receipt-actions">
+          <a id="receipt-explorer" class="receipt-link" href="#" rel="noreferrer">View in explorer</a>
+          <button id="copy-receipt" class="ghost">Copy receipt</button>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    window.__FAUCET_CONFIG__ = __FAUCET_CONFIG__;
+  </script>
+  <script src="/app.js"></script>
+</body>
+</html>

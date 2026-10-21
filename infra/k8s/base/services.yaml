@@ -1,0 +1,107 @@
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-frontend-service
+  labels:
+    app: wrfcoin-frontend
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 5000
+      protocol: TCP
+      name: http
+  selector:
+    app: wrfcoin-frontend
+
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-api-service
+  labels:
+    app: wrfcoin-api
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4001
+      targetPort: 4001
+      protocol: TCP
+      name: http
+  selector:
+    app: wrfcoin-api
+
+---
+# IoT Networks Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-iot-service
+  labels:
+    app: wrfcoin-iot
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3002
+      targetPort: 3002
+      protocol: TCP
+      name: http
+  selector:
+    app: wrfcoin-iot
+
+---
+# Compute Networks Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-compute-service
+  labels:
+    app: wrfcoin-compute
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6000
+      targetPort: 6000
+      protocol: TCP
+      name: http
+  selector:
+    app: wrfcoin-compute
+
+---
+# Blockchain Node Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-blockchain-service
+  labels:
+    app: wrfcoin-blockchain
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8556
+      targetPort: 8556
+      protocol: TCP
+      name: http
+  selector:
+    app: wrfcoin-blockchain
+
+---
+# Database Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-postgres-service
+  labels:
+    app: wrfcoin-postgres
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    app: wrfcoin-postgres

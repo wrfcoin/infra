@@ -1,0 +1,16 @@
+# Test fixture (infra#1044): the network shape of the Mango attester overlay as deployed on
+# 2026-09-25 (docs/plans/overnight-2026-09-24/docker-compose.oracle-attester.mango.yml, sha256
+# 6aa53f5e...b39f), with its image pins removed. It is the KNOWN-BAD shape and is never deployed.
+services:
+  oracle-softhsm-init:
+    build: !reset null
+    pull_policy: never
+    networks: !reset []
+    network_mode: none
+  oracle-attester:
+    build: !reset null
+    pull_policy: never
+    networks: !reset []
+    network_mode: "service:wrfcoin-node"
+    environment:
+      WRFCOIN_ATTESTER_NODE_URL: http://127.0.0.1:8556

@@ -1,0 +1,7 @@
+# WRFCoin WRF-family SHA256 pins
+#
+# Update these values together whenever the WRF or WPS source version changes.
+
+962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7  ubuntu:22.04
+8906da9e90dbfb6b3d617483c2dceae133600844b22f802e7eab31a1bb5cd48d  WRF-v4.5.2.tar.gz
+3cb29107f85b81af05b7dd494e5d4a13cf1b33b87d7e2911a64a7abc59bf55f3  WPS-v4.5.tar.gz

@@ -1,0 +1,32 @@
+# WRFCoin Testnet — Seed Nodes
+#
+# These are WRFCoin-operated seed nodes that are intended to stay online for
+# peer discovery. Copy them into BOOTSTRAP_PEERS in your .env as a
+# comma-separated list.
+#
+# Regular peer operators should use these addresses for bootstrap discovery and
+# set their own WRFCOIN_P2P_EXTERNAL_ADDR separately once port 9000 is reachable.
+# Only publish a node here if it is meant to act as an always-on seed for other
+# operators; temporary peers and household contributor devices should stay out of
+# this file.
+#
+# Format: one multiaddr per line, for example:
+#   /ip4/<IP>/tcp/9001/p2p/<PEER_ID>
+#   /dns4/<HOSTNAME>/tcp/9001/p2p/<PEER_ID>
+#
+# From `infra/testnet`, use `bash check-seeds.sh` to validate this file and
+# `bash check-seeds.sh --print` to emit a ready-to-paste BOOTSTRAP_PEERS value
+# for your .env.
+#
+# Update flow:
+# - add or remove peer multiaddrs here
+# - run the seed checker
+# - copy the printed BOOTSTRAP_PEERS value into .env
+#
+# If entries go stale, delete them promptly so operators do not bootstrap from
+# dead peers. If this file is empty, there are no published seeds yet; coordinate
+# with the WRFCoin team or another operator for fresh peer addresses.
+
+# Public seed publication is pending operator verification. Do not copy a template
+# as a live address; obtain the published bootstrap multiaddr before joining.
+# /ip4/<N5_PUBLIC_IP>/tcp/9000/p2p/12D3KooWMM7ukbQrn4BH2SjSNvyvAW2SaKUkHmDRng9KnifgYeWr

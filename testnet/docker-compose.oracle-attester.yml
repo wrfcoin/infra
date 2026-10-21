@@ -1,0 +1,197 @@
+# Opt-in production oracle-attester deployment (infra#819 / core4#2464).
+#
+# Include this file only on the two quorum hosts, then enable profile
+# `attester`. It deliberately uses a dedicated SoftHSM volume and role-specific
+# env names: producer/node key material is never mounted into this service.
+
+services:
+  oracle-softhsm-init:
+    image: ${WRFCOIN_TESTNET_ATTESTER_IMAGE:-wrfcoin/oracle-attester:testnet-local}
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.core
+      target: oracle-attester-runtime
+    container_name: wrfcoin-testnet-oracle-softhsm-init
+    profiles: ["attester-softhsm"]
+    restart: unless-stopped
+    user: "1001:1001"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        HSM_DIR=/app/data/hsm
+        export SOFTHSM2_CONF=$$HSM_DIR/softhsm2.conf
+        TOKEN_LABEL=$${WRFCOIN_HSM_TOKEN_LABEL}
+        KEY_LABEL=$${WRFCOIN_HSM_ORACLE_KEY_LABEL}
+        PIN=$${WRFCOIN_HSM_PIN}
+        SO_PIN=$${WRFCOIN_HSM_SO_PIN}
+        PROVISION=$${WRFCOIN_ATTESTER_HSM_PROVISION:-0}
+        MODULE=$${WRFCOIN_HSM_MODULE_PATH}
+
+        [ -n "$$TOKEN_LABEL" ] || { echo "[oracle-softhsm-init] missing token label" >&2; exit 1; }
+        [ -n "$$KEY_LABEL" ] || { echo "[oracle-softhsm-init] missing oracle key label" >&2; exit 1; }
+        [ -n "$$PIN" ] || { echo "[oracle-softhsm-init] missing user PIN" >&2; exit 1; }
+        [ -n "$$SO_PIN" ] || { echo "[oracle-softhsm-init] missing SO-PIN" >&2; exit 1; }
+        [ "$$SO_PIN" != "0000" ] || { echo "[oracle-softhsm-init] refusing unsafe SO-PIN 0000" >&2; exit 1; }
+
+        case "$$MODULE" in
+          */softhsm*)
+            mkdir -p "$$HSM_DIR/tokens"
+            if [ ! -f "$$SOFTHSM2_CONF" ]; then
+              printf 'directories.tokendir = %s/tokens\nobjectstore.backend = file\nlog.level = INFO\n' \
+                "$$HSM_DIR" > "$$SOFTHSM2_CONF"
+            fi
+
+            if ! softhsm2-util --show-slots 2>/dev/null | grep -qF "$$TOKEN_LABEL"; then
+              if [ "$$PROVISION" != "1" ]; then
+                echo "[oracle-softhsm-init] token absent; owner must set WRFCOIN_ATTESTER_HSM_PROVISION=1 during the key ceremony" >&2
+                exit 1
+              fi
+              echo "[oracle-softhsm-init] owner-authorized token provisioning: $$TOKEN_LABEL"
+              softhsm2-util --init-token --free \
+                --label "$$TOKEN_LABEL" --pin "$$PIN" --so-pin "$$SO_PIN"
+            fi
+
+            if ! pkcs11-tool --module "$$MODULE" --login --pin "$$PIN" \
+              --token-label "$$TOKEN_LABEL" --list-objects | grep -qF "$$KEY_LABEL"; then
+              if [ "$$PROVISION" != "1" ]; then
+                echo "[oracle-softhsm-init] oracle key absent; owner must set WRFCOIN_ATTESTER_HSM_PROVISION=1 during the key ceremony" >&2
+                exit 1
+              fi
+              echo "[oracle-softhsm-init] owner-authorized Ed25519 key generation: $$KEY_LABEL"
+              pkcs11-tool --module "$$MODULE" --login --pin "$$PIN" \
+                --token-label "$$TOKEN_LABEL" --keypairgen \
+                --key-type EC:edwards25519 --label "$$KEY_LABEL" --id 01
+            fi
+            ;;
+          *)
+            echo "[oracle-softhsm-init] unsupported module for this SoftHSM profile: $$MODULE" >&2
+            exit 1
+            ;;
+        esac
+
+        touch /tmp/oracle-softhsm-ready
+        tail -f /dev/null
+    environment:
+      WRFCOIN_HSM_MODULE_PATH: ${WRFCOIN_ATTESTER_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so}
+      WRFCOIN_HSM_TOKEN_LABEL: ${WRFCOIN_ATTESTER_HSM_TOKEN_LABEL:?WRFCOIN_ATTESTER_HSM_TOKEN_LABEL must be set}
+      WRFCOIN_HSM_ORACLE_KEY_LABEL: ${WRFCOIN_ATTESTER_HSM_KEY_LABEL:?WRFCOIN_ATTESTER_HSM_KEY_LABEL must be set}
+      WRFCOIN_HSM_PIN: ${WRFCOIN_ATTESTER_HSM_PIN:?WRFCOIN_ATTESTER_HSM_PIN must be set}
+      # YubiKey deployments include this base overlay but never start the
+      # SoftHSM profile, so interpolation stays optional. The init script above
+      # refuses an empty value at runtime before it can touch token storage.
+      WRFCOIN_HSM_SO_PIN: ${WRFCOIN_ATTESTER_HSM_SO_PIN:-}
+      WRFCOIN_ATTESTER_HSM_PROVISION: ${WRFCOIN_ATTESTER_HSM_PROVISION:-0}
+    volumes:
+      - oracle-attester-data:/app/data
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -f /tmp/oracle-softhsm-ready &&
+          SOFTHSM2_CONF=/app/data/hsm/softhsm2.conf
+          softhsm2-util --show-slots 2>/dev/null | grep -qF "$${WRFCOIN_HSM_TOKEN_LABEL}" &&
+          SOFTHSM2_CONF=/app/data/hsm/softhsm2.conf
+          pkcs11-tool --module "$${WRFCOIN_HSM_MODULE_PATH}" --login
+          --pin "$${WRFCOIN_HSM_PIN}" --token-label "$${WRFCOIN_HSM_TOKEN_LABEL}"
+          --list-objects | grep -qF "$${WRFCOIN_HSM_ORACLE_KEY_LABEL}"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  oracle-attester:
+    image: ${WRFCOIN_TESTNET_ATTESTER_IMAGE:-wrfcoin/oracle-attester:testnet-local}
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.core
+      target: oracle-attester-runtime
+    container_name: wrfcoin-testnet-oracle-attester
+    profiles: ["attester"]
+    restart: unless-stopped
+    user: "1001:1001"
+    entrypoint: ["/usr/local/bin/hsm-service-entrypoint.sh"]
+    command: ["/usr/local/bin/oracle_attester"]
+    environment:
+      RUST_LOG: ${WRFCOIN_ATTESTER_LOG_LEVEL:-info}
+      WRFCOIN_ATTESTER_NODE_URL: http://wrfcoin-node:8556
+      WRFCOIN_ATTESTER_API_TOKEN: ${WRFCOIN_ORACLE_TOKEN:?WRFCOIN_ORACLE_TOKEN must be set for the attester}
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+      SOFTHSM2_CONF: /app/data/hsm/softhsm2.conf
+      WRFCOIN_HSM_MODULE_PATH: ${WRFCOIN_ATTESTER_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so}
+      WRFCOIN_HSM_TOKEN_LABEL: ${WRFCOIN_ATTESTER_HSM_TOKEN_LABEL:?WRFCOIN_ATTESTER_HSM_TOKEN_LABEL must be set}
+      WRFCOIN_HSM_ORACLE_KEY_LABEL: ${WRFCOIN_ATTESTER_HSM_KEY_LABEL:?WRFCOIN_ATTESTER_HSM_KEY_LABEL must be set}
+      WRFCOIN_HSM_ORACLE_PUBKEY_LABEL: ${WRFCOIN_ATTESTER_HSM_PUBKEY_LABEL:?WRFCOIN_ATTESTER_HSM_PUBKEY_LABEL must be set}
+      WRFCOIN_HSM_PIN_ENV: WRFCOIN_HSM_PIN
+      WRFCOIN_HSM_PIN: ${WRFCOIN_ATTESTER_HSM_PIN:?WRFCOIN_ATTESTER_HSM_PIN must be set}
+      WRFCOIN_ATTESTER_FORBID_GOVERNANCE_PUBKEY: ${WRFCOIN_ATTESTER_FORBID_GOVERNANCE_PUBKEY:?governance public key inventory must be set}
+      WRFCOIN_ATTESTER_FORBID_SNAPSHOT_PUBKEY: ${WRFCOIN_ATTESTER_FORBID_SNAPSHOT_PUBKEY:?snapshot public key inventory must be set}
+      WRFCOIN_ATTESTER_FORBID_PRODUCER_PUBKEY: ${WRFCOIN_ATTESTER_FORBID_PRODUCER_PUBKEY:?producer public key inventory must be set}
+      WRFCOIN_ATTESTER_POLL_SECS: ${WRFCOIN_ATTESTER_POLL_SECS:-5}
+      WRFCOIN_ATTESTER_MAX_AGE_SECS: ${WRFCOIN_ATTESTER_MAX_AGE_SECS:-3600}
+      WRFCOIN_ATTESTER_MAX_FUTURE_SKEW_SECS: ${WRFCOIN_ATTESTER_MAX_FUTURE_SKEW_SECS:-300}
+      WRFCOIN_ATTESTER_NWS_STATION: ${WRFCOIN_ATTESTER_NWS_STATION:?set the NWS reference station id for this attester (e.g. KDLH for the Duluth fleet), or the literal PHYSICS_ONLY to run without a reference}
+      WRFCOIN_ATTESTER_REFERENCE_MAX_PAIR_SECS: ${WRFCOIN_ATTESTER_REFERENCE_MAX_PAIR_SECS:-1800}
+      # Reference-station selection (core4#3240), owner ruling 2026-10-05: shadow cap =
+      # registry P95 from scripts/registry-reference-distance-p95.py. NO default here: unset
+      # keeps the attester in `fixed` mode, which ignores the cap. Empty is treated as unset.
+      WRFCOIN_ATTESTER_REFERENCE_MODE: ${WRFCOIN_ATTESTER_REFERENCE_MODE:-}
+      WRFCOIN_ATTESTER_MAX_REFERENCE_KM: ${WRFCOIN_ATTESTER_MAX_REFERENCE_KM:-}
+      WRFCOIN_ATTESTER_ONCE: ${WRFCOIN_ATTESTER_ONCE:-0}
+    volumes:
+      - oracle-attester-data:/app/data
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+      oracle-softhsm-init:
+        condition: service_healthy
+        required: false
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test:
+        - CMD-SHELL
+        # Linux comm keeps 15 bytes. Compare the declared binary's same prefix after any rename.
+        - 'grep -Fxq "$$(printf %s oracle_attester | cut -b1-15)" /proc/1/comm'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+      - /app/logs:noexec,nosuid,size=32m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  oracle-attester-data: {}

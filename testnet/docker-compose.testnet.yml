@@ -1,0 +1,2619 @@
+# WRFCoin Testnet — Operator Compose Stack
+#
+# Purpose-built for multi-operator testnet deployment.
+# Prerequisites:
+#   - Docker Engine 24+ and Docker Compose v2
+#   - Port 9000 publicly reachable (P2P peer discovery)
+#   - .env file populated from .env.testnet.example
+#
+# Quick start:
+#   cp .env.testnet.example .env
+#   # Edit .env with your secrets and BOOTSTRAP_PEERS
+#   docker compose up -d
+#
+# Security note: all API ports are bound to 127.0.0.1 (localhost only).
+# Port 9000 (P2P) is the only port that must be publicly accessible.
+#
+# CPU budget (N5 Pro CT 101 — 6 cores):
+#   wrfcoin-node        2.5   (primary consumer; mining + consensus)
+#   postgres            1.5   (shared by all backend services)
+#   wrfcoin-backend     1.0   (API gateway)
+#   redis               0.5   (in-memory; rarely CPU-bound)
+#   all other services  0.5   (I/O-bound Node.js microservices)
+#   OS + SSH headroom   ~0.5
+# CPU limits are cgroup soft limits; no single service starves the others.
+
+x-infra-build-labels: &infra-build-labels
+  org.opencontainers.image.revision: ${WRFCOIN_INFRA_BUILD_REVISION:-}
+  org.opencontainers.image.created: ${WRFCOIN_BUILD_CREATED:-}
+
+# Images whose Dockerfile records the stamps itself (the faucet, infra#1121).
+x-infra-build-args: &infra-build-args
+  WRFCOIN_BUILD_REVISION: ${WRFCOIN_INFRA_BUILD_REVISION:-}
+  WRFCOIN_BUILD_CREATED: ${WRFCOIN_BUILD_CREATED:-}
+
+services:
+
+  # =========================================================================
+  # Infrastructure
+  # =========================================================================
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: wrfcoin-testnet-postgres
+    restart: unless-stopped
+    # No host port binding — accessed internally by service name
+    #
+    # Connection budget (max_connections=200):
+    #   5 Node.js pools  x  DB_POOL_SIZE(8)  =  40
+    #   Rust wrfcoin-node pool               ~  10
+    #   Rust wrfcoin-seed  pool (optional)   ~  10
+    #   db-migrate (one-shot)                =   1
+    #   superuser_reserved_connections       =   3
+    #   ─────────────────────────────────────────
+    #   Worst-case total                     ~  64
+    #   Headroom for psql, pg_dump, debug    = 133
+    #
+    # Memory tuning for N5 Pro CT 101 (32 GB LXC allocation; ~4-8 GB available to postgres
+    # as one of ~10 co-tenant containers — do not raise shared_buffers above 1 GB here):
+    #   shared_buffers       = 512 MB  (conservative for co-tenant workload; ~6% of CT RAM)
+    #   work_mem             = 16 MB   (per-sort/hash; moderate OLTP)
+    #   maintenance_work_mem = 128 MB  (VACUUM, CREATE INDEX)
+    #   effective_cache_size = 2 GB    (planner hint — OS page cache estimate for co-tenant host)
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - listen_addresses=*
+      - -c
+      - max_connections=200
+      - -c
+      - superuser_reserved_connections=3
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - effective_cache_size=2GB
+    environment:
+      POSTGRES_DB: wrfcoin
+      POSTGRES_USER: wrfcoin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-backup:/var/lib/postgresql/data/backup
+      - ./postgresql.wal.conf:/etc/postgresql/postgresql.conf:ro
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "wrfcoin", "-d", "wrfcoin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '1.5'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: wrfcoin-testnet-redis
+    restart: unless-stopped
+    # No host port binding — accessed internally by service name
+    # Password auth required; no TLS (Redis stays within the Docker network)
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    # Eviction policy: volatile-lru preserves keys without TTL (e.g. JWT revocation
+    # blocklist entries stored via SET rather than SETEX). allkeys-lru would evict
+    # those under memory pressure and silently break security-critical state.
+    # See wrfcoin/core4#1203 and docs/security/REDIS_EVICTION_POLICY.md.
+    command: >-
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      --appendonly yes
+      --protected-mode yes
+      --maxmemory 512mb
+      --maxmemory-policy volatile-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli --no-auth-warning ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  softhsm-init:
+    image: wrfcoin/native-chain:testnet-local
+    container_name: wrfcoin-testnet-softhsm-init
+    restart: unless-stopped
+    user: "1001:1001"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        if [ "$${WRFCOIN_SYNC_ONLY:-0}" = "1" ]; then
+          echo "[softhsm-init] Sync-only mode: no signing token will be created."
+          touch /tmp/softhsm-ready
+          exec tail -f /dev/null
+        fi
+        HSM_DIR=/app/data/hsm
+        SOFTHSM2_CONF=$$HSM_DIR/softhsm2.conf
+        TOKEN_LABEL=$${WRFCOIN_HSM_TOKEN_LABEL:-wrfcoin-validator}
+        KEY_LABEL=$${WRFCOIN_HSM_KEY_LABEL:-wrfcoin-signing-key}
+        PIN_ENV=$${WRFCOIN_HSM_PIN_ENV:-WRFCOIN_HSM_PIN}
+        PIN="$$(printenv "$$PIN_ENV" 2>/dev/null || true)"
+        if [ -z "$$PIN" ]; then
+          echo "[softhsm-init] ERROR: HSM user PIN not configured. Set WRFCOIN_HSM_PIN in the environment." >&2
+          exit 1
+        fi
+        SO_PIN=$${WRFCOIN_HSM_SO_PIN:-}
+        if [ -z "$$SO_PIN" ]; then
+          echo "[softhsm-init] ERROR: HSM SO-PIN not configured. Set WRFCOIN_HSM_SO_PIN in the environment." >&2
+          exit 1
+        fi
+        if [ "$$SO_PIN" = "0000" ]; then
+          echo "[softhsm-init] ERROR: refusing unsafe default HSM SO-PIN 0000." >&2
+          exit 1
+        fi
+        MODULE=$${WRFCOIN_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so}
+
+        case "$$MODULE" in
+          */softhsm*)
+            export SOFTHSM2_CONF
+            mkdir -p "$$HSM_DIR/tokens"
+            if [ ! -f "$$SOFTHSM2_CONF" ]; then
+              printf 'directories.tokendir = %s/tokens\nobjectstore.backend = file\nlog.level = INFO\n' \
+                "$$HSM_DIR" > "$$SOFTHSM2_CONF"
+            fi
+
+            if ! softhsm2-util --show-slots 2>/dev/null | grep -qF "$$TOKEN_LABEL"; then
+              echo "[softhsm-init] Initialising SoftHSM2 token: $$TOKEN_LABEL"
+              softhsm2-util --init-token --free \
+                --label "$$TOKEN_LABEL" \
+                --pin "$$PIN" \
+                --so-pin "$$SO_PIN"
+            fi
+
+            if ! pkcs11-tool --module "$$MODULE" \
+              --login --pin "$$PIN" \
+              --token-label "$$TOKEN_LABEL" \
+              --list-objects | grep -qF "$$KEY_LABEL"; then
+              echo "[softhsm-init] Generating Ed25519 keypair: $$KEY_LABEL"
+              pkcs11-tool --module "$$MODULE" \
+                --login --pin "$$PIN" \
+                --token-label "$$TOKEN_LABEL" \
+                --keypairgen --key-type EC:edwards25519 \
+                --label "$$KEY_LABEL" --id 01
+            fi
+            ;;
+          *)
+            echo "[softhsm-init] Skipping SoftHSM2 init for module: $$MODULE"
+            ;;
+        esac
+
+        touch /tmp/softhsm-ready
+        tail -f /dev/null
+    environment:
+      WRFCOIN_HSM_MODULE_PATH: ${WRFCOIN_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so}
+      WRFCOIN_HSM_TOKEN_LABEL: ${WRFCOIN_HSM_TOKEN_LABEL:-wrfcoin-validator}
+      WRFCOIN_HSM_KEY_LABEL: ${WRFCOIN_HSM_KEY_LABEL:-wrfcoin-signing-key}
+      WRFCOIN_HSM_PIN_ENV: ${WRFCOIN_HSM_PIN_ENV:-WRFCOIN_HSM_PIN}
+      WRFCOIN_HSM_PIN: ${WRFCOIN_HSM_PIN:-}
+      WRFCOIN_HSM_SO_PIN: ${WRFCOIN_HSM_SO_PIN:-}
+      WRFCOIN_SYNC_ONLY: ${WRFCOIN_SYNC_ONLY:-0}
+    volumes:
+      - node-data:/app/data
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ "$${WRFCOIN_SYNC_ONLY:-0}" = "1" ]; then
+            test -f /tmp/softhsm-ready;
+            exit $$?;
+          fi;
+          PIN_ENV=$${WRFCOIN_HSM_PIN_ENV:-WRFCOIN_HSM_PIN};
+          PIN="$$(printenv "$$PIN_ENV" 2>/dev/null || true)";
+          [ -n "$$PIN" ] || exit 1;
+          MODULE=$${WRFCOIN_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so};
+          TOKEN_LABEL=$${WRFCOIN_HSM_TOKEN_LABEL:-wrfcoin-validator};
+          KEY_LABEL=$${WRFCOIN_HSM_KEY_LABEL:-wrfcoin-signing-key};
+          test -f /tmp/softhsm-ready &&
+          case "$$MODULE" in
+            */softhsm*)
+              SOFTHSM2_CONF=/app/data/hsm/softhsm2.conf softhsm2-util --show-slots 2>/dev/null |
+              grep -qF "$$TOKEN_LABEL" &&
+              SOFTHSM2_CONF=/app/data/hsm/softhsm2.conf pkcs11-tool \
+              --module "$$MODULE" --login --pin "$$PIN" \
+              --token-label "$$TOKEN_LABEL" --list-objects |
+              grep -qF "$$KEY_LABEL"
+              ;;
+            *) true ;;
+          esac
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "1"
+
+  softhsm-seed-init:
+    image: wrfcoin/native-chain:testnet-local
+    container_name: wrfcoin-testnet-seed-softhsm-init
+    restart: unless-stopped
+    profiles: ["seed"]
+    user: "1001:1001"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        HSM_DIR=/app/data/hsm
+        SOFTHSM2_CONF=$$HSM_DIR/softhsm2.conf
+        TOKEN_LABEL=$${WRFCOIN_HSM_TOKEN_LABEL:-wrfcoin-validator}
+        KEY_LABEL=$${WRFCOIN_HSM_KEY_LABEL:-wrfcoin-signing-key}
+        PIN_ENV=$${WRFCOIN_HSM_PIN_ENV:-WRFCOIN_HSM_PIN}
+        PIN="$$(printenv "$$PIN_ENV" 2>/dev/null || true)"
+        if [ -z "$$PIN" ]; then
+          echo "[softhsm-seed-init] ERROR: HSM user PIN not configured. Set WRFCOIN_HSM_PIN in the environment." >&2
+          exit 1
+        fi
+        SO_PIN=$${WRFCOIN_HSM_SO_PIN:-}
+        if [ -z "$$SO_PIN" ]; then
+          echo "[softhsm-seed-init] ERROR: HSM SO-PIN not configured. Set WRFCOIN_HSM_SO_PIN in the environment." >&2
+          exit 1
+        fi
+        if [ "$$SO_PIN" = "0000" ]; then
+          echo "[softhsm-seed-init] ERROR: refusing unsafe default HSM SO-PIN 0000." >&2
+          exit 1
+        fi
+        MODULE=$${WRFCOIN_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so}
+
+        case "$$MODULE" in
+          */softhsm*)
+            export SOFTHSM2_CONF
+            mkdir -p "$$HSM_DIR/tokens"
+            if [ ! -f "$$SOFTHSM2_CONF" ]; then
+              printf 'directories.tokendir = %s/tokens\nobjectstore.backend = file\nlog.level = INFO\n' \
+                "$$HSM_DIR" > "$$SOFTHSM2_CONF"
+            fi
+
+            if ! softhsm2-util --show-slots 2>/dev/null | grep -qF "$$TOKEN_LABEL"; then
+              echo "[softhsm-seed-init] Initialising SoftHSM2 token: $$TOKEN_LABEL"
+              softhsm2-util --init-token --free \
+                --label "$$TOKEN_LABEL" \
+                --pin "$$PIN" \
+                --so-pin "$$SO_PIN"
+            fi
+
+            if ! pkcs11-tool --module "$$MODULE" \
+              --login --pin "$$PIN" \
+              --token-label "$$TOKEN_LABEL" \
+              --list-objects | grep -qF "$$KEY_LABEL"; then
+              echo "[softhsm-seed-init] Generating Ed25519 keypair: $$KEY_LABEL"
+              pkcs11-tool --module "$$MODULE" \
+                --login --pin "$$PIN" \
+                --token-label "$$TOKEN_LABEL" \
+                --keypairgen --key-type EC:edwards25519 \
+                --label "$$KEY_LABEL" --id 01
+            fi
+            ;;
+          *)
+            echo "[softhsm-seed-init] Skipping SoftHSM2 init for module: $$MODULE"
+            ;;
+        esac
+
+        touch /tmp/softhsm-ready
+        tail -f /dev/null
+    environment:
+      WRFCOIN_HSM_MODULE_PATH: ${WRFCOIN_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so}
+      WRFCOIN_HSM_TOKEN_LABEL: ${WRFCOIN_HSM_TOKEN_LABEL:-wrfcoin-validator}
+      WRFCOIN_HSM_KEY_LABEL: ${WRFCOIN_HSM_KEY_LABEL:-wrfcoin-signing-key}
+      WRFCOIN_HSM_PIN_ENV: ${WRFCOIN_HSM_PIN_ENV:-WRFCOIN_HSM_PIN}
+      WRFCOIN_HSM_PIN: ${WRFCOIN_HSM_PIN:-}
+      WRFCOIN_HSM_SO_PIN: ${WRFCOIN_HSM_SO_PIN:-}
+    volumes:
+      - seed-data:/app/data
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PIN_ENV=$${WRFCOIN_HSM_PIN_ENV:-WRFCOIN_HSM_PIN};
+          PIN="$$(printenv "$$PIN_ENV" 2>/dev/null || true)";
+          [ -n "$$PIN" ] || exit 1;
+          MODULE=$${WRFCOIN_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so};
+          TOKEN_LABEL=$${WRFCOIN_HSM_TOKEN_LABEL:-wrfcoin-validator};
+          KEY_LABEL=$${WRFCOIN_HSM_KEY_LABEL:-wrfcoin-signing-key};
+          test -f /tmp/softhsm-ready &&
+          case "$$MODULE" in
+            */softhsm*)
+              SOFTHSM2_CONF=/app/data/hsm/softhsm2.conf softhsm2-util --show-slots 2>/dev/null |
+              grep -qF "$$TOKEN_LABEL" &&
+              SOFTHSM2_CONF=/app/data/hsm/softhsm2.conf pkcs11-tool \
+              --module "$$MODULE" --login --pin "$$PIN" \
+              --token-label "$$TOKEN_LABEL" --list-objects |
+              grep -qF "$$KEY_LABEL"
+              ;;
+            *) true ;;
+          esac
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "1"
+
+  # =========================================================================
+  # Database Migrations (one-shot init container)
+  # =========================================================================
+
+  db-migrate:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-db-migrate
+    # Drizzle migrations are baked into the backend image via infra/docker/Dockerfile.backend.
+    # Keep db-migrate self-contained so fresh clones do not need host ../backend bind mounts.
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -z "$$DATABASE_URL" ]; then
+          echo "ERROR: DATABASE_URL is not set" >&2
+          exit 1
+        fi
+        if [ ! -x /usr/local/bin/assert-migration-image-freshness ]; then
+          echo "ERROR: stale db-migrate image lacks the freshness assertion; expected migration $${WRFCOIN_EXPECTED_DB_MIGRATION}.sql" >&2
+          exit 1
+        fi
+        /usr/local/bin/assert-migration-image-freshness
+        echo "Running Drizzle migrations..."
+        node node_modules/drizzle-kit/bin.cjs migrate
+        echo "Migrations complete."
+    environment:
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      WRFCOIN_EXPECTED_DB_MIGRATION: "0029_user_achievements_no_authorizing_defaults"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "1"
+
+  # =========================================================================
+  # WRFCoin Core Blockchain Node (Rust launch_api binary)
+  # =========================================================================
+
+  wrfcoin-node:
+    image: wrfcoin/native-chain:testnet-local
+    # 777 adds no environment entries; 888 requires all public bootstrap inputs.
+    env_file: bootstrap.${WRFCOIN_CHAIN_ID:-777}.env
+    container_name: wrfcoin-testnet-node
+    restart: unless-stopped
+    ports:
+      # Node API — loopback only for the June 17 tailnet launch (#557).
+      # Publish the explorer, not the privileged node API, to testers.
+      - "127.0.0.1:8556:8556"
+      # P2P — must be publicly reachable; forward this port in your firewall/router
+      - "0.0.0.0:9000:9000"
+    environment:
+      WRFCOIN_API_HOST: "0.0.0.0"
+      WRFCOIN_API_PORT: "8556"
+      RUST_LOG: ${RUST_LOG:-info}
+      WRFCOIN_SERVICE_ID: ${WRFCOIN_SERVICE_ID:-}
+      WRFCOIN_NETWORK_ID: testnet
+      # #2502: MANDATORY for the cut. WRFCOIN_NETWORK_ID above is a *selector*,
+      # not a boolean, so a typo ('testnett') is indistinguishable from a real
+      # third network and lands in the branch that seeds NO producer set — a
+      # chain that looks authenticated and enforces nothing. There is no fix
+      # for that in code; this flag is it. It turns a resolved-empty producer
+      # set into a hard startup abort, and it parses FALLIBLY, so a typo here
+      # aborts rather than silently disabling the guard.
+      WRFCOIN_REQUIRE_PRODUCER_AUTH: "1"
+      # A sync-only operator follows and validates the chain but owns no block-signing key.
+      # Default off: validator/reference nodes retain the fail-closed HSM startup contract.
+      WRFCOIN_SYNC_ONLY: ${WRFCOIN_SYNC_ONLY:-0}
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # O1 governance allowlist for on-chain oracle registrations (#2055 / #724).
+      #
+      # Every node that will ever validate this chain needs this — not just the
+      # cutting node. It is resolved identically by producer, mempool and every
+      # syncing peer, and it is fail-closed: unset means an EMPTY allowlist and
+      # every oracle registration fails authorization. That posture is correct
+      # and must stay; do NOT "improve" it into a default. It is the opposite of
+      # the deleted GENESIS_ORACLE_SET_ENV (#2523), where unset meant
+      # *unenforced and silent*.
+      #
+      # Measured 2026-08-04 on two nodes built from core4 67d07852: a peer
+      # started WITHOUT this variable REJECTS block 1 outright —
+      #   "Block at height 1 rejected: oracle registration without valid
+      #    governance authorization (forgery rejected, #2055)"
+      # (shared-protocol proof_of_publishing.rs:6081, reached from the sync
+      # verifier) — and stalls at height 0 with an empty oracle_set. It does not
+      # silently diverge, so this is a stalled peer rather than a fork; both are
+      # unacceptable on a chain that cannot be re-cut.
+      #
+      # Public governance key is pinned here and deliberately NOT
+      # ${VAR:-} substituted. This is a PUBLIC key, so there is nothing to keep
+      # out of the repo — and an env-substituted form fails in the worst
+      # direction: a missing or misspelled .env entry renders as empty, which is
+      # a silently empty allowlist and a node that refuses every registration.
+      # Rotation is a compose edit and a PR, which is auditable.
+      #
+      # This variable is read from the PROCESS environment on every call, so it
+      # takes effect only on container RECREATION, never on a config reload.
+      # Verify against /proc/<pid>/environ, never against a rendered config:
+      #   core4/scripts/verify-oracle-governance-allowlist.sh
+      #     --container wrfcoin-testnet-node --expected-pubkey <key>
+      # See testnet/ORACLE_GOVERNANCE_ALLOWLIST.md for the runbook.
+      WRFCOIN_ORACLE_GOVERNANCE_PUBKEYS: "e7bec166ad446314d26fb7526bfa8cec1b363b438440262fb001f7b04b20bf00"
+      # Cardinality declaration for the line above (#2712). One key is the intended
+      # state. Declaring it explicitly means a rotation that APPENDS the new key
+      # instead of REPLACING the retired one is refused at startup with a message
+      # naming both counts, rather than silently leaving the retired key authorized.
+      # Update this the same commit the allowlist changes, never separately.
+      WRFCOIN_ORACLE_GOVERNANCE_PUBKEY_COUNT: "1"
+      # Compute-fee floor for zero-fee weather-class txs (#1488 / #483).
+      # COMPUTATIONAL_FEE_ACTIVATION_HEIGHT=0, so verify_block enforces
+      # min_work_factor on feeless ContributionReveal/ForecastReveal from genesis.
+      # min_work_factor_floor() reads this env var directly on BOTH the producer
+      # and validator sides; the desktop peer compose already defaults it to 0
+      # (PR #505 / R100). Without the same passthrough here, the N5 validator
+      # falls back to the hard-coded floor of 1000 while the desktop runs at 0 —
+      # the two nodes then disagree on every zero-fee weather block and FORK at
+      # height 1. Default 0 keeps the two-node testnet symmetric. The env is read
+      # once at startup and cached, so restart the node to change it.
+      WRFCOIN_MIN_WORK_FACTOR: ${WRFCOIN_MIN_WORK_FACTOR:-0}
+      WRFCOIN_P2P_PORT: "9000"
+      WRFCOIN_P2P_ENABLED: "true"
+      # Comma-separated bootstrap peer multiaddresses for initial peer discovery.
+      WRFCOIN_P2P_BOOTSTRAP: ${BOOTSTRAP_PEERS:-}
+      # Optional relay multiaddresses used for NAT traversal.
+      WRFCOIN_P2P_RELAY_ADDRESSES: ${WRFCOIN_P2P_RELAY_ADDRESSES:-}
+      # Advertised P2P multiaddr for peers outside the Docker bridge (host LAN IP, NAT public IP).
+      WRFCOIN_P2P_EXTERNAL_ADDR: ${WRFCOIN_P2P_EXTERNAL_ADDR:?WRFCOIN_P2P_EXTERNAL_ADDR must be set to an operator-verified reachable multiaddr}
+      # Snapshot signing key; leave empty to publish unsigned snapshots.
+      WRFCOIN_SNAPSHOT_SIGNER_PRIVATE_KEY: ${WRFCOIN_SNAPSHOT_SIGNER_PRIVATE_KEY:-}
+      # Comma-separated ed25519 public keys allowed to authorize snapshot ingest.
+      # Unset/empty boots with an empty trust set; every snapshot ingest refuses.
+      # Malformed keys are fatal at boot (core4#3344); do not infer startup failure from unset.
+      # The canonical cut overlay binds the existing native public trust pin (infra#1117),
+      # distinct from the later dedicated join-archive key ceremony.
+      WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS: ${WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS:-}
+      # Set to true ONLY for ephemeral dev/CI volumes. Production / testnet operators should leave this false.
+      ALLOW_UNENCRYPTED_STORAGE: ${ALLOW_UNENCRYPTED_STORAGE:-false}
+      # WAL checkpoint interval in blocks.
+      WRFCOIN_CHECKPOINT_INTERVAL: ${WRFCOIN_CHECKPOINT_INTERVAL:-100}
+      # Public, valueless testnet mempool limits. Fee floor remains zero until
+      # faucet-funded earn transactions consistently include a fee.
+      WRFCOIN_MEMPOOL_MAX_SIZE_BYTES: ${WRFCOIN_MEMPOOL_MAX_SIZE_BYTES:-10485760}
+      WRFCOIN_MEMPOOL_MAX_TXS_PER_SENDER: ${WRFCOIN_MEMPOOL_MAX_TXS_PER_SENDER:-64}
+      WRFCOIN_MEMPOOL_MAX_AGE_SECS: ${WRFCOIN_MEMPOOL_MAX_AGE_SECS:-3600}
+      WRFCOIN_MEMPOOL_MIN_FEE_RATE: ${WRFCOIN_MEMPOOL_MIN_FEE_RATE:-0}
+      # Operator API token; used for privileged node API endpoints.
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      # Dedicated least-privilege token used by first-party contribution and
+      # wallet-relay paths. Never substitute the operator credential.
+      WRFCOIN_CONTRIBUTOR_TOKEN: ${WRFCOIN_CONTRIBUTOR_TOKEN:?WRFCOIN_CONTRIBUTOR_TOKEN must be set}
+      # Oracle API token; leave empty to disable oracle token auth.
+      WRFCOIN_ORACLE_TOKEN: ${WRFCOIN_ORACLE_TOKEN:-}
+      # Reader API token; leave empty to disable reader token auth.
+      WRFCOIN_READER_TOKEN: ${WRFCOIN_READER_TOKEN:-}
+      # Target number of gossipsub mesh peers per topic.
+      WRFCOIN_GOSSIPSUB_MESH_N: ${WRFCOIN_GOSSIPSUB_MESH_N:-4}
+      # Minimum mesh peers before gossipsub grafts more peers.
+      WRFCOIN_GOSSIPSUB_MESH_N_LOW: ${WRFCOIN_GOSSIPSUB_MESH_N_LOW:-3}
+      # Maximum mesh peers before gossipsub prunes peers.
+      WRFCOIN_GOSSIPSUB_MESH_N_HIGH: ${WRFCOIN_GOSSIPSUB_MESH_N_HIGH:-8}
+      # Minimum outbound-only mesh peers for eclipse resistance.
+      WRFCOIN_GOSSIPSUB_MESH_OUTBOUND_MIN: ${WRFCOIN_GOSSIPSUB_MESH_OUTBOUND_MIN:-2}
+      # Flood new publishes beyond mesh peers; useful for very small networks.
+      WRFCOIN_GOSSIPSUB_FLOOD_PUBLISH: ${WRFCOIN_GOSSIPSUB_FLOOD_PUBLISH:-false}
+      # Close idle P2P connections after this many seconds.
+      WRFCOIN_IDLE_CONNECTION_TIMEOUT_SECS: ${WRFCOIN_IDLE_CONNECTION_TIMEOUT_SECS:-300}
+      # Maximum peers allowed from the same /16 subnet (0 disables the limit).
+      WRFCOIN_MAX_PEERS_PER_SUBNET: ${WRFCOIN_MAX_PEERS_PER_SUBNET:-2}
+      # Maximum inline gossipsub payload size before CID-based indirection is required.
+      WRFCOIN_INLINE_DATA_MAX: ${WRFCOIN_INLINE_DATA_MAX:-65536}
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    volumes:
+      - node-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      softhsm-init:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      # Container health should reflect API liveness, not full chain readiness.
+      test:
+        - CMD
+        - curl
+        - -sf
+        - http://localhost:8556/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/logs:noexec,nosuid,size=200m
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.5'
+        reservations:
+          memory: 512M
+          cpus: '1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # =========================================================================
+  # WRFCoin Seed Node (team-operated, always-online bootstrap peer)
+  # Start with: docker compose --profile seed up -d
+  # =========================================================================
+
+  wrfcoin-seed:
+    image: wrfcoin/native-chain:testnet-local
+    env_file: bootstrap.${WRFCOIN_CHAIN_ID:-777}.env
+    container_name: wrfcoin-testnet-seed
+    restart: unless-stopped
+    profiles: ["seed"]
+    # infra#762: the seed's advertise-address requirement, enforced at SEED
+    # STARTUP instead of at compose interpolation.
+    #
+    # Why it cannot stay a `:?` — see the WRFCOIN_P2P_EXTERNAL_ADDR comment
+    # below. Why it cannot simply become `:-` and rely on the node to complain:
+    # it does not. `p2p/src/config.rs:496` resolves this as
+    #     env_string("WRFCOIN_P2P_EXTERNAL_ADDR").and_then(|s| s.parse::<Multiaddr>().ok())
+    # so an empty or malformed value silently becomes `None` and the seed starts
+    # advertising nothing. That is fail-OPEN, and a seed that comes up with no
+    # reachable advertise address is worse than one that refuses — it is exactly
+    # the outcome the original guard existed to prevent.
+    #
+    # Same shape as WRFCOIN_REQUIRE_PRODUCER_AUTH below: where config-time
+    # enforcement is not expressible, use a hard startup abort that parses
+    # fallibly. This runs as root and then `exec`s the image's real entrypoint,
+    # so the HSM init and the gosu uid/gid handoff are unchanged, and the node
+    # binary is still PID 1.
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -z "$${WRFCOIN_P2P_EXTERNAL_ADDR:-}" ]; then
+          echo "FATAL: WRFCOIN_SEED_P2P_EXTERNAL_ADDR is unset or empty." >&2
+          echo "  The seed advertises this multiaddr to peers. Starting without it" >&2
+          echo "  produces a seed that no peer can dial back — refusing to start." >&2
+          echo "  Set it to an operator-verified reachable seed multiaddr, e.g." >&2
+          echo "    WRFCOIN_SEED_P2P_EXTERNAL_ADDR=/ip4/<verified-ip>/tcp/9001" >&2
+          echo "  Verify reachability first: testnet/check-p2p-external-addr.sh" >&2
+          exit 1
+        fi
+        exec /usr/local/bin/hsm-entrypoint.sh "$$@"
+      - --
+    ports:
+      - "0.0.0.0:9001:9001"
+      - "127.0.0.1:8557:8556"
+    environment:
+      WRFCOIN_API_HOST: "0.0.0.0"
+      WRFCOIN_API_PORT: "8556"
+      RUST_LOG: ${RUST_LOG:-info}
+      WRFCOIN_NETWORK_ID: testnet
+      # #2502: MANDATORY for the cut. WRFCOIN_NETWORK_ID above is a *selector*,
+      # not a boolean, so a typo ('testnett') is indistinguishable from a real
+      # third network and lands in the branch that seeds NO producer set — a
+      # chain that looks authenticated and enforces nothing. There is no fix
+      # for that in code; this flag is it. It turns a resolved-empty producer
+      # set into a hard startup abort, and it parses FALLIBLY, so a typo here
+      # aborts rather than silently disabling the guard.
+      WRFCOIN_REQUIRE_PRODUCER_AUTH: "1"
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # Same default as wrfcoin-node above, and for exactly the reason the
+      # governance-allowlist comment below already gives: the seed validates
+      # blocks like any other peer. Omitting it does NOT mean "no policy" — it
+      # means the seed silently enforces the code default of 1000 while the
+      # producer runs 0.
+      #
+      # MEASURED 2026-08-05, hours after the genesis cut. The seed had no
+      # override, so it rejected the producer's block 3 — exactly once:
+      #
+      #   Block at height 3 rejected: zero-fee weather tx without valid compute
+      #     receipt (min_work_factor=1000)
+      #   Rejecting P2P block at height 3: failed consensus validation
+      #
+      # That single rejection was permanent. Every later block then logged
+      # "ahead of local tip 2 — buffering as orphan and kicking sync", and the
+      # seed sat at height 2 while the producer climbed past 18. It reads as a
+      # sync bug and is not one: the node serves those blocks fine (verified,
+      # /chain/block/3..7 returns 200 from inside the seed container). It is a
+      # consensus-policy split, which no amount of retrying can resolve.
+      #
+      # The synthetic collector submits zero-fee weather transactions with no
+      # compute receipts, so 0 is what this testnet actually runs. `:-0` here is
+      # the same declared fleet default the node already gets — not a new policy.
+      WRFCOIN_MIN_WORK_FACTOR: ${WRFCOIN_MIN_WORK_FACTOR:-0}
+      # O1 governance allowlist — same value, same reasoning, same fail-closed
+      # posture as wrfcoin-node above. The seed validates blocks like any other
+      # peer, so omitting it here would produce a seed that rejects block 1 and
+      # stalls at height 0 while the node it seeds for is healthy. Takes effect
+      # on container recreation only; verify via /proc/<pid>/environ against
+      # container wrfcoin-testnet-seed.
+      WRFCOIN_ORACLE_GOVERNANCE_PUBKEYS: "e7bec166ad446314d26fb7526bfa8cec1b363b438440262fb001f7b04b20bf00"
+      # Cardinality declaration for the line above (#2712). One key is the intended
+      # state. Declaring it explicitly means a rotation that APPENDS the new key
+      # instead of REPLACING the retired one is refused at startup with a message
+      # naming both counts, rather than silently leaving the retired key authorized.
+      # Update this the same commit the allowlist changes, never separately.
+      WRFCOIN_ORACLE_GOVERNANCE_PUBKEY_COUNT: "1"
+      WRFCOIN_P2P_PORT: "9001"
+      WRFCOIN_P2P_ENABLED: "true"
+      # Comma-separated bootstrap peer multiaddresses for seed-to-seed discovery.
+      WRFCOIN_P2P_BOOTSTRAP: ${SEED_BOOTSTRAP_PEERS:-}
+      # Optional relay multiaddresses used for NAT traversal.
+      WRFCOIN_P2P_RELAY_ADDRESSES: ${WRFCOIN_P2P_RELAY_ADDRESSES:-}
+      # Advertised seed P2P multiaddr for peers outside the Docker bridge.
+      #
+      # NOT `:?` — see the `entrypoint:` guard below, and infra#762.
+      #
+      # Compose interpolates EVERY service in the loaded file set before it
+      # decides which services a command targets. `profiles:` does not change
+      # that. So a `:?` here made this variable a precondition of commands that
+      # neither start the seed nor render it, including the one documented join
+      # command in the repo:
+      #
+      #   join-testnet-sync-node.sh:201
+      #     docker compose -f docker-compose.testnet.yml -f docker-compose.override.yml \
+      #       up -d --build postgres redis wrfcoin-node
+      #
+      # That exited 1 at interpolation, before any build, on compose v2.40.3 and
+      # v5.1.4 alike, from both documented starting points (`setup-env.sh` never
+      # generates this variable; `.env.testnet.example:253` sets it EMPTY, which
+      # `:?` also rejects). Every new peer was blocked.
+      #
+      # The guard itself was right and is kept — an unverified seed advertise
+      # address is a real hazard. It moves from interpolation time to seed
+      # startup, which is the only place it was ever meant to apply.
+      WRFCOIN_P2P_EXTERNAL_ADDR: ${WRFCOIN_SEED_P2P_EXTERNAL_ADDR:-}
+      # Snapshot signing key; leave empty to publish unsigned snapshots.
+      WRFCOIN_SNAPSHOT_SIGNER_PRIVATE_KEY: ${WRFCOIN_SNAPSHOT_SIGNER_PRIVATE_KEY:-}
+      # Unset/empty boots with an empty trust set; every snapshot ingest refuses.
+      # Canonical cut overlay uses the already pinned native signers; malformed remains fatal.
+      WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS: ${WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS:-}
+      # Set to true ONLY for ephemeral dev/CI volumes. Production / testnet operators should leave this false.
+      ALLOW_UNENCRYPTED_STORAGE: ${ALLOW_UNENCRYPTED_STORAGE:-false}
+      # WAL checkpoint interval in blocks.
+      WRFCOIN_CHECKPOINT_INTERVAL: ${WRFCOIN_CHECKPOINT_INTERVAL:-100}
+      # Keep seed admission policy identical to the reference node.
+      WRFCOIN_MEMPOOL_MAX_SIZE_BYTES: ${WRFCOIN_MEMPOOL_MAX_SIZE_BYTES:-10485760}
+      WRFCOIN_MEMPOOL_MAX_TXS_PER_SENDER: ${WRFCOIN_MEMPOOL_MAX_TXS_PER_SENDER:-64}
+      WRFCOIN_MEMPOOL_MAX_AGE_SECS: ${WRFCOIN_MEMPOOL_MAX_AGE_SECS:-3600}
+      WRFCOIN_MEMPOOL_MIN_FEE_RATE: ${WRFCOIN_MEMPOOL_MIN_FEE_RATE:-0}
+      # Operator API token; used for privileged node API endpoints.
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      # Dedicated least-privilege token used by first-party contribution and
+      # wallet-relay paths. Never substitute the operator credential.
+      WRFCOIN_CONTRIBUTOR_TOKEN: ${WRFCOIN_CONTRIBUTOR_TOKEN:?WRFCOIN_CONTRIBUTOR_TOKEN must be set}
+      # Oracle API token; leave empty to disable oracle token auth.
+      WRFCOIN_ORACLE_TOKEN: ${WRFCOIN_ORACLE_TOKEN:-}
+      # Reader API token; leave empty to disable reader token auth.
+      WRFCOIN_READER_TOKEN: ${WRFCOIN_READER_TOKEN:-}
+      # Target number of gossipsub mesh peers per topic.
+      WRFCOIN_GOSSIPSUB_MESH_N: ${WRFCOIN_GOSSIPSUB_MESH_N:-4}
+      # Minimum mesh peers before gossipsub grafts more peers.
+      WRFCOIN_GOSSIPSUB_MESH_N_LOW: ${WRFCOIN_GOSSIPSUB_MESH_N_LOW:-3}
+      # Maximum mesh peers before gossipsub prunes peers.
+      WRFCOIN_GOSSIPSUB_MESH_N_HIGH: ${WRFCOIN_GOSSIPSUB_MESH_N_HIGH:-8}
+      # Minimum outbound-only mesh peers for eclipse resistance.
+      WRFCOIN_GOSSIPSUB_MESH_OUTBOUND_MIN: ${WRFCOIN_GOSSIPSUB_MESH_OUTBOUND_MIN:-2}
+      # Flood new publishes beyond mesh peers; useful for very small networks.
+      WRFCOIN_GOSSIPSUB_FLOOD_PUBLISH: ${WRFCOIN_GOSSIPSUB_FLOOD_PUBLISH:-false}
+      # Close idle P2P connections after this many seconds.
+      WRFCOIN_IDLE_CONNECTION_TIMEOUT_SECS: ${WRFCOIN_IDLE_CONNECTION_TIMEOUT_SECS:-300}
+      # Maximum peers allowed from the same /16 subnet (0 disables the limit).
+      WRFCOIN_MAX_PEERS_PER_SUBNET: ${WRFCOIN_MAX_PEERS_PER_SUBNET:-2}
+      # Maximum inline gossipsub payload size before CID-based indirection is required.
+      WRFCOIN_INLINE_DATA_MAX: ${WRFCOIN_INLINE_DATA_MAX:-65536}
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    volumes:
+      - seed-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      softhsm-seed-init:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      # Keep seed liveness separate from /readyz so dependent services can boot after host restart.
+      test: ["CMD", "curl", "-f", "http://localhost:8556/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/logs:noexec,nosuid,size=200m
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # =========================================================================
+  # WRFCoin Faucet UI (seed profile)
+  # Start with: docker compose --profile seed up -d
+  # =========================================================================
+
+  wrfcoin-faucet:
+    image: wrfcoin/faucet:testnet
+    build:
+      context: ..
+      dockerfile: testnet/services/faucet/Dockerfile
+      args: *infra-build-args
+    container_name: wrfcoin-testnet-faucet
+    restart: unless-stopped
+    # "faucet" lets the faucet run without the seed, which is RETIRED on CT101
+    # (owner ruling 2026-09-27, infra#1057 Q4). The faucet depends only on
+    # redis + wrfcoin-node. "seed" is kept so `--profile seed` (older docs,
+    # the rollback path) still starts it.
+    profiles: ["seed", "faucet"]
+    ports:
+      # Faucet UI — loopback by default; tailnet-only when the operator sets
+      # FAUCET_TAILNET_BIND_ADDR (#588). Deliberately a FAUCET-SPECIFIC var
+      # (like WRFCOIN_BACKEND_BIND_ADDR, #546) and NOT the shared
+      # TESTNET_TAILNET_BIND_ADDR: that var is documented explorer-only
+      # (#557, smoke check C4), and reusing it would silently publish the
+      # faucet wherever the explorer is published (codex P2 on PR #622).
+      # Never set this to a public-internet address without an explicit
+      # operator decision — the faucet's own rate limits are not DDoS
+      # protection.
+      - "${FAUCET_TAILNET_BIND_ADDR:-127.0.0.1}:8080:8080"
+    environment:
+      PORT: "8080"
+      # Chain identity folded into the v2 transparent-transfer signing preimage
+      # (#2034/core4 PR #2064, infra#626). MUST match wrfcoin-node's values
+      # below byte-for-byte or the node's fail-closed auth check rejects every
+      # faucet dispense — mirrored here rather than left to default so this
+      # compose file stays the single source of truth for the testnet identity.
+      WRFCOIN_NETWORK_ID: testnet
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # Core4 node REST launch_api base URL. The faucet submits a transparent
+      # transfer to POST /transactions/submit (there is NO JSON-RPC wrf_transfer).
+      FAUCET_NODE_URL: http://wrfcoin-node:8556
+      FAUCET_SUBMIT_PATH: /transactions/submit
+      # Bearer token the node maps to a Contributor (or higher) role. The node's
+      # operator token satisfies Contributor; reuse it unless a dedicated
+      # contributor token is provisioned.
+      FAUCET_API_TOKEN: ${FAUCET_API_TOKEN:-${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN (or FAUCET_API_TOKEN) must be set for the faucet}}
+      # Prometheus scraper token. The default matches testnet/prometheus-bearer-token,
+      # which setup-env.sh writes from WRFCOIN_READER_TOKEN for node /metrics auth.
+      # Falls back to FAUCET_API_TOKEN only when no reader token is configured.
+      FAUCET_METRICS_TOKEN: ${FAUCET_METRICS_TOKEN:-${WRFCOIN_READER_TOKEN:-}}
+      FAUCET_AMOUNT: "10"
+      FAUCET_DENOMINATION: WRF
+      FAUCET_TRUST_PROXY: ${FAUCET_TRUST_PROXY:-false}
+      FAUCET_RATE_LIMIT_SECONDS: "86400"
+      FAUCET_RATE_LIMIT_PREFIX: "faucet:ip:"
+      FAUCET_WALLET_DAILY_CAP: ${FAUCET_WALLET_DAILY_CAP:-10}
+      # infra#1157: per-device (tailnet user / peer IP) daily cap in whole WRF;
+      # the default is one FAUCET_AMOUNT claim per device per UTC day.
+      FAUCET_DEVICE_DAILY_CAP: ${FAUCET_DEVICE_DAILY_CAP:-10}
+      FAUCET_GLOBAL_DAILY_CAP: ${FAUCET_GLOBAL_DAILY_CAP:-1000}
+      FAUCET_WALLET_BALANCE_FLOOR: ${FAUCET_WALLET_BALANCE_FLOOR:-10}
+      # Required absolute faucet bucket mark in whole WRF. No default is
+      # intentional: an unset mark makes the faucet fail closed at startup.
+      FAUCET_HIGH_WATER_MARK: ${FAUCET_HIGH_WATER_MARK:-}
+      # Safe interim source until the owner selects an emission/treasury model.
+      FAUCET_REFILL_SOURCE: ${FAUCET_REFILL_SOURCE:-manual}
+      FAUCET_WALLET_BALANCE_PATH: ${FAUCET_WALLET_BALANCE_PATH:-/addresses/{address}}
+      FAUCET_WALLET_PRIVKEY: ${FAUCET_WALLET_PRIVKEY:-}
+      FAUCET_WALLET_ADDRESS: ${FAUCET_WALLET_ADDRESS:-}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      CAPTCHA_PROVIDER: ${FAUCET_CAPTCHA_PROVIDER:-off}
+      HCAPTCHA_SITEKEY: ${FAUCET_HCAPTCHA_SITEKEY:-}
+      HCAPTCHA_SECRET: ${FAUCET_HCAPTCHA_SECRET:-}
+      RECAPTCHA_SITEKEY: ${FAUCET_RECAPTCHA_SITEKEY:-}
+      RECAPTCHA_SECRET: ${FAUCET_RECAPTCHA_SECRET:-}
+      RECAPTCHA_MIN_SCORE: ${FAUCET_RECAPTCHA_MIN_SCORE:-0.5}
+      DISCORD_WEBHOOK_URL: ${FAUCET_DISCORD_WEBHOOK_URL:-}
+      DISCORD_WEBHOOK_USERNAME: ${FAUCET_DISCORD_WEBHOOK_USERNAME:-WRFCoin Faucet}
+      DISCORD_WEBHOOK_AVATAR_URL: ${FAUCET_DISCORD_WEBHOOK_AVATAR_URL:-}
+      DISCORD_INVITE_URL: ${DISCORD_INVITE_URL:-https://discord.gg/wrfcoin-testnet}
+      EXPLORER_URL: ${EXPLORER_URL:-http://localhost:8081}
+      # Bond grant for new node operators (genesis 888; services/faucet/BOND_GRANT.md).
+      # Default OFF. One grant of the node bond per node key, peer id and wallet.
+      FAUCET_BOND_GRANT_ENABLED: ${FAUCET_BOND_GRANT_ENABLED:-false}
+      FAUCET_BOND_GRANT_AMOUNT: ${FAUCET_BOND_GRANT_AMOUNT:-250.36}
+      FAUCET_BOND_GRANT_DAILY_COUNT_CAP: ${FAUCET_BOND_GRANT_DAILY_COUNT_CAP:-4}
+      FAUCET_BOND_GRANT_MAX_LAG_BLOCKS: ${FAUCET_BOND_GRANT_MAX_LAG_BLOCKS:-20}
+      # Reader token for the sync-peer read; empty falls back to FAUCET_API_TOKEN.
+      FAUCET_READER_TOKEN: ${FAUCET_READER_TOKEN:-${WRFCOIN_READER_TOKEN:-}}
+    depends_on:
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # =========================================================================
+  # WRFCoin Backend API (Node.js main_api_server)
+  # =========================================================================
+
+  wrfcoin-backend:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-backend
+    restart: unless-stopped
+    ports:
+      # REST API — loopback by default. WRFCOIN_BACKEND_BIND_ADDR (#546) remains
+      # an explicit single-service override for short physical-device validation,
+      # but TESTNET_TAILNET_BIND_ADDR must not publish this service (#557).
+      - "${WRFCOIN_BACKEND_BIND_ADDR:-127.0.0.1}:4001:4001"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=768 --max-semi-space-size=32"
+      PORT: "4001"
+      # Comma-separated private LAN hosts; empty leaves backend generic fallbacks active.
+      STATION_DISCOVERY_ECOWITT_HOSTS: ${STATION_DISCOVERY_ECOWITT_HOSTS:-}
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Redis namespace isolation — backend reads when redis-client.js adds support
+      REDIS_PREFIX: "backend:"
+      # Public-testnet quotas. The backend's generic defaults remain compatible
+      # for non-testnet deployments; these compose defaults are intentionally
+      # tighter for an unauthenticated public network.
+      RATE_LIMIT_API_WINDOW_MS: ${RATE_LIMIT_API_WINDOW_MS:-60000}
+      RATE_LIMIT_API_MAX_REQUESTS: ${RATE_LIMIT_API_MAX_REQUESTS:-60}
+      RATE_LIMIT_AUTH_WINDOW_MS: ${RATE_LIMIT_AUTH_WINDOW_MS:-900000}
+      RATE_LIMIT_AUTH_MAX_REQUESTS: ${RATE_LIMIT_AUTH_MAX_REQUESTS:-5}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-}
+      # backend#1318: server/utils/keyManager.js (/api/keys). Optional: when unset,
+      # the key-manager route family refuses to mount (fail-closed), as before.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      RPC_API_KEY: ${RPC_API_KEY:?RPC_API_KEY must be set}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN must be set}
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:?N8N_WEBHOOK_SECRET must be set}
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      # The chain identity phones sign commit authorizations for (backend#1287:
+      # POST /api/oracle/submit-data/prepare returns it, and returns NONE unless
+      # both are set). Use the node's expression; :-777 covers absent AND empty.
+      # Wallet sign-in already resolved to the same 777/testnet through
+      # PAYMASTER_CHAIN_ID and NETWORK_ID, so its challenge does not change.
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+      # Governance vote signing domain (backend#1329: server/utils/
+      # governance-vote-signature.ts fails closed with 503 when unset).
+      # Empty default, deliberately NOT `:?` (profiles do not scope interpolation).
+      WRFCOIN_GOVERNANCE_CHAIN_ID: ${WRFCOIN_GOVERNANCE_CHAIN_ID:-}
+      WRFCOIN_GOVERNANCE_NETWORK_ID: ${WRFCOIN_GOVERNANCE_NETWORK_ID:-}
+      WRFCOIN_GOVERNANCE_SIGNING_VERSION: ${WRFCOIN_GOVERNANCE_SIGNING_VERSION:-}
+      # Chain-station sync (backend#1288: server/services/chain-station-sync.ts).
+      # Off unless STATION_CHAIN_SYNC_ENABLED=true.
+      STATION_CHAIN_SYNC_ENABLED: ${STATION_CHAIN_SYNC_ENABLED:-}
+      STATION_CHAIN_SYNC_LABELS: ${STATION_CHAIN_SYNC_LABELS:-}
+      STATION_CHAIN_SYNC_LABELS_FILE: ${STATION_CHAIN_SYNC_LABELS_FILE:-}
+      STATION_CHAIN_SYNC_INTERVAL_MS: ${STATION_CHAIN_SYNC_INTERVAL_MS:-}
+      # Mobile explorer summary (backend#1387): public faucet address read for
+      # faucetFunded. Unset is safe: faucetFunded reports null (unknown). Value is
+      # set on the host, never committed.
+      EXPLORER_FAUCET_ADDRESS: ${EXPLORER_FAUCET_ADDRESS:-}
+      # Weather-submit authentication (backend#932: server/services/weather-submit-auth-migration.ts).
+      # `off` (the backend default) accepts and warns on anonymous submits; `enforce` requires the
+      # station's submit token or the platform contributor token. Behaviour-preserving: unset renders
+      # `off`. Flipping to enforce is an owner decision after every live collector carries a token.
+      WEATHER_SUBMIT_AUTH_MODE: ${WEATHER_SUBMIT_AUTH_MODE:-off}
+      # Admin operation config (backend#1329). Each admin route sends ONLY what is
+      # configured here and ignores the request body; an unset/empty/invalid value
+      # makes the route answer 503 CORE4_ADMIN_CONFIG_UNAVAILABLE (fails closed, no
+      # live default). Empty default, deliberately NOT `:?`. WRFCOIN_ADMIN_STEALTH_CONFIG
+      # is SECRET-class (spend and view keys): host .env only, never in the repo.
+      WRFCOIN_GOVERNANCE_PROPOSER_ADDRESS: ${WRFCOIN_GOVERNANCE_PROPOSER_ADDRESS:-}
+      WRFCOIN_ADMIN_GOVERNANCE_PROPOSAL_CONFIG: ${WRFCOIN_ADMIN_GOVERNANCE_PROPOSAL_CONFIG:-}
+      WRFCOIN_MINING_REWARD_ADDRESS: ${WRFCOIN_MINING_REWARD_ADDRESS:-}
+      WRFCOIN_ADMIN_NFT_MINT_CONFIG: ${WRFCOIN_ADMIN_NFT_MINT_CONFIG:-}
+      WRFCOIN_ADMIN_NFT_TRANSFER_CONFIG: ${WRFCOIN_ADMIN_NFT_TRANSFER_CONFIG:-}
+      WRFCOIN_ADMIN_STEALTH_CONFIG: ${WRFCOIN_ADMIN_STEALTH_CONFIG:-}
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      # Wallet send authenticates the caller with a backend JWT, then relays
+      # the already-signed transaction to core4 with Contributor authority.
+      WRFCOIN_CONTRIBUTOR_TOKEN: ${WRFCOIN_CONTRIBUTOR_TOKEN:?WRFCOIN_CONTRIBUTOR_TOKEN must be set}
+      # Reader-role bearer for the node's Reader-gated routes (backend#1114:
+      # GET /api/blockchain/status proxies /network/info with this token and
+      # reports an honest null when it is unset). Same value the node accepts
+      # as WRFCOIN_READER_TOKEN above; optional so a cold start without it
+      # still boots.
+      WRFCOIN_READER_TOKEN: ${WRFCOIN_READER_TOKEN:-}
+      # Canonical faucet path (#857 Option B): the backend onboarding proxy
+      # dispenses via the seed-profile faucet service. Full URL incl. path.
+      # The proxy authenticates with FAUCET_SERVICE_TOKEN (defaults to
+      # WRFCOIN_OPERATOR_TOKEN in backend code, matching the faucet's own
+      # FAUCET_API_TOKEN fallback) which exempts it from public captcha.
+      FAUCET_SERVICE_URL: ${FAUCET_SERVICE_URL:-http://wrfcoin-faucet:8080/faucet/request}
+      WRFCOIN_CONTRIBUTOR_ADDRESS: ${WRFCOIN_CONTRIBUTOR_ADDRESS:-0x0000000000000000000000000000000000000b02}
+      # Height at which advisory reference tiering applies the gross-outlier guard
+      # (backend#1266, infra#1111). Empty = unscheduled. Must mirror the chain's
+      # governed schedule; update it on every re-schedule (testnet/UPGRADE_RUNBOOK.md).
+      REFERENCE_GROSS_GUARD_ACTIVATION_HEIGHT: ${REFERENCE_GROSS_GUARD_ACTIVATION_HEIGHT:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # No default (infra#1056). The old `:-http://localhost:5000` default is
+      # what CT101 ran in production, because its .env never set the variable.
+      # Deliberately NOT `:?`: profiles do not scope interpolation, so a `:?`
+      # here would break the documented join command, which starts only
+      # postgres/redis/wrfcoin-node (the #762 trap; see
+      # scripts/test-join-path-operator-config.sh). Unset renders empty, and
+      # the gates refuse it before a release instead: check-env-completeness.sh
+      # (pre-`up`) and render-release-manifest.sh (`config_problems`) both
+      # reject an empty, loopback, or wildcard CORS_ORIGIN. The eight services
+      # below repeat this line.
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      # Wallet-login (SIWE) relying-party origin. createWalletAuthService()
+      # fails closed at boot unless this resolves to a single HTTPS origin under
+      # NODE_ENV=production (backend#1052 — the whole API gateway would otherwise
+      # crash, not just wallet login). Derive it from the public funnel origin
+      # the operator already sets for the edge, so there is no separate step and
+      # it can never silently diverge from the browser origin; fall back to an
+      # https localhost placeholder so the tailnet-only base stack still boots.
+      # An explicit WRFCOIN_WALLET_AUTH_ORIGIN always wins.
+      WRFCOIN_WALLET_AUTH_ORIGIN: ${WRFCOIN_WALLET_AUTH_ORIGIN:-${WRFCOIN_FUNNEL_ORIGIN:-https://localhost:5000}}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # Console logging — ensures docker compose logs captures all output
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+      # backend#1229: the exact hops allowed to set X-Forwarded-For. Every
+      # ingress proxy reaches the backend over the pinned wrfcoin-ingress
+      # network below, so these addresses are fixed:
+      #   10.251.0.1   wrfcoin-ingress gateway: docker-proxy source for the
+      #                127.0.0.1-published ports (tailscale serve -> :5000,
+      #                tailscale funnel -> :8444). tailscaled's HTTP proxy SETS
+      #                X-Forwarded-For to the true source (overwriting any
+      #                client value), so the entry left of this hop is real.
+      #   10.251.0.10  frontend nginx   10.251.0.11 edge (443)   10.251.0.12 funnel-edge
+      # Anything else — including this backend's own 127.0.0.1:4001 port — is
+      # keyed on its socket peer, and the backend never bans a private peer.
+      TRUSTED_PROXIES: "127.0.0.1,::1,10.251.0.1,10.251.0.10,10.251.0.11,10.251.0.12"
+      # infra#972: advisory oracle-reference shadow scoring. OFF by default.
+      # Enable only through docker-compose.reference-shadow.yml plus
+      # `--profile oracle-reference`. It never changes a reward and does not
+      # touch consensus, and the scorer is not yet at consensus parity
+      # (oracle-reference#9, backend#1169).
+      REFERENCE_SHADOW: ${REFERENCE_SHADOW:-0}
+      ORACLE_REFERENCE_URL: ${ORACLE_REFERENCE_URL:-http://oracle-reference:8010}
+      ORACLE_REFERENCE_TIMEOUT_MS: ${ORACLE_REFERENCE_TIMEOUT_MS:-5000}
+      # infra#973: the achievement-payout reconciler. OFF by default. When true
+      # it re-POSTs pending claims to core4 POST /rewards/payout, which pays out
+      # on-chain, so flipping it is an owner decision. Its precondition is that
+      # the running core4 includes core4#2081 (5ff889926); the deployed pin
+      # 9ef92a235 does. See UPGRADE_RUNBOOK.md.
+      REWARD_PAYOUT_RECONCILE_ENABLED: ${REWARD_PAYOUT_RECONCILE_ENABLED:-false}
+      REWARD_PAYOUT_RECONCILE_INTERVAL_MS: ${REWARD_PAYOUT_RECONCILE_INTERVAL_MS:-60000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      wrfcoin-testnet: {}
+      # backend#1229: ingress proxies reach the backend only on this network.
+      wrfcoin-ingress:
+        ipv4_address: 10.251.0.20
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/logs:noexec,nosuid,size=200m
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # =========================================================================
+  # Critical-Path Microservices (same backend image, esbuild-bundled entry points)
+  # =========================================================================
+
+  wrfcoin-governance:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-governance
+    restart: unless-stopped
+    command: ["node", "dist/governance_server.cjs"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=384 --max-semi-space-size=16"
+      PORT: "8000"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Redis namespace isolation — backend reads when redis-client.js adds support
+      REDIS_PREFIX: "governance:"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-}
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # Console logging — ensures docker compose logs captures all output
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+      # backend#1234: /health dependency detail needs an operator/reader bearer;
+      # the container healthcheck below sends the reader token (operator token
+      # as fallback) so the semantic database/mode contract stays enforced.
+      WRFCOIN_READER_TOKEN: ${WRFCOIN_READER_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          body=$$(printf 'Authorization: Bearer %s\n' "$${WRFCOIN_READER_TOKEN:-$${WRFCOIN_OPERATOR_TOKEN:-}}" |
+            curl -fsS -H @- http://localhost:8000/health) &&
+          HEALTH_BODY="$$body" node -e '
+          const good = new Set(["healthy", "ok", "up", "ready", "connected", "operational"]);
+          const bad = new Set(["degraded", "down", "unhealthy", "failed", "failure", "error", "offline"]);
+          let p; try { p = JSON.parse(process.env.HEALTH_BODY); } catch (_) { process.exit(1); }
+          const d = p && p.dependencies && p.dependencies.database;
+          const invalid = value => {
+            if (Array.isArray(value)) return value.some(invalid);
+            if (!value || typeof value !== "object") return false;
+            return Object.entries(value).some(([key, child]) =>
+              (key === "status" && typeof child === "string" && bad.has(child.toLowerCase())) ||
+              (["connected", "healthy", "ready"].includes(key) && child === false) || invalid(child));
+          };
+          if (!p || !good.has(String(p.status).toLowerCase()) || !d || invalid(p) ||
+              !good.has(String(d.status).toLowerCase()) || d.mode !== "connected") process.exit(1);'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/logs:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  wrfcoin-iot:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-iot
+    restart: unless-stopped
+    command: ["node", "dist/iot_sensor.cjs"]
+    ports:
+      - "127.0.0.1:3002:3002"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=384 --max-semi-space-size=16"
+      PORT: "3002"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Redis namespace isolation — backend reads when redis-client.js adds support
+      REDIS_PREFIX: "iot:"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-}
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # Console logging — ensures docker compose logs captures all output
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/logs:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  wrfcoin-weather-earnings:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-weather-earnings
+    restart: unless-stopped
+    command: ["node", "dist/weather_earnings.cjs"]
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=384 --max-semi-space-size=16"
+      PORT: "8001"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Redis namespace isolation — backend reads when redis-client.js adds support
+      REDIS_PREFIX: "earnings:"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-}
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # Console logging — ensures docker compose logs captures all output
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/logs:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # =========================================================================
+  # Optional Microservices (full profile)
+  # Start with: docker compose --profile full up -d
+  # =========================================================================
+
+  wrfcoin-cross-chain:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-cross-chain
+    restart: unless-stopped
+    profiles: ["full"]
+    command: ["node", "dist/cross_chain_protocol_server.cjs"]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=384 --max-semi-space-size=16"
+      PORT: "3000"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PREFIX: "cross-chain:"
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/backend/logs:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  wrfcoin-compute:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-compute
+    restart: unless-stopped
+    profiles: ["full"]
+    command: ["node", "dist/compute_networks_server.cjs"]
+    ports:
+      - "127.0.0.1:6000:6000"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=384 --max-semi-space-size=16"
+      PORT: "6000"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PREFIX: "compute:"
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    volumes:
+      - ml-data:/app/backend/data
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/backend/logs:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  wrfcoin-ml:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-ml
+    restart: unless-stopped
+    profiles: ["full"]
+    command: ["node", "dist/ai_ml_networks_server.cjs"]
+    ports:
+      - "127.0.0.1:6001:6001"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=384 --max-semi-space-size=16"
+      PORT: "6001"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PREFIX: "ml:"
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/backend/logs:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # Owner-enabled IPFS archive infrastructure. Neither default nor full starts it.
+  # Kubo's administrative API has no host port and only the daemon shares its network.
+  ipfs-kubo:
+    image: ipfs/kubo:v0.24.0
+    profiles: ["ipfs-storage"]
+    restart: unless-stopped
+    environment:
+      IPFS_PROFILE: server
+    volumes:
+      - testnet-ipfs-data:/data/ipfs
+    networks:
+      - ipfs-private
+    # Probe the local RPC API, not `ipfs id`: healthchecks exec as root, and
+    # with cap_drop ALL root cannot read the daemon-owned 0600 repo config.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --post-data='' http://127.0.0.1:5001/api/v0/id || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  storage-node:
+    image: wrfcoin/storage-node:testnet-local
+    profiles: ["ipfs-storage"]
+    build:
+      context: ${WRFCOIN_ROOT:-../..}
+      dockerfile: infra/infra/docker/Dockerfile.storage
+    restart: unless-stopped
+    environment:
+      STORAGE_NODE_PROFILE: testnet
+      IPFS_API_URL: http://ipfs-kubo:5001
+    depends_on:
+      ipfs-kubo:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+      - ipfs-private
+    # Distroless image: GET /health must be probed from an external client.
+    # It reports 503 while Kubo is unavailable; there is no fabricated fallback.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  wrfcoin-node-discovery:
+    image: wrfcoin/backend:testnet
+    container_name: wrfcoin-testnet-node-discovery
+    restart: unless-stopped
+    profiles: ["full"]
+    command: ["node", "dist/easy_node_discovery.cjs"]
+    ports:
+      # Host port 9001 is reserved for wrfcoin-seed (P2P). Discovery uses 9005
+      # on the host so both seed and full profiles can run simultaneously.
+      - "127.0.0.1:9005:9001"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=384 --max-semi-space-size=16"
+      PORT: "9001"
+      NODE_DISCOVERY_PORT: "9001"
+      NODE_DISCOVERY_WS_PORT: "9002"
+      DATABASE_URL: postgresql://wrfcoin:${POSTGRES_PASSWORD}@postgres:5432/wrfcoin?sslmode=disable
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-8}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PREFIX: "node-discovery:"
+      CORE4_API_URL: http://wrfcoin-node:8556
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      BLOCKCHAIN_NODE_URL: http://wrfcoin-node:8556
+      NETWORK_ID: testnet
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET must be set}
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PAYMASTER_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      ENABLE_CONSOLE_LOGS: "true"
+      DISABLE_FILE_LOG_TRANSPORTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/backend/logs:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # =========================================================================
+  # Block Explorer — lightweight testnet chain browser (#159)
+  # =========================================================================
+
+  wrfcoin-explorer:
+    image: wrfcoin/explorer:testnet-local
+    container_name: wrfcoin-testnet-explorer
+    restart: unless-stopped
+    command: ["node", "server.js"]
+    ports:
+      # Block explorer — loopback by default; tailnet-only when TESTNET_TAILNET_BIND_ADDR set (#552)
+      - "${TESTNET_TAILNET_BIND_ADDR:-127.0.0.1}:8081:8081"
+    environment:
+      NODE_ENV: production
+      PORT: "8081"
+      NODE_API_URL: http://wrfcoin-node:8556
+      BACKEND_API_URL: http://wrfcoin-backend:4001
+      POLL_INTERVAL_MS: "5000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # =========================================================================
+  # Weather Data Collection (optional — start with: docker compose --profile collector up -d)
+  # =========================================================================
+
+  weather-collector:
+    image: node:20-alpine
+    container_name: wrfcoin-testnet-weather-collector
+    restart: unless-stopped
+    profiles: ["collector"]
+    working_dir: /app
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    volumes:
+      - ${CORE4_PATH:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}/tests/security:/app/tests/security:ro
+      - ${CORE4_PATH:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}/tests/utils:/app/tests/utils:ro
+      # Commit/reveal state, station watermarks, signing identity, and explicit
+      # terminal outcomes must survive collector-only recreation.
+      - weather-collector-state:/root/.wrfcoin/collector-state
+      # The legacy single-station entrypoint explicitly keeps its watermark at
+      # /app/data/last-submitted-ts.txt rather than beside pending-reveals.json.
+      # Mount the same dedicated volume there so both actual runtime paths
+      # survive recreation without sharing state with another collector.
+      - weather-collector-state:/app/data
+    environment:
+      AMBIENT_WEATHER_APP_KEY: ${AMBIENT_WEATHER_APP_KEY:-}
+      AMBIENT_WEATHER_API_KEY: ${AMBIENT_WEATHER_API_KEY:-}
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      # Chain identity uses the node's expression, with a nonempty legacy default.
+      # check-env-completeness refuses a host default that disagrees with cut pins.
+      #
+      # Since #1848 the mempool refuses a ContributionCommit whose CommitPayload
+      # lacks a valid `auth_pubkey`/`auth_signature`, and the collector signs that
+      # authorization itself. The message is domain-separated, and the collector
+      # resolves the domain the same way the Rust signer does: from these two
+      # variables, defaulting to `wrfcoin-main`/`mainnet` when unset
+      # (`ambient-pipeline.cjs` DEFAULT_CHAIN_ID / DEFAULT_NETWORK_ID).
+      #
+      # Unset therefore does not disable the signature — it produces a perfectly
+      # valid signature over the MAINNET domain, which this chain rejects with
+      # `commit sender authorization failed`. Measured 2026-08-06: 12/12 commits
+      # rejected with these unset, 12/12 accepted with them set, same station,
+      # same keys, same minute. Sibling of core4#2713 and core4#2744.
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+      # Contributor address credited for Jon's WS-5000 readings.
+      #
+      # This is the address that is actually PAID: rewards go to the reveal's
+      # first output, not to the station registry's `owner_address` (core4#2743).
+      # Registering a station to one address while the collector submits to
+      # another looks correct on every surface and pays the wrong account.
+      # `PWS-EXAMPLE-WS5000` is registered to this address in block 674.
+      JONS_CONTRIBUTOR: ${JONS_CONTRIBUTOR:-0xed36d00b294c5eecdc5e12bdf712d786bd919b08}
+      # Station elevation for the sea-level pressure field (wrfcoin/core4#3285).
+      #
+      # Leave UNSET. The elevation comes from the station's on-chain registration
+      # (`location.elevation_meters`, read over WRFCOIN_API_HOST/PORT above via
+      # GET /transactions/station/registrations/PWS-EXAMPLE-WS5000). A station
+      # with no registered elevation submits no `pressure_sea_level_hpa`: there
+      # is no default and no guess. (That lookup ships in the core4 collector
+      # change for #3285; a core4 tree without it still falls back to its old
+      # built-in 220 m, exactly as before this variable was listed.)
+      #
+      # Set it only as an explicit operator override. Jon's owner-measured value
+      # is 227.7 m (747 ft) ASL; the USGS DEM says 247.9 m there and is wrong, so
+      # the registration carries the override. Empty here means "not set".
+      # The multi-station collector has no equivalent: every station's elevation
+      # comes from its own registration.
+      JONS_ELEVATION_M: ${JONS_ELEVATION_M:-}
+    entrypoint: /bin/sh
+    command: >-
+      -c "while true; do node tests/security/fetch-ambient-weather.cjs || true; sleep 300; done"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f fetch-ambient-weather.cjs > /dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    networks:
+      - wrfcoin-testnet
+
+  # Multi-contributor ingestion. `weather-collector` above is Jon's WS-5000 and
+  # ONLY that — it is hardcoded to his MAC and holds his account's API key, so it
+  # structurally cannot see any other contributor's station. Every additional
+  # contributor arrives through this service.
+  #
+  # Roster lives OUTSIDE the compose tree at /root/wrfcoin-secrets, deliberately:
+  # it carries live Ambient API keys, and <deploy-root> is a Docker
+  # build context that gets uploaded to the daemon on every build. Mounted
+  # read-only.
+  #
+  # `--credentials-file` also routes around backend#1042, where
+  # GET /api/weather/stations/credentials returns 500 and the backend roster is
+  # therefore unavailable. When that is fixed this flag can go.
+  weather-collector-multi:
+    image: node:20-alpine
+    container_name: wrfcoin-testnet-weather-collector-multi
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    profiles: ["collector"]
+    working_dir: /app
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    volumes:
+      # Separate from CORE4_PATH on purpose. The deploy tree is pinned to the
+      # genesis-cut commit because the node image builds from it, and that pin
+      # must not drift. But the multi-tenant collector needs core4#2740 — the
+      # provenance-graded model binding — which landed AFTER the cut. Without it
+      # a real station is refused with `model_unverified` and skipped, silently
+      # earning nothing (measured on Steven's WS-2902D, 2026-08-06).
+      #
+      # Defaults to the deploy tree, so hosts that are current need no override.
+      - ${MULTI_COLLECTOR_CORE4:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}/tests/security:/app/tests/security:ro
+      - ${MULTI_COLLECTOR_CORE4:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}/core4}/tests/utils:/app/tests/utils:ro
+      - ${WRFCOIN_ROSTER_DIR:-/root/wrfcoin-secrets}:/secrets:ro
+      - weather-collector-multi-state:/root/.wrfcoin/collector-state
+    environment:
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      # Same reasoning as weather-collector above, and the same measurement:
+      # unset does not disable the commit signature, it signs the MAINNET domain
+      # and every commit is rejected as "commit sender authorization failed".
+      # Measured 2026-08-06: 0/12 accepted without these, 12/12 with them.
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+    entrypoint: /bin/sh
+    command: >-
+      -c "while true; do node tests/security/fetch-ambient-weather-multi.cjs
+      --credentials-file /secrets/ambient-roster.json || true; sleep 300; done"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f fetch-ambient-weather-multi.cjs > /dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      wrfcoin-node:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    networks:
+      - wrfcoin-testnet
+
+  # =========================================================================
+  # RTL-SDR Weather Enrichment (experimental — start with: docker compose --profile experimental up -d)
+  # =========================================================================
+
+  sdr-ingest:
+    build:
+      context: ..
+      dockerfile: testnet/services/sdr-ingest/Dockerfile
+      labels: *infra-build-labels
+    image: wrfcoin/sdr-ingest:experimental
+    container_name: wrfcoin-testnet-sdr-ingest
+    restart: unless-stopped
+    profiles: ["experimental"]
+    environment:
+      NODE_ENV: testnet
+      WRF_INGEST_URL: http://wrfcoin-backend:4001/ingest
+      SDR_POLL_INTERVAL: ${SDR_POLL_INTERVAL:-5}
+      SDR_PROTOCOLS: ${SDR_PROTOCOLS:-acurite,oregon,fine_offset}
+      SDR_FIXTURE_FILE: ${SDR_FIXTURE_FILE:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORT: "9000"
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    devices:
+      # RTL-SDR USB device (adjust vendor:product ID as needed)
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - ./services/sdr-ingest/fixtures:/app/fixtures:ro
+      - sdr-ingest-logs:/app/logs
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # =========================================================================
+  # WRFCoin Frontend Dashboard (React + nginx)
+  # =========================================================================
+
+  wrfcoin-frontend:
+    image: wrfcoin/frontend:testnet
+    container_name: wrfcoin-testnet-frontend
+    restart: unless-stopped
+    ports:
+      # Frontend dashboard — loopback only for the June 17 tailnet launch (#557).
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./nginx-frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    # backend#1229: ONLY on the pinned ingress network, so its address (and the
+    # gateway docker-proxy uses for the 127.0.0.1:5000 publish) is fixed and
+    # the backend can trust exactly this hop. nginx talks to nothing but the
+    # backend, which is also on wrfcoin-ingress.
+    networks:
+      wrfcoin-ingress:
+        ipv4_address: 10.251.0.10
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+      - /var/cache/nginx:noexec,nosuid,size=50m,uid=1001,gid=1001,mode=0755
+      - /run:noexec,nosuid,size=10m,uid=1001,gid=1001,mode=0755
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # =========================================================================
+  # Monitoring
+  # =========================================================================
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: wrfcoin-testnet-prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.testnet.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - ./alert-rules-blockchain-health.yml:/etc/prometheus/alert-rules-blockchain-health.yml:ro
+      - ./alert-rules-backend-down.yml:/etc/prometheus/alert-rules-backend-down.yml:ro
+      - ./prometheus-web.yml:/etc/prometheus/web.yml:ro
+      - ./prometheus-bearer-token:/etc/prometheus/bearer_token:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.config.file=/etc/prometheus/web.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      # --web.enable-lifecycle REMOVED: exposes unauthenticated POST /-/quit (#186)
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -S --spider http://localhost:9090/-/healthy 2>&1 | grep -Eq 'HTTP/.* (200 OK|401 Unauthorized)'",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: "65534:65534"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: wrfcoin-testnet-loki
+    restart: unless-stopped
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    command:
+      - "-config.file=/etc/loki/config.yaml"
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /loki/cache:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: wrfcoin-testnet-promtail
+    restart: unless-stopped
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/var/lib/promtail
+    command:
+      - "-config.file=/etc/promtail/config.yml"
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      # grafana/promtail:2.9.0 ships without wget or curl, so probe liveness
+      # via PID 1 instead of an HTTP /ready request. Restores container health
+      # status after the N5 Pro redeploy that flagged promtail as unhealthy.
+      test: ["CMD", "sh", "-c", "kill -0 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=10m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: wrfcoin-testnet-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/node-overview.json
+      # Passed through to Grafana provisioning for Prometheus datasource basic auth
+      PROMETHEUS_ADMIN_PASSWORD: ${PROMETHEUS_ADMIN_PASSWORD:-}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '1'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    container_name: wrfcoin-testnet-alertmanager
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9093:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./alertmanager.rendered.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "65534:65534"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=10m
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: wrfcoin-testnet-node-exporter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9100"
+    command:
+      - "--path.rootfs=/host"
+    volumes:
+      - /:/host:ro,rslave
+    pid: host
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9100/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.5'
+        reservations:
+          memory: 16M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # Monitoring helpers for backend alerting, not application services.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: wrfcoin-testnet-cadvisor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /proc:/rootfs/proc:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    user: root
+    networks:
+      - wrfcoin-testnet
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: wrfcoin-testnet-postgres-exporter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9187:9187"
+    environment:
+      DATA_SOURCE_NAME: postgresql://wrfcoin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/wrfcoin?sslmode=disable
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=10m
+    user: "65534:65534"
+    networks:
+      - wrfcoin-testnet
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9187/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: wrfcoin-testnet-blackbox-exporter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9115:9115"
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=10m
+    user: "65534:65534"
+    networks:
+      - wrfcoin-testnet
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9115/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # Independent reference data for the oracle trust bootstrap (infra#603).
+  # This is intentionally internal-only: core4 consumes it over the compose
+  # network, and no host port is published.
+  oracle-reference:
+    # Opt-in, because its build context is a sibling repo that is not checked
+    # out on every operator host. Without this profile the service sits in the
+    # DEFAULT set, so a host lacking `../../oracle-reference` cannot start the
+    # stack at all: compose aborts the whole `up` preparing the missing context,
+    # and with `--no-build` it instead fails creating a container for an image
+    # that was never built. Either way twenty-six healthy services fail to start
+    # because of one that has never run on that host.
+    #
+    # Measured on CT 101 during the 2026-08-06 cold-boot outage. Enable with
+    # `--profile oracle-reference` on a host that has the repo checked out.
+    profiles: ["oracle-reference"]
+    build:
+      context: ../../oracle-reference
+      dockerfile: Dockerfile
+      # No infra provenance labels: this image is built from the separate
+      # oracle-reference repository, and it is not a gated release image.
+    image: wrfcoin/oracle-reference:testnet-local
+    container_name: wrfcoin-testnet-oracle-reference
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      CACHE_MAX_GB: "10"
+      EARTH2STUDIO_CACHE: /data/cache
+    volumes:
+      - reference-cache:/data/cache
+    networks:
+      - wrfcoin-testnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+networks:
+  ipfs-private:
+    driver: bridge
+    internal: true
+  wrfcoin-testnet:
+    driver: bridge
+  # backend#1229: dedicated network for the ingress hops (frontend nginx, edge,
+  # funnel-edge) and the backend they proxy to. Pinned so the backend's
+  # TRUSTED_PROXIES can name exact addresses; wrfcoin-testnet stays dynamic and
+  # is not recreated by this change. 10.x is outside Docker's default address
+  # pools (172.17-31.0.0/16, 192.168.0.0/16), so it cannot collide with a
+  # network Docker allocated on its own.
+  wrfcoin-ingress:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.251.0.0/24
+          gateway: 10.251.0.1
+
+# =============================================================================
+# Volumes (named — persisted across restarts)
+# =============================================================================
+
+# =============================================================================
+# Volume Encryption Notice
+#
+# These named volumes store sensitive data (blockchain state, PostgreSQL DB,
+# Redis sessions). For production/testnet deployments on the N5 Pro, the host
+# filesystem backing these volumes MUST be LUKS2-encrypted.
+#
+# See docs/volume-encryption.md for:
+#   - LUKS2 setup and auto-mount on reboot
+#   - Per-volume LUKS bind-mount override pattern
+#   - Key management rules (never commit keyfiles to git)
+#   - HDD secure-erase procedures before RMA/disposal
+#   - bootstrap.sh encryption check integration
+#
+# To use LUKS-backed bind mounts instead of named volumes, create a
+# testnet/docker-compose.override.yml pointing to /mnt/wrfcoin-*/data paths.
+# =============================================================================
+
+volumes:
+  testnet-ipfs-data: {}
+  postgres-data: {}
+  postgres-backup: {}
+  redis-data: {}
+  node-data: {}
+  ml-data: {}
+  seed-data: {}
+  prometheus-data: {}
+  loki-data: {}
+  grafana-data: {}
+  alertmanager-data: {}
+  promtail-positions: {}
+  reference-cache: {}
+  sdr-ingest-logs: {}
+  weather-collector-state: {}
+  weather-collector-multi-state: {}

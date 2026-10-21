@@ -1,0 +1,88 @@
+# =============================================================================
+# WRFCoin INTERNAL service gateway (infra#598) — TAILNET-ONLY, NOT PUBLIC
+# =============================================================================
+# One bind, one routing policy, for the internal microservices — instead of
+# thirteen per-service exposure decisions. This file implements exactly the
+# `tailnet-gateway` rows of testnet/edge/route-ledger.yml; the ledger is the
+# authority, this file is the mechanism. Change the ledger first.
+#
+# NOT the public edge. The public edge is testnet/edge/Caddyfile (#640/#679)
+# and keeps its narrow onboarding allowlist. This gateway:
+#   - binds ${GATEWAY_TAILNET_BIND_ADDR} (a tailnet address) on :8600, plain
+#     HTTP inside the tailnet (Tailscale provides transport encryption);
+#   - is destined for the #594 workload host — NOT CT101, and never a second
+#     public edge (owner decision on #598, 2026-07-29);
+#   - DELIBERATELY has no route to: node API 8556 (chain control, #658),
+#     the faucet 8080 (its #604 tailscale serve is the only sanctioned surface),
+#     backend 4001 (public edge owns its allowlist; tailnet users hit it direct),
+#     postgres/redis/HSM (never-class).
+#
+# Auth stays with each service's own token middleware; the gateway contributes
+# the single bind, path routing, body limits, and per-IP rate limits.
+# Requires the caddy-ratelimit build (Dockerfile.caddy) — same image as the edge.
+
+{
+	# No ACME: tailnet-internal, plain HTTP on a tailnet-only bind.
+	auto_https off
+	order rate_limit before basic_auth
+}
+
+(gw_limits) {
+	request_body {
+		max_size 2MB
+	}
+}
+
+(gw_rate) {
+	# args: zone-name, events/window
+	rate_limit {
+		zone {args[0]} {
+			key {remote_host}
+			events {args[1]}
+			window 1m
+		}
+	}
+}
+
+http://{$GATEWAY_TAILNET_BIND_ADDR}:8600 {
+	import gw_limits
+
+	handle_path /svc/governance/* {
+		import gw_rate governance 120
+		reverse_proxy wrfcoin-testnet-governance:8000
+	}
+	handle_path /svc/iot/* {
+		import gw_rate iot 240
+		reverse_proxy wrfcoin-testnet-iot:3002
+	}
+	handle_path /svc/earnings/* {
+		import gw_rate earnings 240
+		reverse_proxy wrfcoin-testnet-weather-earnings:8001
+	}
+	handle_path /svc/crosschain/* {
+		import gw_rate crosschain 60
+		reverse_proxy wrfcoin-testnet-cross-chain:3000
+	}
+	handle_path /svc/compute/* {
+		import gw_rate compute 120
+		reverse_proxy wrfcoin-testnet-compute:6000
+	}
+	handle_path /svc/ml/* {
+		import gw_rate ml 60
+		reverse_proxy wrfcoin-testnet-ml:6001
+	}
+	handle_path /svc/discovery/* {
+		import gw_rate discovery 240
+		reverse_proxy wrfcoin-testnet-node-discovery:9001
+	}
+	handle_path /svc/explorer/* {
+		import gw_rate explorer 240
+		reverse_proxy wrfcoin-testnet-explorer:8081
+	}
+
+	# Everything else — including /svc/node, /svc/faucet, /svc/backend and any
+	# path someone hopes might exist — terminates here, by design.
+	handle {
+		respond "no such route (see testnet/edge/route-ledger.yml)" 404
+	}
+}

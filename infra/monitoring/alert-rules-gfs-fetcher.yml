@@ -1,0 +1,42 @@
+# GFS Fetcher Health Alert Rules
+# Monitors NOAA NOMADS latency, probe failures, and stale success windows.
+
+groups:
+  - name: gfs_fetcher_health_alerts
+    rules:
+      - alert: GfsFetcherProbeDown
+        expr: gfs_fetch_health_up == 0
+        for: 10m
+        labels:
+          severity: critical
+          category: weather
+          alertgroup: gfs-fetcher
+          playbook_severity: SEV2
+        annotations:
+          summary: 'GFS fetch probe is failing'
+          description: 'The latest GFS fetch sidecar probe failed for 10m. Check NOMADS availability, payload format, and probe logs.'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/gfs-fetcher-health-response.md#probe-down'
+
+      - alert: GfsFetcherLatencyHigh
+        expr: gfs_fetch_health_up == 1 and gfs_fetch_health_latency_seconds > 8
+        for: 15m
+        labels:
+          severity: warning
+          category: weather
+          alertgroup: gfs-fetcher
+        annotations:
+          summary: 'GFS fetch latency is elevated'
+          description: 'GFS fetch latency has remained above 8 seconds for 15m.'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/gfs-fetcher-health-response.md#latency-high'
+
+      - alert: GfsFetcherLastSuccessStale
+        expr: (time() - gfs_fetch_health_last_success_unixtime) > 3600
+        for: 10m
+        labels:
+          severity: warning
+          category: weather
+          alertgroup: gfs-fetcher
+        annotations:
+          summary: 'GFS fetch success signal is stale'
+          description: 'No successful GFS fetch probe has been recorded for more than one hour.'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/gfs-fetcher-health-response.md#last-success-stale'

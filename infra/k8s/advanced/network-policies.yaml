@@ -1,0 +1,338 @@
+# Advanced Network Security Policies for Wrfcoin
+# Implements zero-trust networking with micro-segmentation
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-default
+  namespace: wrfcoin-production
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow API services to communicate with database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-to-database
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      app: wrfcoin-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+---
+# Allow frontend to communicate with API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-to-api
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      app: wrfcoin-frontend
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-api
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# Allow ingress controller to reach services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-to-services
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: wrfcoin-production
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Allow monitoring access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      prometheus.io/scrape: 'true'
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 8081
+
+---
+# Cross-chain communication policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cross-chain-communication
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      component: cross-chain
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-api
+      ports:
+        - protocol: TCP
+          port: 5001
+  egress:
+    # SECURITY: Allow external blockchain connections but exclude private networks
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8       # Private Class A
+              - 172.16.0.0/12    # Private Class B
+              - 192.168.0.0/16   # Private Class C
+              - 169.254.0.0/16   # Link-local
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8545 # Ethereum RPC
+        - protocol: TCP
+          port: 9933 # Polkadot RPC
+        - protocol: TCP
+          port: 26657 # Cosmos RPC
+        - protocol: TCP
+          port: 9944 # Polkadot WebSocket
+
+---
+# IoT sensor network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: iot-sensor-policy
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      component: iot
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-api
+      ports:
+        - protocol: TCP
+          port: 3002
+  egress:
+    # Allow external sensor API connections
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+---
+# Storage network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: storage-network-policy
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      component: storage
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-api
+        - podSelector:
+            matchLabels:
+              component: iot
+      ports:
+        - protocol: TCP
+          port: 7000
+  egress:
+    # IPFS and Filecoin connections
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 4001 # IPFS
+        - protocol: TCP
+          port: 1347 # Filecoin
+
+---
+# Governance service policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: governance-policy
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      component: governance
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-frontend
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-api
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+
+---
+# Wallet service security policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wallet-security-policy
+  namespace: wrfcoin-production
+spec:
+  podSelector:
+    matchLabels:
+      component: wallet
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-frontend
+        - podSelector:
+            matchLabels:
+              app: wrfcoin-api
+      ports:
+        - protocol: TCP
+          port: 4000
+  egress:
+    # HSM and external wallet connections
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Emergency access policy (break-glass)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emergency-access
+  namespace: wrfcoin-production
+  annotations:
+    description: 'Break-glass policy for emergency access'
+spec:
+  podSelector:
+    matchLabels:
+      emergency-access: 'enabled'
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: emergency-tools
+  egress:
+    - to: []

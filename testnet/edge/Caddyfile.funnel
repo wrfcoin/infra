@@ -1,0 +1,118 @@
+# =============================================================================
+# WRFCoin funnel-facing edge (infra#657) — LOOPBACK ONLY, BEHIND TAILSCALE FUNNEL
+# =============================================================================
+# Why this file exists: the deployed frontend nginx proxies /api/, /ws and
+# /api/ws wholesale to the backend, so `tailscale funnel http://127.0.0.1:5000`
+# would publish the ENTIRE backend API and nullify the #658 boundary that
+# #679 built. The funnel must therefore target THIS edge, which enforces the
+# same exact onboarding allowlist as the direct 443 edge:
+#
+#   internet → Tailscale Funnel (TLS, *.ts.net) → 127.0.0.1:8444 (this Caddy)
+#            → allowlisted API → backend:4001 | everything else → frontend:5000
+#
+# No ACME, no public bind: TLS terminates at the funnel; the compose overlay
+# (docker-compose.funnel-edge.yml) binds the host port on 127.0.0.1 only, so
+# without an active funnel this edge is unreachable from anywhere but CT101.
+#
+# The allowlist lives in public_onboarding.caddy, shared with Caddyfile —
+# change the boundary there, never here.
+#
+# Requires the caddy-ratelimit build (Dockerfile.caddy), same image as the edge.
+# =============================================================================
+{
+	auto_https off
+	order rate_limit before basic_auth
+	servers {
+		# backend#1229 / infra#884 — TRUST EXACTLY ONE HOP: the wrfcoin-ingress
+		# gateway, and only to read the header tailscaled wrote.
+		#
+		# infra#884 asked whether tailscale funnel APPENDS to X-Forwarded-For or
+		# PASSES the client's header through, and removed #885's
+		# `trusted_proxies static private_ranges` + strict until it was known.
+		# The source answers it, and the answer is neither: tailscaled's serve/
+		# funnel reverse proxy REPLACES the header with the true source address
+		# (ipn/ipnlocal/serve.go addProxyForwardedHeaders:
+		#   r.Out.Header.Set("X-Forwarded-For", c.SrcAddr.Addr().String())
+		# unchanged from tailscale v1.50.0 to current main; for funnel, SrcAddr
+		# is the public client, "not that of the ingressPeer"). CT101's funnel is
+		# `/ proxy http://127.0.0.1:8444` (read-only `tailscale funnel status`,
+		# infra#884 comment 2026-09-09), i.e. that HTTP proxy handler, not a raw
+		# TCP forward. So a request arriving here from the gateway carries
+		# exactly one entry, and no client can choose it.
+		#
+		# Why the /32 and not private_ranges (#885's mistake): this edge is
+		# published on 127.0.0.1:8444 only, so docker-proxy delivers every
+		# connection from the pinned gateway 10.251.0.1, and nothing but a
+		# process on CT101 itself — tailscaled or the operator — can originate
+		# one. Any other peer is untrusted and its X-Forwarded-For is ignored,
+		# exactly as before. Strict parsing takes the rightmost untrusted entry,
+		# so even a header that somehow gained a client-supplied prefix cannot
+		# move the key.
+		#
+		# What this buys: {client_ip} — the rate-limit key in
+		# public_onboarding.caddy — is the real visitor again, so one abuser no
+		# longer exhausts faucet_claim for everyone (the cost infra#884 accepted),
+		# and reverse_proxy APPENDS the gateway, so the backend receives
+		# "<client>, 10.251.0.1" and keys its own limiter per client.
+		#
+		# If the funnel is ever re-pointed at a TCP forward (`--tcp`/`--tls-
+		# terminated-tcp`), tailscaled no longer writes the header and client
+		# values would pass straight through: delete these two lines first.
+		trusted_proxies static 10.251.0.1/32
+		trusted_proxies_strict
+	}
+}
+
+import public_onboarding.caddy
+import downloads.caddy
+
+:8444 {
+	# infra#884 instrumentation. This edge had NO access log before; this adds
+	# a deliberately narrow one whose purpose is to answer a single question:
+	# does tailscale funnel APPEND to X-Forwarded-For, or pass the client's
+	# header through untouched?
+	# (backend#1229 answered it from tailscale's source — it REPLACES the
+	# header with the true source; see the global options. This log is the
+	# runtime confirmation: one entry, never a client-chosen chain.)
+	#
+	#   two or more entries ending in a public address  => append world
+	#   exactly what a client could have sent           => pass-through world
+	#
+	# `request>headers` and `resp_headers` are DELETED from the record. Caddy's
+	# default access log emits every request header (Authorization and Cookie
+	# redacted, but User-Agent, Accept and the rest in full), which is more than
+	# this question needs on a public edge. What remains is the standard access
+	# skeleton — method, uri, status, duration, and the peer address, which is
+	# the funnel's private address and identifies nobody — plus the one named
+	# field below. X-Forwarded-For appears exactly once, in that field.
+	#
+	# Nothing rewrites the header, so what is logged IS what arrived.
+	log {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+	log_append inbound_x_forwarded_for {http.request.header.X-Forwarded-For}
+
+	import security_headers
+	import sane_limits
+	import public_onboarding_limits
+	encode gzip zstd
+
+	route {
+		import public_onboarding_api
+		import public_downloads
+		import disabled_wallet_secret_routes
+		handle {
+			reverse_proxy wrfcoin-testnet-frontend:5000 {
+				health_uri /health
+				health_interval 30s
+			}
+		}
+	}
+}

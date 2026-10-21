@@ -1,0 +1,81 @@
+# =============================================================================
+# Container-health watcher overlay (infra#902)
+# =============================================================================
+# Closes the second half of infra#900: cAdvisor (scraped by Prometheus in this
+# stack) exposes cgroup/resource metrics, not Docker's own HEALTHCHECK
+# verdict, so a container can sit `unhealthy` indefinitely with zero
+# automated signal. Measured: wrfcoin-testnet-funnel-edge did exactly that for
+# 45h across 5501+ consecutive failed checks before anyone noticed.
+#
+# This watcher polls the Docker Engine API directly (read-only socket mount)
+# for every running container's `.State.Health`, and — when a container's
+# FailingStreak crosses a threshold — POSTs directly to the already-live,
+# already-forwarding wrfcoin-alert-receiver (infra#601) using the same
+# webhook JSON shape AlertManager sends. It adds NO new Prometheus scrape
+# job and NO Alertmanager rule/route: `severity: critical` already routes
+# through the `critical-notifications` receiver (email + webhook forward) in
+# testnet/alertmanager.yml, unchanged.
+#
+# OFF by default. boot-heal.sh already includes this overlay when present;
+# COMPOSE_PROFILES=container-health-watch opts it into the watched stack's boot
+# reconciliation. The alert receiver and cached watcher image must be ready.
+# Owner-only manual invocation (alert-receiver must be present too):
+#
+#   docker compose \
+#     -f testnet/docker-compose.testnet.yml \
+#     -f testnet/docker-compose.override.yml \
+#     -f testnet/docker-compose.container-health-watch.yml \
+#     --profile container-health-watch \
+#     up -d --build container-health-watch
+#
+# Docker-socket trade-off, disclosed rather than hidden: the container needs
+# to read the Engine API, which on most hosts means either running as root
+# inside the container or matching the socket's group ownership — GID varies
+# per host and guessing it wrong would silently break on deploy. This runs
+# as the image default user (root-in-container) rather than guess a GID,
+# with every other privilege stripped (no capabilities, read-only root fs,
+# no-new-privileges) and the socket itself mounted read-only.
+# =============================================================================
+
+services:
+  container-health-watch:
+    profiles: [container-health-watch]
+    build:
+      context: ./services/container-health-watch
+      dockerfile: Dockerfile
+    image: wrfcoin/container-health-watch:testnet-local
+    container_name: wrfcoin-testnet-container-health-watch
+    restart: unless-stopped
+    environment:
+      ALERT_RECEIVER_URL: ${CONTAINER_HEALTH_WATCH_RECEIVER_URL:-http://wrfcoin-alert-receiver:19093/alerts}
+      POLL_INTERVAL_SECS: ${CONTAINER_HEALTH_WATCH_POLL_SECS:-30}
+      FAILING_STREAK_THRESHOLD: ${CONTAINER_HEALTH_WATCH_THRESHOLD:-5}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - wrfcoin-testnet
+    depends_on:
+      alert-receiver:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost — see Dockerfile comment (infra#900/#901).
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9201/health", "-O", "/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.2"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"

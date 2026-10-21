@@ -1,0 +1,110 @@
+# =============================================================================
+# Public-internet edge overlay (infra#636)
+# =============================================================================
+# Adds the Caddy reverse proxy in front of the testnet stack. This is the ONLY
+# component with public host ports (80/443). Compose overlay — apply ON TOP of
+# the base stack so the base services stay loopback/tailnet-bound:
+#
+#   docker compose \
+#     -f testnet/docker-compose.testnet.yml \
+#     -f testnet/docker-compose.edge.yml \
+#     up -d
+#
+# ⚠️ GOING PUBLIC IS A DELIBERATE, HARD-TO-REVERSE STEP. Before applying:
+#   1. Point WRFCOIN_PUBLIC_DOMAIN (and optionally api.) at this host's public
+#      IP in DNS. Explorer and the faucet service have no public hostname.
+#   2. Open inbound 80 + 443 on the host/router firewall (80 is needed for the
+#      Let's Encrypt HTTP-01 challenge; keep it open for renewals).
+#   3. Set WRFCOIN_PUBLIC_DOMAIN and ACME_EMAIL in testnet/.env.testnet.
+#   4. Confirm NO base service was rebound to 0.0.0.0 — only P2P :9000/:9001 is
+#      meant to be public; everything else must stay 127.0.0.1 / tailnet and be
+#      reached ONLY through this proxy.
+# Validate the Caddyfile without exposing anything:
+#   docker compose -f testnet/docker-compose.testnet.yml -f testnet/docker-compose.edge.yml \
+#     run --rm --no-deps edge caddy validate --config /etc/caddy/Caddyfile
+# =============================================================================
+
+x-edge-build-args: &edge-build-args
+  WRFCOIN_BUILD_REVISION: ${WRFCOIN_INFRA_BUILD_REVISION:-}
+  WRFCOIN_BUILD_CREATED: ${WRFCOIN_BUILD_CREATED:-}
+
+services:
+  # When public ingress is intentionally enabled, replace the development
+  # localhost CORS default with the exact browser origin served by this edge,
+  # and bind the wallet-login (SIWE) origin to the same host so signed-in
+  # challenges name the real public domain (backend#1052).
+  # This is an overlay only; the tailnet-only base stack stays unchanged.
+  wrfcoin-backend:
+    environment:
+      CORS_ORIGIN: https://${WRFCOIN_PUBLIC_DOMAIN:?set WRFCOIN_PUBLIC_DOMAIN before enabling the public edge}
+      WRFCOIN_WALLET_AUTH_ORIGIN: https://${WRFCOIN_PUBLIC_DOMAIN:?set WRFCOIN_PUBLIC_DOMAIN before enabling the public edge}
+
+  edge:
+    build:
+      context: ./edge
+      dockerfile: Dockerfile.caddy
+      args: *edge-build-args
+    image: wrfcoin/edge-caddy:testnet-local
+    container_name: wrfcoin-testnet-edge
+    restart: unless-stopped
+    # The public entry point — the only ports bound to 0.0.0.0 in the stack.
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      WRFCOIN_PUBLIC_DOMAIN: ${WRFCOIN_PUBLIC_DOMAIN:?set WRFCOIN_PUBLIC_DOMAIN before enabling the public edge}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL for Let's Encrypt}
+      # Stage 1.5 station reads (infra#983): OFF unless exactly `on`. Leave it
+      # off until the backend's anonymous 0.01-degree coordinate projection
+      # (backend#1222) is deployed; see @public_readonly_* in
+      # edge/public_onboarding.caddy. Flipping it is an owner deploy-window call.
+      PUBLIC_READONLY_API: ${PUBLIC_READONLY_API:-off}
+    volumes:
+      - ./edge/downloads.caddy:/etc/caddy/downloads.caddy:ro
+      - ${WRFCOIN_DOWNLOADS_DIR:-/var/lib/wrfcoin-downloads}:/srv/wrfcoin-downloads:ro
+      - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./edge/public_onboarding.caddy:/etc/caddy/public_onboarding.caddy:ro
+      - /var/lib/wrfcoin-testnet-uptime/public:/srv/status:ro
+      - edge-caddy-data:/data # persisted certs — survives restarts, avoids ACME rate limits
+      - edge-caddy-config:/config
+    # Joins the base stack's wrfcoin-ingress network (defined in
+    # docker-compose.testnet.yml) — this overlay is applied in the SAME compose
+    # command, so the network is NOT redeclared here (doing so as `external`
+    # would conflict with the base bridge definition). backend#1229: pinned so
+    # the backend trusts exactly this hop; it proxies only to the backend and
+    # frontend, both of which are on that network.
+    networks:
+      wrfcoin-ingress:
+        ipv4_address: 10.251.0.11
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    healthcheck:
+      # Caddy's admin API on loopback; proves the process is up and config
+      # loaded — a LIVENESS check, not a traffic check (it says nothing about
+      # whether upstream requests on :80/:443 are actually succeeding).
+      #
+      # Explicit 127.0.0.1, not `localhost`: infra#900 — the sibling
+      # funnel-edge container's `localhost` resolves to the IPv6 loopback
+      # first, but Caddy's admin listener binds IPv4-only, so
+      # `wget http://localhost:2019/...` gets a deterministic `Connection
+      # refused` regardless of actual health. Same image, same latent bug —
+      # fixed here too even though this service isn't currently deployed, so
+      # the next deploy doesn't re-arm it.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/", "-O", "/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  edge-caddy-data:
+  edge-caddy-config:

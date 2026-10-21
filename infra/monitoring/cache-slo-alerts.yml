@@ -1,0 +1,220 @@
+# Cache Layer SLI/SLO Alert Rules for WRFCoin Platform
+# Integrates with backend/server/cache/ and backend/utils/performance-slo-validator.ts
+
+groups:
+  # Cache Performance SLO Alerts
+  - name: cache_performance_slo_alerts
+    rules:
+      # Cache Hit Ratio SLO: ≥85% hit rate
+      - alert: CacheHitRatioSLOBreach
+        expr: wrfcoin_cache_hit_rate < 85
+        for: 5m
+        labels:
+          severity: warning
+          category: cache
+          slo_type: hit_ratio
+          slo_target: '85%'
+        annotations:
+          summary: 'Cache hit ratio below SLO target'
+          description: 'Cache hit ratio is {{ $value | printf "%.1f" }}% for {{ $labels.cache_type }} (SLO: ≥85%)'
+          impact: 'Increased database load and higher response latency'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/cache-hit-ratio'
+
+      # Cache Latency SLO: p95 < 10ms for memory cache
+      - alert: MemoryCacheLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(wrfcoin_cache_operation_latency_seconds_bucket{cache_type="memory"}[5m])) by (le)
+          ) > 0.010
+        for: 3m
+        labels:
+          severity: warning
+          category: cache
+          slo_type: latency
+          slo_target: 'p95 < 10ms'
+        annotations:
+          summary: 'Memory cache latency exceeds SLO'
+          description: 'Memory cache p95 latency is {{ $value | humanizeDuration }} (SLO: <10ms)'
+          impact: 'API response times degraded'
+
+      # Cache Latency SLO: p95 < 50ms for Redis cache
+      - alert: RedisCacheLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(wrfcoin_cache_operation_latency_seconds_bucket{cache_type="redis"}[5m])) by (le)
+          ) > 0.050
+        for: 3m
+        labels:
+          severity: warning
+          category: cache
+          slo_type: latency
+          slo_target: 'p95 < 50ms'
+        annotations:
+          summary: 'Redis cache latency exceeds SLO'
+          description: 'Redis cache p95 latency is {{ $value | humanizeDuration }} (SLO: <50ms)'
+          impact: 'Distributed cache operations slowing down'
+
+      # High Cache Eviction Rate
+      - alert: CacheEvictionRateHigh
+        expr: rate(wrfcoin_cache_evictions_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          category: cache
+          slo_type: capacity
+        annotations:
+          summary: 'High cache eviction rate detected'
+          description: 'Cache eviction rate is {{ $value | printf "%.1f" }}/s for {{ $labels.cache_type }}'
+          impact: 'Cache capacity may be insufficient, causing increased cache misses'
+
+  # GraphQL Performance SLO Alerts
+  - name: graphql_performance_slo_alerts
+    rules:
+      # GraphQL Query Complexity SLO: Rejected queries < 1%
+      - alert: GraphQLComplexityRejectionHigh
+        expr: |
+          rate(wrfcoin_graphql_rejected_queries_total[5m])
+          / rate(wrfcoin_graphql_queries_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          category: graphql
+          slo_type: rejection_rate
+          slo_target: '< 1%'
+        annotations:
+          summary: 'High GraphQL query rejection rate'
+          description: 'GraphQL rejection rate is {{ $value | humanizePercentage }} (SLO: <1%)'
+          impact: 'Users may be experiencing query failures'
+
+      # GraphQL Query Depth Violations
+      - alert: GraphQLQueryDepthViolationsHigh
+        expr: rate(wrfcoin_graphql_rejected_queries_total{reason="depth"}[5m]) > 1
+        for: 5m
+        labels:
+          severity: info
+          category: graphql
+          slo_type: depth_violations
+        annotations:
+          summary: 'GraphQL query depth violations detected'
+          description: '{{ $value | printf "%.1f" }} queries/s rejected for exceeding depth limit'
+          impact: 'Potential attack or client misconfiguration'
+
+  # Database Performance SLO Alerts
+  - name: database_performance_slo_alerts
+    rules:
+      # Database Query Latency SLO: p95 < 100ms
+      - alert: DatabaseQueryLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(wrfcoin_database_query_duration_seconds_bucket[5m])) by (le)
+          ) > 0.100
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+          slo_type: latency
+          slo_target: 'p95 < 100ms'
+        annotations:
+          summary: 'Database query latency exceeds SLO'
+          description: 'Database p95 latency is {{ $value | humanizeDuration }} (SLO: <100ms)'
+          impact: 'Database-dependent operations slowing down'
+
+      # Database Connection Pool Exhaustion
+      - alert: DatabaseConnectionPoolExhaustion
+        expr: |
+          wrfcoin_database_pool_active_connections
+          / wrfcoin_database_pool_max_connections > 0.90
+        for: 3m
+        labels:
+          severity: critical
+          category: database
+          slo_type: capacity
+          slo_target: '< 90% pool usage'
+        annotations:
+          summary: 'Database connection pool near exhaustion'
+          description: 'Pool usage is {{ $value | humanizePercentage }} (threshold: 90%)'
+          impact: 'New connections may be rejected, causing service failures'
+
+  # Platform-wide SLO Health
+  - name: platform_slo_health
+    rules:
+      # Transaction Throughput SLO: ≥500 TPS
+      - alert: TransactionThroughputSLOBreach
+        expr: rate(wrfcoin_blockchain_transactions_processed_total[5m]) < 500
+        for: 5m
+        labels:
+          severity: critical
+          category: blockchain
+          slo_type: throughput
+          slo_target: '≥500 TPS'
+        annotations:
+          summary: 'Transaction throughput below SLO'
+          description: 'Current TPS is {{ $value | printf "%.0f" }} (SLO: ≥500 TPS)'
+          impact: 'Network transaction capacity degraded'
+
+      # API Latency SLO: p95 < 100ms
+      - alert: APILatencyP95SLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(wrfcoin_http_request_duration_seconds_bucket{handler!~"/health|/metrics"}[5m])) by (le)
+          ) > 0.100
+        for: 5m
+        labels:
+          severity: warning
+          category: api
+          slo_type: latency
+          slo_target: 'p95 < 100ms'
+        annotations:
+          summary: 'API latency p95 exceeds SLO'
+          description: 'API p95 latency is {{ $value | humanizeDuration }} (SLO: <100ms)'
+          impact: 'Poor user experience for API consumers'
+
+      # Weather Service Uptime SLO: ≥99%
+      - alert: WeatherServiceUptimeSLOBreach
+        expr: avg_over_time(up{job="weather-service"}[1h]) < 0.99
+        for: 1m
+        labels:
+          severity: warning
+          category: weather
+          slo_type: availability
+          slo_target: '≥99%'
+        annotations:
+          summary: 'Weather service uptime below SLO'
+          description: 'Weather service uptime is {{ $value | humanizePercentage }} (SLO: ≥99%)'
+          impact: 'Weather data collection may be interrupted'
+
+      # Bridge Transaction Latency SLO: p95 < 30s
+      - alert: BridgeLatencyP95SLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(wrfcoin_bridge_transaction_duration_seconds_bucket[5m])) by (le)
+          ) > 30
+        for: 10m
+        labels:
+          severity: warning
+          category: bridge
+          slo_type: latency
+          slo_target: 'p95 < 30s'
+        annotations:
+          summary: 'Bridge transaction latency exceeds SLO'
+          description: 'Bridge p95 latency is {{ $value | humanizeDuration }} (SLO: <30s)'
+          impact: 'Cross-chain transfers taking longer than expected'
+
+  # SLO Compliance Aggregates
+  - name: slo_compliance_aggregates
+    interval: 1m
+    rules:
+      # Overall SLO compliance percentage
+      - record: wrfcoin:slo:overall_compliance_rate
+        expr: |
+          (
+            (wrfcoin_cache_hit_rate >= 85) +
+            (rate(wrfcoin_blockchain_transactions_processed_total[5m]) >= 500) +
+            (histogram_quantile(0.95, sum(rate(wrfcoin_http_request_duration_seconds_bucket[5m])) by (le)) <= 0.100) +
+            (avg_over_time(up{job=~"wrfcoin-.*"}[5m]) >= 0.999)
+          ) / 4
+
+      # SLO breach count (last hour)
+      - record: wrfcoin:slo:breach_count_1h
+        expr: |
+          count(ALERTS{alertstate="firing", slo_type=~".+"})

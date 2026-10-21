@@ -1,0 +1,31 @@
+*.md
+README*
+LICENSE
+.git
+.gitignore
+.dockerignore
+docker-compose*.yml
+# Exclude secrets and credentials — never bake these into images
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+# Dependency directories — reinstalled inside each stage
+node_modules/
+# Build artefacts and local caches
+target/
+dist/
+coverage/
+.nyc_output/
+# IDE and tool directories
+.vscode/
+.idea/
+.claude/
+.taskmaster/
+# OS noise
+.DS_Store
+*.log

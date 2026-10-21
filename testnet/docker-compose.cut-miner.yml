@@ -1,0 +1,47 @@
+# Point the synthetic collector's coinbase at THIS HOST's authorized payout.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# All three collectors below call POST /blocks/mine. The synthetic collector
+# uses SYNTH_MINER_ADDRESS; both Ambient collectors use WRFCOIN_MINER_ADDRESS.
+# Their historical fallback was 0x0000000000000000000000000000000000000001.
+# Nothing in the Compose chain passed the Ambient variable, so Steven's real
+# collector accepted 12 commit/reveal pairs, failed its mine, kept a zero
+# watermark, and replayed overlapping readings every five minutes while the
+# summary still said "12 submitted / 0 failed".
+#
+# That went unnoticed for as long as it did because the genesis producer set was
+# UNSEEDED and the coinbase gate therefore failed OPEN. Block 1 of the 2026-08-05
+# cut seeded the set, so the gate is now live and every mine is refused:
+#
+#   MINE FAIL (500): Consensus stateful block creation failed: Block creation
+#   failed: refusing to produce a block whose coinbase pays
+#   '0x0000000000000000000000000000000000000001' -- this producer's
+#   authorized-set entry declares payout_address '0x680d51f7...'
+#
+# The chain stopped advancing at height 2 until this was set, because the
+# synthetic collector is what mines (it submits a ContributionCommit/Reveal pair
+# and then mines one block, every SYNTH_INTERVAL_SECONDS).
+#
+# HOST-SPECIFIC -- DO NOT COPY THIS FILE TO ANOTHER HOST UNEDITED
+# ---------------------------------------------------------------
+# CT 101 is producer `n5-node-a`. A node may only pay its OWN entry's
+# payout_address from native-chain/src/bin/launch_api/genesis_producer_pins.rs;
+# any other value is refused at block creation, not silently accepted. The other
+# genesis member, `producer-standby`, pays 0x39ee2e59... and a host running that
+# identity needs that value here instead.
+#
+# Cross-check before editing: the node logs its producer pubkey at boot
+# ("[producer-signer] produced blocks will be signed; producer pubkey = ...");
+# match that pubkey to its entry in genesis_producer_pins.rs and use that
+# entry's payout_address. Do not read it off a running node's coinbase.
+services:
+  synthetic-collector:
+    environment:
+      SYNTH_MINER_ADDRESS: '0x680d51f7543ca70029866956376306d47ce60ed0'
+  weather-collector:
+    environment:
+      WRFCOIN_MINER_ADDRESS: '0x680d51f7543ca70029866956376306d47ce60ed0'
+  weather-collector-multi:
+    environment:
+      WRFCOIN_MINER_ADDRESS: '0x680d51f7543ca70029866956376306d47ce60ed0'

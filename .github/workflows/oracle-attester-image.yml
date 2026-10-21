@@ -1,0 +1,82 @@
+name: Oracle Attester Image Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/docker/Dockerfile.core'
+      - 'infra/docker/hsm-service-entrypoint.sh'
+      - 'testnet/docker-compose.oracle-attester*.yml'
+      - '.github/workflows/oracle-attester-image.yml'
+  pull_request:
+    paths:
+      - 'infra/docker/Dockerfile.core'
+      - 'infra/docker/hsm-service-entrypoint.sh'
+      - 'testnet/docker-compose.oracle-attester*.yml'
+      - '.github/workflows/oracle-attester-image.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oracle-attester-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build oracle-attester-runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v7
+        with:
+          path: wrfcoin/infra
+          persist-credentials: false
+
+      # Exact reviewed Core4 merge tree containing #2746. This is a build
+      # compatibility fixture, not the genesis/cut pin in cut-pins.env.
+      - name: Checkout Core4 attester source
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+          ref: 40c4c1e1c1c2eeca1de4990a3c6d288f41e861aa
+          token: ${{ secrets.WRFCOIN_CORE4_READ_TOKEN || github.token }}
+          path: wrfcoin/core4
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the explicit attester target
+        uses: docker/build-push-action@v7
+        with:
+          context: wrfcoin
+          file: wrfcoin/infra/infra/docker/Dockerfile.core
+          target: oracle-attester-runtime
+          push: false
+          load: true
+          tags: wrfcoin/oracle-attester:ci
+          cache-from: type=gha,scope=oracle-attester-runtime
+          cache-to: type=gha,mode=max,scope=oracle-attester-runtime
+
+      - name: Prove the loaded image carries the intended role
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect wrfcoin/oracle-attester:ci \
+            --format '{{json .Config.Entrypoint}}')" = \
+            '["/usr/local/bin/hsm-service-entrypoint.sh"]'
+          test "$(docker image inspect wrfcoin/oracle-attester:ci \
+            --format '{{json .Config.Cmd}}')" = \
+            '["/usr/local/bin/oracle_attester"]'
+          docker run --rm --entrypoint /bin/sh wrfcoin/oracle-attester:ci \
+            -c 'test -x /usr/local/bin/oracle_attester && test -x /usr/local/bin/hsm-service-entrypoint.sh'
+
+          set +e
+          output=$(docker run --rm --entrypoint /usr/local/bin/oracle_attester \
+            wrfcoin/oracle-attester:ci 2>&1)
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -q 'WRFCOIN_ATTESTER_NODE_URL is not set' <<<"$output"
+          echo "Image target built, loaded, and executed the intended binary"

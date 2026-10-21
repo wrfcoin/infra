@@ -1,0 +1,162 @@
+version: '3.8'
+
+services:
+  # Enhanced Prometheus with service dependency monitoring
+  prometheus-deps:
+    image: prom/prometheus:v3.1.0
+    container_name: wrfcoin-prometheus-deps
+    restart: unless-stopped
+    ports:
+      - '9091:9090' # Different port to avoid conflicts
+    volumes:
+      - ./prometheus-enhanced.yml:/etc/prometheus/prometheus.yml:ro
+      - ${WRFCOIN_PROMETHEUS_BEARER_TOKEN_FILE:-../../testnet/prometheus-bearer-token}:/etc/prometheus/bearer_token:ro
+      - ./service-dependency-alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-deps-data:/prometheus
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      # SECURITY: --web.enable-lifecycle and --web.enable-admin-api removed (unauth endpoints)
+    networks:
+      wrfcoin-monitoring:
+        aliases:
+          - prometheus
+    depends_on:
+      - alertmanager-deps
+
+  # Enhanced Alertmanager for dependency alerts
+  alertmanager-deps:
+    image: prom/alertmanager:v0.28.0
+    container_name: wrfcoin-alertmanager-deps
+    restart: unless-stopped
+    ports:
+      - '9094:9093' # Different port to avoid conflicts
+    volumes:
+      - ./alertmanager-enhanced.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-deps-data:/alertmanager
+    environment:
+      - SMTP_FROM=alerts@localhost
+      - SMTP_USERNAME=unused
+      - SMTP_PASSWORD=unused
+      - SLACK_WEBHOOK_URL=http://localhost:65535/slack
+      - WEBHOOK_USERNAME=unused
+      - WEBHOOK_PASSWORD=unused
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9094'
+      - '--cluster.listen-address=0.0.0.0:9094'
+    networks:
+      - wrfcoin-monitoring
+
+  # Grafana with dependency monitoring dashboards
+  grafana-deps:
+    image: grafana/grafana:11.4.0
+    container_name: wrfcoin-grafana-deps
+    restart: unless-stopped
+    ports:
+      - '3310:3000' # Avoid backend-dev (3001) conflicts during relaunch validation
+    volumes:
+      - ./grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./grafana/dashboard-provisioning.yaml:/etc/grafana/provisioning/dashboards/dashboard-provisioning.yaml:ro
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/core:ro
+      - grafana-deps-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+      - GF_FEATURE_TOGGLES_ENABLE=ngalert
+    networks:
+      - wrfcoin-monitoring
+    depends_on:
+      - prometheus-deps
+
+  # Blackbox Exporter for dependency health checks
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: wrfcoin-blackbox-exporter
+    restart: unless-stopped
+    ports:
+      - '9115:9115'
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    networks:
+      - wrfcoin-monitoring
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: wrfcoin-node-exporter
+    restart: unless-stopped
+    ports:
+      - '9100:9100'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - wrfcoin-monitoring
+
+  # cAdvisor for container metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: wrfcoin-cadvisor
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    networks:
+      - wrfcoin-monitoring
+
+  # Service Dependency Health Monitor
+  dependency-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.dependency-monitor
+    container_name: wrfcoin-dependency-monitor
+    restart: unless-stopped
+    ports:
+      - '9200:9200'
+    environment:
+      - PROMETHEUS_URL=http://prometheus-deps:9090
+      - MONITORING_INTERVAL=30
+      - LOG_LEVEL=info
+    volumes:
+      - ./dependency-maps:/app/maps:ro
+      - ./logs:/app/logs
+    networks:
+      - wrfcoin-monitoring
+    depends_on:
+      - prometheus-deps
+
+networks:
+  wrfcoin-monitoring:
+    driver: bridge
+    name: wrfcoin-monitoring-network
+
+volumes:
+  prometheus-deps-data:
+    driver: local
+  alertmanager-deps-data:
+    driver: local
+  grafana-deps-data:
+    driver: local

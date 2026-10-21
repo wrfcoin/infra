@@ -1,0 +1,26 @@
+# Caddy with the rate-limit plugin built in (the vanilla image lacks it).
+# Local build only — matches the "no registry push" constraint; the tag is
+# consumed by docker-compose.edge.yml.
+#
+# Pin both the builder and runtime to a digest-less but explicit version so the
+# edge is reproducible. Bump deliberately.
+# Pinned to the Caddy release compiled below; refresh through normal image review.
+FROM caddy:2.11.6-builder@sha256:f5b1a66449d305280e559dba0ab9f7ce9a2a14c527c79d7c6fb48abc8f895818 AS builder
+
+RUN xcaddy build v2.11.6 \
+    --with github.com/mholt/caddy-ratelimit@v0.1.0
+
+FROM caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
+
+# Release provenance (infra#991): source testnet/scripts/export-build-provenance.sh
+# before a release build. Unset args leave empty labels, which
+# render-release-manifest.sh classifies UNAVAILABLE (never FRESH). No build-time
+# guard: joiner, attester and CI builds pass no args and must keep building.
+ARG WRFCOIN_BUILD_REVISION
+ARG WRFCOIN_BUILD_CREATED
+LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
+      org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
+
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+
+# Caddy validates the config on start; a bad Caddyfile fails the container fast.

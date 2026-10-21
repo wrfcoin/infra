@@ -1,0 +1,110 @@
+# =============================================================================
+# Funnel-facing edge overlay (infra#657)
+# =============================================================================
+# Puts the #658/#679 onboarding allowlist between Tailscale Funnel and the
+# stack. REQUIRED before enabling the funnel: the frontend nginx proxies
+# /api/, /ws and /api/ws wholesale to the backend, so funneling
+# 127.0.0.1:5000 directly would publish the entire backend API.
+#
+#   internet → Funnel (TLS, *.ts.net) → 127.0.0.1:8444 (funnel-edge, this
+#   overlay) → exact allowlist → backend:4001 | else → frontend:5000
+#
+# Apply ON TOP of the base stack:
+#
+#   docker compose \
+#     -f testnet/docker-compose.testnet.yml \
+#     -f testnet/docker-compose.funnel-edge.yml \
+#     up -d
+#
+# Exposure decision (route-ledger classes): this service IS the public edge
+# for the funnel path — it has no ledger row because the ledger covers the
+# base compose only, and it binds 127.0.0.1 exclusively, so with no funnel
+# active nothing is reachable. The funnel command in
+# testnet/edge/FUNNEL_PREP-657.md is the single deliberate exposure step.
+#
+# NOT mutually exclusive with docker-compose.edge.yml (direct 443 edge), but
+# they are alternative ingress paths — run the one matching the chosen
+# posture. Both enforce the same shared allowlist (public_onboarding.caddy).
+#
+# WRFCOIN_FUNNEL_ORIGIN (testnet/.env.testnet): the exact browser origin the
+# funnel serves, e.g. https://wrfcoin-testnet.taila1c049.ts.net — replaces the
+# tailnet stack's localhost CORS default while the overlay is active.
+# =============================================================================
+
+services:
+  wrfcoin-backend:
+    environment:
+      CORS_ORIGIN: ${WRFCOIN_FUNNEL_ORIGIN:?set WRFCOIN_FUNNEL_ORIGIN (https://<node>.ts.net) before enabling the funnel edge}
+
+  funnel-edge:
+    build:
+      context: ./edge
+      dockerfile: Dockerfile.caddy
+      args:
+        # Release provenance (infra#991); see testnet/scripts/export-build-provenance.sh.
+        WRFCOIN_BUILD_REVISION: ${WRFCOIN_INFRA_BUILD_REVISION:-}
+        WRFCOIN_BUILD_CREATED: ${WRFCOIN_BUILD_CREATED:-}
+    image: wrfcoin/edge-caddy:testnet-local
+    container_name: wrfcoin-testnet-funnel-edge
+    restart: unless-stopped
+    environment:
+      # Stage 1.5 station reads (infra#983): OFF unless exactly `on`. Leave it
+      # off until the backend's anonymous 0.01-degree coordinate projection
+      # (backend#1222) is deployed; see @public_readonly_* in
+      # edge/public_onboarding.caddy. Flipping it is an owner deploy-window call.
+      PUBLIC_READONLY_API: ${PUBLIC_READONLY_API:-off}
+    # Loopback ONLY — reachable solely from CT101 itself; the tailscale
+    # funnel proxy is the single intended client.
+    ports:
+      - "127.0.0.1:8444:8444"
+    volumes:
+      - ./edge/downloads.caddy:/etc/caddy/downloads.caddy:ro
+      - ${WRFCOIN_DOWNLOADS_DIR:-/var/lib/wrfcoin-downloads}:/srv/wrfcoin-downloads:ro
+      - ./edge/Caddyfile.funnel:/etc/caddy/Caddyfile:ro
+      - ./edge/public_onboarding.caddy:/etc/caddy/public_onboarding.caddy:ro
+      # Join snapshot artifacts (infra#587): read-only serve of what
+      # publish-join-snapshot.sh stages. Empty dir = /join/* 404s, fail closed.
+      #
+      # The source is a HOST path outside the deploy tree (infra#1057). It
+      # used to be ./join-snapshots, which resolves into the active
+      # infra.releases/<sha> tree, so every release symlink flip plus edge
+      # recreate silently pointed /srv/join at the new release's empty
+      # directory. The default mirrors the /srv/status mount below:
+      # /var/lib/<unit>/public holds only public, served bytes and is never
+      # replaced by a release. publish-join-snapshot.sh does not re-resolve
+      # this variable: it writes to this container's /srv/join mount source
+      # (docker inspect), so the writer and the server cannot disagree.
+      - ${WRFCOIN_JOIN_SNAPSHOT_DIR:-/var/lib/wrfcoin-testnet-join/public}:/srv/join:ro
+      - /var/lib/wrfcoin-testnet-uptime/public:/srv/status:ro
+    # backend#1229: pinned on wrfcoin-ingress (declared in the base compose) so
+    # the backend trusts exactly this hop; it proxies only to the backend and
+    # frontend, both of which are on that network.
+    networks:
+      wrfcoin-ingress:
+        ipv4_address: 10.251.0.12
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    healthcheck:
+      # Caddy's admin API on loopback; proves the process is up and config
+      # loaded — a LIVENESS check, not a traffic check (it says nothing about
+      # whether upstream requests on :8444 are actually succeeding).
+      #
+      # Explicit 127.0.0.1, not `localhost`: infra#900 — this container's
+      # `localhost` resolves to the IPv6 loopback first, but Caddy's admin
+      # listener binds IPv4-only, so `wget http://localhost:2019/...` gets a
+      # deterministic `Connection refused` regardless of actual health. Measured
+      # live: `wget http://[::1]:2019/config/` fails the same way,
+      # `wget http://127.0.0.1:2019/config/` succeeds every time.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/", "-O", "/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    security_opt:
+      - no-new-privileges:true

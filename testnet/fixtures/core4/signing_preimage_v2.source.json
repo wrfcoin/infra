@@ -1,0 +1,9 @@
+{
+  "repository": "WRFCoin/core4",
+  "pull_request": 3129,
+  "ref": "feat/snapshot-serve-fetch",
+  "commit": "6244252d3cfbe2e8496dd53dc4e3a2137c01fbbd",
+  "path": "shared-protocol/tests/fixtures/golden/signing_preimage_v2.json",
+  "schema": "wrfcoin.signing-preimage-v2.golden/4",
+  "sha256": "19be42559751684acf0e8fb9260a5c0cc04026df2c6d84fba8bc0a4c78208981"
+}

@@ -1,0 +1,60 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - 'wrfcoin_alerts.yml'
+
+scrape_configs:
+  # Wrfcoin Core API Server (Port 5002)
+  - job_name: 'wrfcoin-core-api'
+    static_configs:
+      - targets: ['localhost:5002']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Main API Server (Port 4001). Prometheus runs in its own container on
+  # wrfcoin-network, so the backend is the sibling service, not localhost.
+  - job_name: 'wrfcoin-main-api'
+    static_configs:
+      - targets: ['wrfcoin-backend:4001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    # backend#1234: the main API /metrics requires an operator/reader bearer.
+    # The token file is mounted by every compose file that loads this config
+    # (WRFCOIN_PROMETHEUS_BEARER_TOKEN_FILE, default: the testnet
+    # prometheus-bearer-token, which setup-env writes from WRFCOIN_READER_TOKEN).
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/bearer_token
+
+  # Cross-chain Protocol Server (Port 3000)
+  - job_name: 'wrfcoin-cross-chain'
+    static_configs:
+      - targets: ['localhost:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # NOTE: Compute (6000), AI/ML (6001), and Storage (7000) servers expose
+  # domain-specific JSON at /api/compute/metrics, /api/ai-ml/metrics, and
+  # /api/storage/metrics respectively — NOT Prometheus text format.
+  # All backend prom-client metrics are already served via the
+  # wrfcoin-main-api job (port 4001) above.
+  # Re-add scrape targets here if these services gain prom-client support.
+
+  # Node.js Application Metrics
+  - job_name: 'nodejs-app-metrics'
+    static_configs:
+      - targets: ['localhost:9464'] # Default Node.js metrics port
+    scrape_interval: 30s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093

@@ -1,0 +1,93 @@
+# Participation Integrity & Sanction Efficacy Alert Rules
+# Covers actor participation health, sanction enforcement, and governance anomalies
+
+groups:
+  - name: participation_integrity_alerts
+    rules:
+      # Participation Drop Alert — >20% drop in active participants within 1h
+      - alert: ParticipationDropAlert
+        expr: >
+          (
+            wrfcoin_participation_active_actors offset 1h
+            - wrfcoin_participation_active_actors
+          )
+          / wrfcoin_participation_active_actors offset 1h
+          > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          category: governance
+          alertgroup: participation-integrity
+        annotations:
+          summary: 'Participation drop exceeds 20% in the last hour'
+          description: 'Active actor count dropped by {{ $value | humanizePercentage }} over the last hour'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/participation-drop'
+
+      # Sanction Evasion Detected — pattern of re-registration or identity rotation
+      - alert: SanctionEvasionDetected
+        expr: >
+          rate(wrfcoin_sanction_evasion_attempts_total[15m]) > 0
+          and increase(wrfcoin_sanction_evasion_attempts_total[1h]) > 3
+        for: 1m
+        labels:
+          severity: critical
+          category: governance
+          alertgroup: participation-integrity
+          playbook_severity: SEV2
+        annotations:
+          summary: 'Sanction evasion pattern detected'
+          description: '{{ $value }} evasion attempts detected — possible identity rotation or re-registration after sanction'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/sanction-evasion'
+
+      # Voting Anomaly Detected — unusual voting patterns
+      - alert: VotingAnomalyDetected
+        expr: wrfcoin_voting_anomaly_score > 0.7
+        for: 10m
+        labels:
+          severity: warning
+          category: governance
+          alertgroup: participation-integrity
+        annotations:
+          summary: 'Unusual voting pattern detected'
+          description: 'Voting anomaly score is {{ $value }} (threshold: 0.7) — possible coordinated or bot-driven voting'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/voting-anomaly'
+
+      # Forecast Coverage Gap — coverage below threshold
+      - alert: ForecastCoverageGap
+        expr: wrfcoin_forecast_coverage_ratio < 0.6
+        for: 15m
+        labels:
+          severity: warning
+          category: governance
+          alertgroup: participation-integrity
+        annotations:
+          summary: 'Forecast coverage below threshold'
+          description: 'Forecast coverage ratio is {{ $value }} (threshold: 0.6) — geographic or temporal gaps in weather data'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/forecast-coverage-gap'
+
+      # Appeal Backlog High — >50 pending appeals
+      - alert: AppealBacklogHigh
+        expr: wrfcoin_appeal_pending_total > 50
+        for: 30m
+        labels:
+          severity: warning
+          category: governance
+          alertgroup: participation-integrity
+        annotations:
+          summary: 'Appeal backlog exceeds 50 pending appeals'
+          description: '{{ $value }} appeals are pending — governance review capacity may be insufficient'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/appeal-backlog'
+
+      # Sanction Parity Drift — >10% divergence between actor classes
+      - alert: SanctionParityDrift
+        expr: wrfcoin_sanctions_parity_drift_score > 0.10
+        for: 10m
+        labels:
+          severity: critical
+          category: governance
+          alertgroup: participation-integrity
+          playbook_severity: SEV2
+        annotations:
+          summary: 'Sanction parity drift exceeds 10% between actor classes'
+          description: 'Parity drift score is {{ $value }} — sanctions are not being applied equally across human, AI, and robot actor classes'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/sanction-parity-drift'

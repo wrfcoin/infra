@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wrfcoin-compute-agent-config
+data:
+  TASK_API_URL: http://wrfcoin-compute-contribution.default.svc.cluster.local:6003
+  POLL_INTERVAL_MS: "10000"
+  HEARTBEAT_INTERVAL_MS: "30000"
+  HEALTH_PORT: "3333"

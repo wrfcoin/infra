@@ -1,0 +1,516 @@
+{
+  "version": 1,
+  "policy_source": {
+    "repo": "wrfcoin/infra",
+    "commit": "ba860002bed03aee3457d5ba64d00d326754acce",
+    "path": ".public-exclude"
+  },
+  "hosted": {
+    "python": [
+      {
+        "path": "scripts/tests/test-deploy-roots.py",
+        "reason": "Portable current-main deployment-root unit tests; explicit filename avoids pytest default underscore-only discovery."
+      },
+      {
+        "path": "scripts/tests/test_alertmanager_webhook_receiver.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_attester_comm_ceiling.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_backend_chain_identity.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_chain_configuration.py",
+        "reason": "Current-main launch-path regression; source inspection confirms synthetic inputs, daemonless renders or stubbed external calls only."
+      },
+      {
+        "path": "scripts/tests/test_chain_identity_preflight.py",
+        "reason": "Current-main launch-path regression; source inspection confirms synthetic inputs, daemonless renders or stubbed external calls only."
+      },
+      {
+        "path": "scripts/tests/test_check_cut_block1.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_ci_check_evidence.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_ci_suite_selection.py",
+        "reason": "Fail-closed suite selection and runner/toolchain boundary controls."
+      },
+      {
+        "path": "scripts/tests/test_collector_commit_auth_domain.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_collector_miner_addresses.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_collector_station_elevation.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_compose_build_inputs.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_compose_render_heredocs.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_container_health_watch.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_cut_overlay_custody.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_cutter_pregenesis.py",
+        "reason": "Current-main launch-path regression; source inspection confirms synthetic inputs, daemonless renders or stubbed external calls only."
+      },
+      {
+        "path": "scripts/tests/test_defi_healthcheck.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_defi_profile.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_docker_validate_workflow_env.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_docs_ci_gate.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_frontend_deployment_flags.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_full_profile_functional_probe.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_health_watch_boot_profile.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_image_revisions.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_join_archive.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_join_work_factor.py",
+        "reason": "Current-main launch-path regression; source inspection confirms synthetic inputs, daemonless renders or stubbed external calls only."
+      },
+      {
+        "path": "scripts/tests/test_legacy_storage_kubo_healthcheck.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_node_bootstrap.py",
+        "reason": "Current-main launch-path regression; source inspection confirms synthetic inputs, daemonless renders or stubbed external calls only."
+      },
+      {
+        "path": "scripts/tests/test_node_image_ship_features.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_non_testnet_path_banners.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_panic_drill_marker_pin.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_post33000_monitor.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_pr_supersession.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_prepare_defi_build.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_public_domain_hardening.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_public_endpoint_auth.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_public_release.py",
+        "reason": "Current-main launch-path regression; source inspection confirms synthetic inputs, daemonless renders or stubbed external calls only."
+      },
+      {
+        "path": "scripts/tests/test_public_runner_policy.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_reference_shadow_owner.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_registry_reference_distance_p95.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_sdr_ingest_build_path.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_selfhosted_postinstall.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_snapshot_trust_config.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_standby_external.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_standby_usb.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_storage_owner_plan.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_storage_toolchain_pin.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_testnet_ipfs_profile.py",
+        "reason": "Portable daemonless Compose render; retained unchanged, requires pinned Compose5.1.4 semantics."
+      },
+      {
+        "path": "scripts/tests/test_wallet_auth_origin_config.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test_weather_archive_profile.py",
+        "reason": "Portable daemonless Compose render; retained unchanged, requires pinned Compose5.1.4 semantics."
+      }
+    ],
+    "shell": [
+      {
+        "path": "scripts/tests/test-activate-mobile-stations-v2.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-apple-silicon-join-preflight.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-authenticated-health-consumers.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-backend-admin-config-env.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-backend-gross-guard-env.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-backend-metrics-scrape-auth.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-backend-submit-auth-passthrough.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-backup-chain-volume.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-backup-pg-dump-formats.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-block-heartbeat-compose.sh",
+        "reason": "Portable daemonless Compose render; retained unchanged, requires pinned Compose5.1.4 semantics."
+      },
+      {
+        "path": "scripts/tests/test-boot-heal-cold-start.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-boot-heal-external-receipt.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-cors-origin-fail-closed.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-credential-argv-ratchet.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-db-migrate-image-freshness.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-dockerfile-core-arch-derivation.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-dockerfile-core-deb-checksums.sh",
+        "reason": "External Debian-pool checksum verification; existing exit77 means unverified, never PASS.",
+        "allow_unverified": true
+      },
+      {
+        "path": "scripts/tests/test-dockerfile-core-glibc-ceiling.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-dockerfile-core-yubico-key-pin.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-dockerfile-core-yubico-ppa-signature.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-edge-onboarding-block.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-esbuild-entries-exist.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-esbuild-entries-self-test.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-etl-image-ships-cors-helper.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-faucet-dockerfile-lockfile.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-faucet-high-water-env.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-frontend-build-flags.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-join-sh-e2e.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-join-snapshot.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-mobile-station-activation.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-node-health-gate-liveness.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-post-reboot-seed-parity.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-post33000-alerts.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-preflight-compose-smoke.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-prepare-release-gate-workspace.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-prometheus-scrape-config.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-public-endpoints-doc.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-render-release-manifest.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-route-ledger.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-selfhosted-cache-ratchet.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-shadow-reconciler-overlays.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-stage-release-check.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-storage-compose-ipfs-only.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-synthetic-collector-miner.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-tailnet-api-serve.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-testnet-postgres-sslmode.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-testnet-scrape-coverage.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-token-argv-pair-sites.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
+        "path": "scripts/tests/test-upgrade-notice-overlays.sh",
+        "reason": "Portable daemonless Compose render; retained unchanged, requires pinned Compose5.1.4 semantics."
+      }
+    ],
+    "fixtures": []
+  },
+  "private": {
+    "python": [
+      {
+        "path": "scripts/tests/test_effective_custody_report.py",
+        "reason": "Reads selected private host/HSM overlays through effective_custody_fixture.py."
+      },
+      {
+        "path": "scripts/tests/test_legacy_compose_build_inputs.py",
+        "reason": "Verifies hashes of private infra/docker/attic archives."
+      },
+      {
+        "path": "scripts/tests/test_mango_attester_bridge_network.py",
+        "reason": "Reads private Mango and node-service-host overlays."
+      },
+      {
+        "path": "scripts/tests/test_node_dashboard.py",
+        "reason": "Dashboard implementation is excluded from the public snapshot."
+      },
+      {
+        "path": "scripts/tests/test_oracle_attester_deploy.py",
+        "reason": "Reads private YubiKey host overlay and custody inputs."
+      },
+      {
+        "path": "scripts/tests/test_storage_mock_retirement.py",
+        "reason": "Reads private docker-compose.local-paths.yml."
+      }
+    ],
+    "shell": [
+      {
+        "path": "scripts/tests/test-boot-heal-compose-custody.sh",
+        "reason": "Copies private ct101-hsm-init-custody.conf; all daemon commands remain fixtures."
+      },
+      {
+        "path": "scripts/tests/test-boot-heal-hsm-init-reconcile.sh",
+        "reason": "Copies private host custody config; all host commands remain fixtures."
+      },
+      {
+        "path": "scripts/tests/test-build-provenance.sh",
+        "reason": "Config render reads private docker-compose.local-paths.yml."
+      },
+      {
+        "path": "scripts/tests/test-check-health-oracle-reference.sh",
+        "reason": "Copies private host custody config."
+      },
+      {
+        "path": "scripts/tests/test-ct102-frontend-runner.sh",
+        "reason": "Suite and runner script excluded by public snapshot policy."
+      },
+      {
+        "path": "scripts/tests/test-host-failure-notify.sh",
+        "reason": "Suite and private host notification/hook inputs excluded."
+      },
+      {
+        "path": "scripts/tests/test-real-cli-activation.sh",
+        "reason": "Needs owner-provided pinned WRFCOIN_REAL_CLI; missing binary exits77 and is not coverage."
+      },
+      {
+        "path": "scripts/tests/test-real-cli-smoke.sh",
+        "reason": "Needs owner-provided pinned WRFCOIN_REAL_CLI; missing binary exits77 and is not coverage."
+      },
+      {
+        "path": "scripts/tests/test-receive-snapshots.sh",
+        "reason": "Suite depends on private workstation host tooling."
+      },
+      {
+        "path": "scripts/tests/test-runner-checkout-gc.sh",
+        "reason": "Suite and persistent-runner administration input excluded."
+      },
+      {
+        "path": "scripts/tests/test-setup-vzdump-job.sh",
+        "reason": "Suite and host backup administration inputs excluded."
+      },
+      {
+        "path": "scripts/tests/test-testnet-smoke.sh",
+        "reason": "Suite and owner-only node tooling excluded."
+      },
+      {
+        "path": "scripts/tests/test-tmp-reaper.sh",
+        "reason": "Suite excluded with private host administration inputs."
+      },
+      {
+        "path": "scripts/tests/test-verify-two-node-convergence.sh",
+        "reason": "Suite and owner-only live-capable verifier excluded; fixtures only here."
+      },
+      {
+        "path": "scripts/tests/test-zfs-autosnap.sh",
+        "reason": "Suite and private host ZFS implementation excluded."
+      },
+      {
+        "path": "scripts/tests/test-zfs-send-weekly.sh",
+        "reason": "Suite and private host ZFS send/receive implementations excluded."
+      }
+    ],
+    "fixtures": [
+      {
+        "path": "testnet/tests/test_infra_snapshot_move_preflight.sh",
+        "reason": "Suite and snapshot-move owner inputs are excluded from the public snapshot."
+      }
+    ]
+  }
+}

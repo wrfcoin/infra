@@ -1,0 +1,99 @@
+name: Docs Sync Production Gateway Gate
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  docs-sync-and-gateway-check:
+    name: Docs Sync + Production Gateway Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN || github.token }}
+      MAIN_API_BASE_URL: ${{ vars.PRODUCTION_MAIN_API_BASE_URL }}
+      MAIN_API_WS_URL: ${{ vars.PRODUCTION_MAIN_API_WS_URL }}
+      COMPUTE_API_BASE_URL: ${{ vars.PRODUCTION_COMPUTE_API_BASE_URL }}
+      SAFE_MODE_INPUT: ${{ github.event.inputs.safe_mode || 'false' }}
+
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v7
+
+      - name: Checkout backend
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/backend
+          path: backend
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Checkout frontend
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/frontend
+          path: frontend
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Checkout mobile
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/mobile
+          path: mobile
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Checkout core4
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+          path: core4
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Checkout security-testing
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/security-testing
+          path: security-testing
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Checkout smart-contracts
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/smart-contracts
+          path: smart-contracts
+          token: ${{ env.CROSS_REPO_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Validate docs sync and production gateway policy
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/docs-gateway-check
+          SAFE_FLAG=""
+          if [ "$SAFE_MODE_INPUT" = "true" ]; then
+            SAFE_FLAG="--safe-mode"
+            echo "safe mode enabled for deterministic execution"
+          fi
+          node scripts/validate-docs-sync-and-production-gateway.cjs \
+            --mode all \
+            $SAFE_FLAG | tee artifacts/docs-gateway-check/command-output.txt
+
+      - name: Publish validation summary
+        if: always()
+        run: |
+          if [ -f artifacts/docs-gateway-check/summary.md ]; then
+            cat artifacts/docs-gateway-check/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-sync-production-gateway-gate
+          path: artifacts/docs-gateway-check/

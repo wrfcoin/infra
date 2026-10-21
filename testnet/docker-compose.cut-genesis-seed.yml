@@ -1,0 +1,39 @@
+# Pin the SEED to the live chain's genesis.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# docker-compose.testnet.yml passes WRFCOIN_GENESIS_HASH to `wrfcoin-node` and
+# NOT to `wrfcoin-seed`. That is not a harmless omission, because an absent pin
+# does not mean "no check":
+#
+#   p2p/src/config.rs resolve_genesis_hash()
+#     1. an explicit, non-empty WRFCOIN_GENESIS_HASH wins
+#     2. else, if WRFCOIN_NETWORK_ID=testnet -> the compiled-in
+#        TESTNET_GENESIS_HASH literal
+#     3. else the all-zero placeholder
+#
+# So an unpinned testnet node adopts whatever genesis the BINARY was built with.
+# Measured on CT 101 minutes after the 2026-08-05 cut: the seed took the
+# compiled-in default (the retired a3301def... chain), connected to the node,
+# and was graylisted in a loop --
+#
+#   Genesis handshake mismatch (chain identity mismatch): disconnecting ...
+#     expected genesis_hash=a3301def...   got genesis_hash=805efc97...
+#   P2P peer penalized and GRAYLISTED: reason=genesis handshake mismatch
+#
+# -- until pinned here. It peered on the next dial afterwards.
+#
+# WHY A LITERAL AND NOT ${WRFCOIN_GENESIS_HASH}
+# ---------------------------------------------
+# Interpolating from the shell would let an unset or empty variable render as an
+# empty value, which falls through to case 2 above -- i.e. silently back to the
+# compiled-in hash. For most variables "empty behaves as unset" is harmless; here
+# it means failing closed against the live chain while naming a dead one. A
+# literal cannot do that.
+#
+# WHEN THE CHAIN IS RE-CUT, EDIT THIS LINE. It must equal testnet/cut-pins.env's
+# WRFCOIN_CUT_GENESIS_HASH and the cutter's own /network/info.
+services:
+  wrfcoin-seed:
+    environment:
+      WRFCOIN_GENESIS_HASH: '6ad436386cfc6c746146f6ef2f9d32ddb7a93f18efd3635606abd27c9ca17db8'

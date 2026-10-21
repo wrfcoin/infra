@@ -1,0 +1,67 @@
+# Canonical workspace-level ignore file for WRFCoin Docker builds.
+# testnet/bootstrap.sh installs this as ${WRFCOIN_ROOT}/.dockerignore before
+# workspace-root builds. Dockerignore matching is last-match-wins, so preserve
+# the three tiers below: default exclusion, required-source allowlist, then
+# artifact/secret exclusions. Environment-template exceptions come last.
+#
+# This is not an infra-repository-root policy. Infra-root contexts (for example
+# the faucet's `context: ..`) are a different root and need a separately scoped
+# ignore file if they are to be filtered; mirroring this workspace allowlist at
+# the infra root would drop legitimate infra-local inputs.
+
+# Tier 1: exclude every unknown workspace-root entry by default.
+*
+
+# Tier 2: include only metadata and source trees consumed by testnet Dockerfiles.
+!/.dockerignore
+!/.gitignore
+!/package.json
+!/package-lock.json
+!/prometheus.yml
+!/infra
+!/infra/**
+!/backend
+!/backend/**
+!/core4
+!/core4/**
+!/frontend
+!/frontend/**
+!/storage-providers
+!/storage-providers/**
+!/testnet
+!/testnet/**
+
+# Tier 3: exclude heavy, generated, metadata, and secret paths inside allowed
+# trees. These rules MUST follow the allowlist so its broad /** rules cannot
+# re-include artifacts or credentials.
+worktrees/
+**/target/
+**/target-*/
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/.gradle/
+**/coverage/
+**/.nyc_output/
+**/.cache/
+**/dist/
+**/build/
+**/.git
+**/.git/
+**/.github/
+**/.DS_Store
+**/.vscode/
+**/.idea/
+**/*.swp
+**/.env
+**/.env.*
+**/*.log
+**/logs/
+**/*.pid
+
+# Tier 4: keep non-secret environment templates needed by setup automation.
+!/.env.example
+!/.env.testnet.example
+!**/.env.example
+!**/.env.testnet.example

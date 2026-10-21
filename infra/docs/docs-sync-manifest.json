@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "Cross-repo documentation baseline for infra#38 docs sync gate",
+  "repos": {
+    "infra": {
+      "path_candidates": [
+        ".",
+        "infra"
+      ],
+      "required_files": [
+        "README.md"
+      ]
+    },
+    "backend": {
+      "path": "backend",
+      "required_files": [
+        "README.md"
+      ]
+    },
+    "frontend": {
+      "path": "frontend",
+      "required_files": [
+        "README.md"
+      ]
+    },
+    "mobile": {
+      "path": "mobile",
+      "required_files": [
+        "README.md"
+      ]
+    },
+    "core4": {
+      "path": "core4",
+      "required_files": [
+        "README.md"
+      ]
+    },
+    "security-testing": {
+      "path": "security-testing",
+      "required_files": [
+        "README.md"
+      ]
+    },
+    "smart-contracts": {
+      "path": "smart-contracts",
+      "required_files": [
+        "README.md"
+      ]
+    }
+  }
+}

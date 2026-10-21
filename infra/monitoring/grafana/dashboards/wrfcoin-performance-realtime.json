@@ -1,0 +1,497 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Real-Time Performance Monitoring",
+    "tags": ["wrfcoin", "performance", "real-time", "latency"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "1s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-5m",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["1s", "5s", "10s", "30s", "1m"],
+      "time_options": ["1m", "5m", "15m", "30m", "1h", "2h", "6h"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "operation",
+          "type": "query",
+          "query": "label_values(wrfcoin_tracing_span_duration_seconds, operation_name)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "service",
+          "type": "query",
+          "query": "label_values(wrfcoin_tracing_span_duration_seconds, service_name)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Performance Issues",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "rate(wrfcoin_tracing_span_duration_seconds{quantile=\"0.99\"}[1m]) > 5"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Live Transaction Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_transactions_processed_total[10s])",
+            "legendFormat": "TPS (10s avg)",
+            "interval": "1s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-GrYlRd"
+            },
+            "unit": "short",
+            "decimals": 1,
+            "displayName": "Live TPS"
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Response Time (Real-Time)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(wrfcoin_tracing_span_duration_seconds_bucket[10s]))",
+            "legendFormat": "95th Percentile",
+            "interval": "1s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.1 },
+                { "color": "red", "value": 1.0 }
+              ]
+            },
+            "unit": "s",
+            "decimals": 3
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 4, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Error Rate (Live)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_span_errors_total[10s]) / rate(wrfcoin_tracing_span_total[10s])",
+            "legendFormat": "Error Rate",
+            "interval": "1s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.01 },
+                { "color": "red", "value": 0.05 }
+              ]
+            },
+            "unit": "percentunit",
+            "decimals": 4
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 8, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "Active Spans",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_tracing_active_spans_count",
+            "legendFormat": "Active Spans"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-BlPu"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 12, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "Network Latency (Live)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(wrfcoin_network_message_latency_seconds_bucket[10s]))",
+            "legendFormat": "95th Percentile",
+            "interval": "1s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.05 },
+                { "color": "red", "value": 0.2 }
+              ]
+            },
+            "unit": "s",
+            "decimals": 3
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 16, "y": 0 }
+      },
+      {
+        "id": 6,
+        "title": "Memory Pressure",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_memory_usage_percent",
+            "legendFormat": "Memory %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            },
+            "min": 0,
+            "max": 100,
+            "unit": "percent"
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 20, "y": 0 }
+      },
+      {
+        "id": 7,
+        "title": "Real-Time Transaction Flow",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_blockchain_transactions_processed_total[5s])",
+            "legendFormat": "Processed/sec",
+            "interval": "1s"
+          },
+          {
+            "expr": "rate(wrfcoin_blockchain_transactions_failed_total[5s])",
+            "legendFormat": "Failed/sec",
+            "interval": "1s"
+          },
+          {
+            "expr": "wrfcoin_blockchain_mempool_size",
+            "legendFormat": "Mempool Size"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Transactions",
+              "drawStyle": "line",
+              "fillOpacity": 30,
+              "lineWidth": 2,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 0, "y": 6 }
+      },
+      {
+        "id": 8,
+        "title": "Response Time Distribution (Live)",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_span_duration_seconds_bucket[5s])",
+            "legendFormat": "{{le}}",
+            "interval": "1s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "scaleDistribution": {
+                "type": "log",
+                "log": 2
+              }
+            },
+            "unit": "s"
+          }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 12, "y": 6 }
+      },
+      {
+        "id": 9,
+        "title": "Operation Performance Matrix",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "avg by (operation_name, service_name) (rate(wrfcoin_tracing_span_duration_seconds_sum[30s]) / rate(wrfcoin_tracing_span_duration_seconds_count[30s]))",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "s",
+            "decimals": 4
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "yellow", "value": 0.1 },
+                      { "color": "red", "value": 1.0 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+      },
+      {
+        "id": 10,
+        "title": "System Resource Pressure (Real-Time)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_cpu_usage_percent",
+            "legendFormat": "CPU %",
+            "interval": "1s"
+          },
+          {
+            "expr": "wrfcoin_system_memory_usage_percent",
+            "legendFormat": "Memory %",
+            "interval": "1s"
+          },
+          {
+            "expr": "wrfcoin_system_disk_usage_percent",
+            "legendFormat": "Disk %",
+            "interval": "1s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Percentage",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 2,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+      },
+      {
+        "id": 11,
+        "title": "Trace Sampling and Collection Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_spans_created_total[10s])",
+            "legendFormat": "Spans Created/sec",
+            "interval": "1s"
+          },
+          {
+            "expr": "rate(wrfcoin_tracing_spans_exported_total[10s])",
+            "legendFormat": "Spans Exported/sec",
+            "interval": "1s"
+          },
+          {
+            "expr": "wrfcoin_tracing_sampling_rate",
+            "legendFormat": "Sampling Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Rate",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 }
+      },
+      {
+        "id": 12,
+        "title": "Top Slowest Operations (Last 30s)",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "topk(10, avg by (operation_name, service_name) (rate(wrfcoin_tracing_span_duration_seconds_sum[30s]) / rate(wrfcoin_tracing_span_duration_seconds_count[30s])))",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "s",
+            "decimals": 4
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background-solid"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "yellow", "value": 0.1 },
+                      { "color": "orange", "value": 0.5 },
+                      { "color": "red", "value": 1.0 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
+      },
+      {
+        "id": 13,
+        "title": "Error Rate by Operation (Real-Time)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_span_errors_total[10s]) / rate(wrfcoin_tracing_span_total[10s])",
+            "legendFormat": "Error Rate - {{service_name}}.{{operation_name}}",
+            "interval": "1s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Error Rate",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 }
+      }
+    ]
+  }
+}

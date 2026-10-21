@@ -1,0 +1,14 @@
+[
+  {
+    "Id": "sha256:f434fe4a1d364b68f5622c3310343cd70030feab306a58d4677bca0ab1ec190b",
+    "RepoTags": ["__IMAGE__"],
+    "RepoDigests": [],
+    "Created": "2026-08-17T02:57:47.446698698Z",
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Config": {
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+      "Labels": {"org.opencontainers.image.created": "2026-08-17T02:57:47Z", "org.opencontainers.image.revision": "__REVISION__"}
+    }
+  }
+]

@@ -1,0 +1,144 @@
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: wrfcoin-prometheus
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:9090:9090' # Bind to localhost only
+    volumes:
+      - ./infrastructure/docker/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infrastructure/docker/wrfcoin_alerts.yml:/etc/prometheus/wrfcoin_alerts.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      # SECURITY: --web.enable-lifecycle removed — exposes unauthenticated /-/reload and /-/quit
+      - '--web.listen-address=0.0.0.0:9090'
+      - '--web.route-prefix=/'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: '65534:65534' # nobody user
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: wrfcoin-grafana
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3004:3000' # Bind to localhost only
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_SECURITY_COOKIE_SECURE=true
+      - GF_SECURITY_COOKIE_SAMESITE=strict
+      - GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/grafana/:/etc/grafana/provisioning/dashboards/
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: '472:472' # grafana user
+    networks:
+      - monitoring
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    container_name: wrfcoin-alertmanager
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:9093:9093' # Bind to localhost only
+    environment:
+      # Non-secret SMTP configuration
+      # SECURITY: SMTP_PASSWORD and SLACK_WEBHOOK_URL are NOT set here.
+      # They are read from files mounted at /run/secrets/ to prevent
+      # credential exposure via `docker inspect`.
+      - SMTP_SMARTHOST=${SMTP_SMARTHOST:-localhost:587}
+      - SMTP_FROM=${SMTP_FROM:-alerts@wrfcoin.com}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      # Alert email recipients
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-ops@wrfcoin.com}
+      - SECURITY_EMAIL_TO=${SECURITY_EMAIL_TO:-security@wrfcoin.com}
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ${ALERTMANAGER_SECRETS_DIR:-./alertmanager/secrets}:/run/secrets:ro
+      - alertmanager-data:/alertmanager
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: '65534:65534' # nobody user
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - monitoring
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: wrfcoin-node-exporter
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:9100:9100' # Bind to localhost only
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # SECURITY: Removed dangerous /:/rootfs:ro mount
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--web.listen-address=0.0.0.0:9100'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_TIME # Required for time-related metrics
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    user: '65534:65534' # nobody user
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  alertmanager-data:

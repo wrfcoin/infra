@@ -1,0 +1,20 @@
+[
+  {
+    "RepoTags": [
+      "__IMAGE__"
+    ],
+    "RepoDigests": [],
+    "Created": "2026-09-24T18:02:11.412Z",
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Config": {
+      "Env": [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      ],
+      "Labels": {
+        "org.opencontainers.image.created": "2026-09-24T18:02:11Z",
+        "org.opencontainers.image.revision": "__REVISION__"
+      }
+    }
+  }
+]

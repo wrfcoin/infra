@@ -1,0 +1,87 @@
+# python-deps-gate.yml — make Python dependency changes falsifiable (infra#746)
+#
+# WHY THIS EXISTS
+# ---------------
+# `infra/tools/requirements-ml.txt` matches NONE of the Build/Boot Gate's 18
+# `paths:` patterns — there is no `**/*.txt`, no `requirements*`, no
+# `infra/tools/**`, and no catch-all. No other workflow in this repo covers
+# Python either. So every Python dependency bump here was unfalsifiable by CI.
+#
+# #738 (the python-tooling group bump) was admitted on a local build runner resolver
+# run. Nothing in CI would have reproduced that on the next bump.
+#
+# WHY IT IS A SEPARATE FILE AND NOT A STEP IN build-boot-gate.yml
+# ---------------------------------------------------------------
+# A checker behind the same `paths:` filter as the thing it validates cannot
+# fire on the change that breaks it. build-boot-gate.yml's filter does not
+# match Python paths at all, so a step added there would simply never run for
+# a requirements bump. This workflow carries its own filter, and that filter
+# includes this file and its script, so edits to the checker are self-gating.
+#
+# THE RED CONTROL IS NOT OPTIONAL
+# -------------------------------
+# A gate that has never been observed to fail is indistinguishable from a gate
+# that cannot fail. scripts/check-python-deps.sh runs two deliberately-broken
+# manifests on EVERY invocation and fails the whole run if either comes back
+# green — before it reports anything about the real manifests. A green from
+# this workflow therefore always carries a proof that red was reachable.
+#
+# MINUTES DISCIPLINE
+# ------------------
+# GitHub bills each job rounded up to the minute, so this is ONE job, matching
+# build-boot-gate.yml's reasoning. Cost control is the `paths:` filter: most
+# infra PRs never trigger this at all. The checker installs wheels inside a
+# disposable container; it does not build the consuming image.
+# Measured: ~2-4 min when requirements-ml.txt (torch + tensorflow) is in scope.
+
+name: Python Dependency Gate
+
+on:
+  pull_request:
+    paths:
+      - '**/requirements*.txt'
+      - '**/requirements*.lock'
+      - '**/constraints*.txt'
+      - '**/pyproject.toml'
+      - '**/uv.lock'
+      - '**/Pipfile'
+      # Self-gating: an edit to the checker runs the checker.
+      - '.github/workflows/python-deps-gate.yml'
+      - 'scripts/check-python-deps.sh'
+      # The consumer Dockerfiles supply the base image the probe runs in, so a
+      # base-image bump must re-resolve against the new interpreter.
+      - 'infra/docker/Dockerfile.ml'
+      - 'infra/monitoring/Dockerfile.webhook-handler'
+  push:
+    branches: [main]
+    paths:
+      - '**/requirements*.txt'
+      - '**/requirements*.lock'
+      - '**/constraints*.txt'
+      - '**/pyproject.toml'
+      - '**/uv.lock'
+      - '**/Pipfile'
+      - '.github/workflows/python-deps-gate.yml'
+      - 'scripts/check-python-deps.sh'
+      - 'infra/docker/Dockerfile.ml'
+      - 'infra/monitoring/Dockerfile.webhook-handler'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-deps-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-deps:
+    name: Python Dependency Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Not piped through tail/head: the script's exit status IS the gate, and
+      # a pipeline would report the exit status of the pager instead.
+      - name: Resolve every Python manifest against its consumer's base image
+        run: bash scripts/check-python-deps.sh

@@ -1,0 +1,392 @@
+{
+  "metadata": {
+    "generated": "2025-07-22T06:04:22.833Z",
+    "platform": "WRFCoin",
+    "total_services": 21,
+    "dependency_levels": 5,
+    "tiers": [
+      "monitoring",
+      "core",
+      "database",
+      "cache",
+      "api",
+      "gateway",
+      "bridge",
+      "data",
+      "network",
+      "storage",
+      "compute",
+      "microservice",
+      "iot",
+      "discovery",
+      "security",
+      "governance",
+      "rewards",
+      "runtime"
+    ]
+  },
+  "services": {
+    "prometheus": {
+      "port": 9090,
+      "tier": "monitoring",
+      "dependencies": [],
+      "description": "Metrics collection and alerting",
+      "criticalness": "high",
+      "healthEndpoint": "/metrics",
+      "level": "level0",
+      "levelNumber": 0
+    },
+    "wrfcoin-core": {
+      "port": 5000,
+      "tier": "core",
+      "dependencies": [],
+      "description": "Core blockchain service with WVM",
+      "criticalness": "critical",
+      "healthEndpoint": "/health",
+      "level": "level1",
+      "levelNumber": 1
+    },
+    "postgresql": {
+      "port": 5432,
+      "tier": "database",
+      "dependencies": [],
+      "description": "Primary database (21-table schema)",
+      "criticalness": "critical",
+      "healthEndpoint": null,
+      "level": "level1",
+      "levelNumber": 1
+    },
+    "redis-cache": {
+      "port": 6379,
+      "tier": "cache",
+      "dependencies": [],
+      "description": "Primary caching layer",
+      "criticalness": "high",
+      "healthEndpoint": null,
+      "level": "level1",
+      "levelNumber": 1
+    },
+    "iot-sensor-networks": {
+      "port": 3002,
+      "tier": "iot",
+      "dependencies": [],
+      "description": "20+ IoT platform integrations",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level1",
+      "levelNumber": 1
+    },
+    "node-discovery": {
+      "port": 9001,
+      "tier": "discovery",
+      "dependencies": [],
+      "description": "P2P network node discovery",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level1",
+      "levelNumber": 1
+    },
+    "clamav-antivirus": {
+      "port": 3310,
+      "tier": "security",
+      "dependencies": [],
+      "description": "Antivirus scanning service",
+      "criticalness": "low",
+      "healthEndpoint": null,
+      "level": "level1",
+      "levelNumber": 1
+    },
+    "wrfcoin-main-api": {
+      "port": 4001,
+      "tier": "api",
+      "dependencies": ["wrfcoin-core", "postgresql", "redis-cache"],
+      "description": "Main API server with GraphQL",
+      "criticalness": "critical",
+      "healthEndpoint": "/health",
+      "level": "level2",
+      "levelNumber": 2
+    },
+    "cross-chain-protocol": {
+      "port": 3000,
+      "tier": "bridge",
+      "dependencies": ["wrfcoin-core"],
+      "description": "13+ cross-chain bridges",
+      "criticalness": "high",
+      "healthEndpoint": "/health",
+      "level": "level2",
+      "levelNumber": 2
+    },
+    "weather-service": {
+      "port": 3001,
+      "tier": "data",
+      "dependencies": ["wrfcoin-core", "iot-sensor-networks"],
+      "description": "Weather data collection and validation",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level2",
+      "levelNumber": 2
+    },
+    "compute-networks": {
+      "port": 6000,
+      "tier": "network",
+      "dependencies": ["wrfcoin-core"],
+      "description": "Distributed computing coordination",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level2",
+      "levelNumber": 2
+    },
+    "ai-ml-networks": {
+      "port": 6001,
+      "tier": "network",
+      "dependencies": ["wrfcoin-core"],
+      "description": "AI/ML model deployment network",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level2",
+      "levelNumber": 2
+    },
+    "storage-networks": {
+      "port": 7000,
+      "tier": "storage",
+      "dependencies": ["wrfcoin-core"],
+      "description": "IPFS/Filecoin/Arweave integration",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level2",
+      "levelNumber": 2
+    },
+    "api-gateway": {
+      "port": 4000,
+      "tier": "gateway",
+      "dependencies": ["nft-service", "user-service", "wrfcoin-main-api"],
+      "description": "API Gateway with routing",
+      "criticalness": "high",
+      "healthEndpoint": "/health",
+      "level": "level3",
+      "levelNumber": 3
+    },
+    "ml-inference": {
+      "port": 8080,
+      "tier": "compute",
+      "dependencies": ["wrfcoin-core", "ai-ml-networks"],
+      "description": "ML inference with GPU support",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level3",
+      "levelNumber": 3
+    },
+    "etl-pipeline": {
+      "port": 5000,
+      "tier": "data",
+      "dependencies": ["wrfcoin-core", "weather-service", "postgresql"],
+      "description": "Data transformation pipeline",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level3",
+      "levelNumber": 3
+    },
+    "governance-server": {
+      "port": 8000,
+      "tier": "governance",
+      "dependencies": ["wrfcoin-main-api"],
+      "description": "DAO proposals and voting",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level3",
+      "levelNumber": 3
+    },
+    "nas-storage": {
+      "port": 7001,
+      "tier": "storage",
+      "dependencies": ["storage-networks"],
+      "description": "NAS storage node management",
+      "criticalness": "low",
+      "healthEndpoint": "/health",
+      "level": "level3",
+      "levelNumber": 3
+    },
+    "nft-service": {
+      "port": 4002,
+      "tier": "microservice",
+      "dependencies": ["wrfcoin-main-api"],
+      "description": "NFT marketplace service",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level4",
+      "levelNumber": 4
+    },
+    "user-service": {
+      "port": 4003,
+      "tier": "microservice",
+      "dependencies": ["wrfcoin-main-api"],
+      "description": "User management service",
+      "criticalness": "high",
+      "healthEndpoint": "/health",
+      "level": "level4",
+      "levelNumber": 4
+    },
+    "weather-earnings": {
+      "port": 8080,
+      "tier": "rewards",
+      "dependencies": ["weather-service", "wrfcoin-main-api"],
+      "description": "Weather station reward distribution",
+      "criticalness": "medium",
+      "healthEndpoint": "/health",
+      "level": "level4",
+      "levelNumber": 4
+    }
+  },
+  "tiers": {
+    "monitoring": {
+      "color": "#FF6B6B",
+      "priority": 0,
+      "description": "Monitoring Infrastructure"
+    },
+    "core": {
+      "color": "#4ECDC4",
+      "priority": 1,
+      "description": "Blockchain Core"
+    },
+    "database": {
+      "color": "#45B7D1",
+      "priority": 1,
+      "description": "Data Storage"
+    },
+    "cache": {
+      "color": "#96CEB4",
+      "priority": 1,
+      "description": "Caching Layer"
+    },
+    "api": {
+      "color": "#FFEAA7",
+      "priority": 2,
+      "description": "API Services"
+    },
+    "gateway": {
+      "color": "#DDA0DD",
+      "priority": 3,
+      "description": "API Gateway"
+    },
+    "bridge": {
+      "color": "#FFB347",
+      "priority": 2,
+      "description": "Cross-Chain Bridges"
+    },
+    "data": {
+      "color": "#87CEEB",
+      "priority": 2,
+      "description": "Data Processing"
+    },
+    "network": {
+      "color": "#F0E68C",
+      "priority": 2,
+      "description": "Network Services"
+    },
+    "storage": {
+      "color": "#DEB887",
+      "priority": 2,
+      "description": "Storage Services"
+    },
+    "compute": {
+      "color": "#FFA07A",
+      "priority": 3,
+      "description": "Compute Services"
+    },
+    "microservice": {
+      "color": "#B19CD9",
+      "priority": 4,
+      "description": "Microservices"
+    },
+    "iot": {
+      "color": "#FFD700",
+      "priority": 1,
+      "description": "IoT Networks"
+    },
+    "discovery": {
+      "color": "#98FB98",
+      "priority": 1,
+      "description": "Service Discovery"
+    },
+    "security": {
+      "color": "#F08080",
+      "priority": 1,
+      "description": "Security Services"
+    },
+    "governance": {
+      "color": "#20B2AA",
+      "priority": 3,
+      "description": "Governance"
+    },
+    "rewards": {
+      "color": "#FF69B4",
+      "priority": 4,
+      "description": "Reward Systems"
+    },
+    "runtime": {
+      "color": "#DAA520",
+      "priority": 5,
+      "description": "Runtime Metrics"
+    }
+  },
+  "dependency_matrix": {
+    "prometheus": [],
+    "wrfcoin-core": [],
+    "postgresql": [],
+    "redis-cache": [],
+    "iot-sensor-networks": [],
+    "node-discovery": [],
+    "clamav-antivirus": [],
+    "wrfcoin-main-api": ["wrfcoin-core", "postgresql", "redis-cache"],
+    "cross-chain-protocol": ["wrfcoin-core"],
+    "weather-service": ["wrfcoin-core", "iot-sensor-networks"],
+    "compute-networks": ["wrfcoin-core"],
+    "ai-ml-networks": ["wrfcoin-core"],
+    "storage-networks": ["wrfcoin-core"],
+    "api-gateway": ["nft-service", "user-service", "wrfcoin-main-api"],
+    "ml-inference": ["wrfcoin-core", "ai-ml-networks"],
+    "etl-pipeline": ["wrfcoin-core", "weather-service", "postgresql"],
+    "governance-server": ["wrfcoin-main-api"],
+    "nas-storage": ["storage-networks"],
+    "nft-service": ["wrfcoin-main-api"],
+    "user-service": ["wrfcoin-main-api"],
+    "weather-earnings": ["weather-service", "wrfcoin-main-api"]
+  },
+  "health_endpoints": {
+    "prometheus": "http://localhost:9090/metrics",
+    "wrfcoin-core": "http://localhost:5000/health",
+    "iot-sensor-networks": "http://localhost:3002/health",
+    "node-discovery": "http://localhost:9001/health",
+    "wrfcoin-main-api": "http://localhost:4001/health",
+    "cross-chain-protocol": "http://localhost:3000/health",
+    "weather-service": "http://localhost:3001/health",
+    "compute-networks": "http://localhost:6000/health",
+    "ai-ml-networks": "http://localhost:6001/health",
+    "storage-networks": "http://localhost:7000/health",
+    "api-gateway": "http://localhost:4000/health",
+    "ml-inference": "http://localhost:8080/health",
+    "etl-pipeline": "http://localhost:5000/health",
+    "governance-server": "http://localhost:8000/health",
+    "nas-storage": "http://localhost:7001/health",
+    "nft-service": "http://localhost:4002/health",
+    "user-service": "http://localhost:4003/health",
+    "weather-earnings": "http://localhost:8080/health"
+  },
+  "critical_path_analysis": [
+    {
+      "service": "wrfcoin-core",
+      "path": ["wrfcoin-core"],
+      "risk_level": "low"
+    },
+    {
+      "service": "postgresql",
+      "path": ["postgresql"],
+      "risk_level": "low"
+    },
+    {
+      "service": "wrfcoin-main-api",
+      "path": ["wrfcoin-main-api", "wrfcoin-core", "postgresql", "redis-cache"],
+      "risk_level": "high"
+    }
+  ]
+}

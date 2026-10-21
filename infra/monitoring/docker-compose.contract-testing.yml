@@ -1,0 +1,184 @@
+# Docker Compose configuration for Contract Testing monitoring services
+# This extends the main monitoring stack with contract test specific services
+
+version: '3.8'
+
+services:
+  # Contract Test Metrics Collector
+  contract-test-metrics:
+    build:
+      context: .
+      dockerfile: Dockerfile.contract-metrics
+    container_name: wrfcoin-contract-test-metrics
+    ports:
+      - '9095:9095'
+    environment:
+      - CONTRACT_METRICS_PORT=9095
+      - PACT_BROKER_URL=http://pact-broker:9292
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    volumes:
+      - ../../tests/contract/pacts:/app/pacts:ro
+      - ../../tests/contract/logs:/app/logs:ro
+      - ../../tests/contract/reports:/app/reports
+      - contract-metrics-data:/app/data
+    networks:
+      - wrfcoin-monitoring
+      - wrfcoin-contract-testing
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    labels:
+      - 'prometheus.io/scrape=true'
+      - 'prometheus.io/port=9095'
+      - 'prometheus.io/path=/metrics'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9095/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Pact Broker for contract sharing
+  pact-broker:
+    image: dius/pact-broker:2.107.1
+    container_name: wrfcoin-pact-broker
+    ports:
+      - '9292:9292'
+    environment:
+      - PACT_BROKER_DATABASE_URL=postgresql://pact_broker:pact_broker@pact-broker-db/pact_broker
+      - PACT_BROKER_DATABASE_CONNECT_MAX_RETRIES=5
+      - PACT_BROKER_DATABASE_RETRY_INTERVAL=3
+      - PACT_BROKER_LOG_LEVEL=INFO
+      - PACT_BROKER_SQL_LOG_LEVEL=DEBUG
+      - PACT_BROKER_DATABASE_STATEMENT_TIMEOUT=30
+      - PACT_BROKER_PUBLIC_HEARTBEAT=true
+      - PACT_BROKER_ALLOW_PUBLIC_READ=true
+      - PACT_BROKER_WEBHOOK_HTTP_METHOD_WHITELIST=GET,POST,PUT,DELETE
+      - PACT_BROKER_WEBHOOK_SCHEME_WHITELIST=https,http
+      - PACT_BROKER_WEBHOOK_HOST_WHITELIST=/.*/
+    volumes:
+      - pact-broker-logs:/app/log
+    networks:
+      - wrfcoin-contract-testing
+      - wrfcoin-monitoring
+    depends_on:
+      pact-broker-db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--quiet',
+          '--tries=1',
+          '--spider',
+          'http://localhost:9292/diagnostic/status/heartbeat',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # PostgreSQL database for Pact Broker
+  pact-broker-db:
+    image: postgres:15-alpine
+    container_name: wrfcoin-pact-broker-db
+    environment:
+      - POSTGRES_USER=pact_broker
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      - POSTGRES_DB=pact_broker
+      - POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256"
+    volumes:
+      - pact-broker-db-data:/var/lib/postgresql/data
+      - ./init-pact-broker-db.sql:/docker-entrypoint-initdb.d/init-pact-broker-db.sql:ro
+    networks:
+      - wrfcoin-contract-testing
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pact_broker -d pact_broker']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Contract Test Dashboard Generator
+  contract-test-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.contract-dashboard
+    container_name: wrfcoin-contract-dashboard
+    ports:
+      - '8090:8090'
+    environment:
+      - DASHBOARD_PORT=8090
+      - METRICS_COLLECTOR_URL=http://contract-test-metrics:9095
+      - PACT_BROKER_URL=http://pact-broker:9292
+      - GRAFANA_URL=http://grafana:3000
+      - PROMETHEUS_URL=http://prometheus:9090
+    volumes:
+      - ../../tests/contract/reports:/app/reports:ro
+      - contract-dashboard-data:/app/data
+    networks:
+      - wrfcoin-monitoring
+      - wrfcoin-contract-testing
+    restart: unless-stopped
+    depends_on:
+      - contract-test-metrics
+      - grafana
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8090/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Contract Test Webhook Handler for CI/CD integration
+  contract-webhook-handler:
+    build:
+      context: .
+      dockerfile: Dockerfile.contract-webhook
+    container_name: wrfcoin-contract-webhook
+    ports:
+      - '9096:9096'
+    environment:
+      - WEBHOOK_PORT=9096
+      - METRICS_COLLECTOR_URL=http://contract-test-metrics:9095
+      - SLACK_WEBHOOK_URL=${SLACK_CONTRACT_WEBHOOK_URL:-}
+      - TEAMS_WEBHOOK_URL=${TEAMS_CONTRACT_WEBHOOK_URL:-}
+      - EMAIL_SMTP_HOST=${EMAIL_SMTP_HOST:-}
+      - EMAIL_SMTP_PORT=${EMAIL_SMTP_PORT:-587}
+      - EMAIL_USER=${EMAIL_USER:-}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
+    volumes:
+      - contract-webhook-logs:/app/logs
+    networks:
+      - wrfcoin-contract-testing
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    depends_on:
+      - contract-test-metrics
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9096/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  pact-broker-db-data:
+    driver: local
+  pact-broker-logs:
+    driver: local
+  contract-metrics-data:
+    driver: local
+  contract-dashboard-data:
+    driver: local
+  contract-webhook-logs:
+    driver: local
+
+networks:
+  wrfcoin-contract-testing:
+    driver: bridge
+    name: wrfcoin-contract-testing
+  wrfcoin-monitoring:
+    external: true

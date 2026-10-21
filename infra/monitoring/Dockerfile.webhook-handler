@@ -1,0 +1,45 @@
+# Dockerfile for Wrfcoin Alert Webhook Handler
+
+# python:3.14-slim
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements-webhook.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements-webhook.lock
+
+# Create non-root user
+RUN groupadd -r webhook && useradd -r -g webhook webhook
+
+# Create necessary directories
+RUN mkdir -p /app/logs && chown webhook:webhook /app/logs
+
+# Copy application files
+COPY alert-webhook-handler.py .
+RUN chown webhook:webhook alert-webhook-handler.py
+
+# Switch to non-root user
+USER webhook
+
+# Expose port
+EXPOSE 5001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:5001/health || exit 1
+
+# Set environment variables
+ENV FLASK_APP=alert-webhook-handler.py
+ENV FLASK_ENV=production
+ENV PYTHONUNBUFFERED=1
+
+# Run the application
+CMD ["python", "alert-webhook-handler.py"]

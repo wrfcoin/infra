@@ -1,0 +1,27 @@
+# node:20-slim
+FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+
+WORKDIR /app
+
+COPY infra/compute-agent/package*.json ./
+RUN npm ci --production
+
+COPY infra/compute-agent/dist/ ./dist/
+
+# Working directory for WRF task data
+VOLUME ["/work"]
+
+# Wallet key mount point
+VOLUME ["/keys"]
+
+# Non-root user matching core4 convention (UID 1001, core4#664)
+RUN groupadd -g 1001 wrfcoin && \
+    useradd -m -u 1001 -g wrfcoin wrfcoin && \
+    chown -R wrfcoin:wrfcoin /app
+
+HEALTHCHECK --interval=30s --timeout=5s \
+  CMD node -e "fetch('http://localhost:3333/health').then(r => r.ok || process.exit(1)).catch(() => process.exit(1))"
+
+USER wrfcoin
+
+CMD ["node", "dist/index.js"]

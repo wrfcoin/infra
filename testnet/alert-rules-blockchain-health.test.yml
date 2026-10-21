@@ -1,0 +1,222 @@
+# promtool unit tests for the state-divergence alert group (infra#617).
+#
+# Run:
+#   promtool test rules testnet/alert-rules-blockchain-health.test.yml
+# or containerized (local pull only, never push):
+#   docker run --rm -v "$PWD/testnet:/t:ro" --entrypoint promtool \
+#     prom/prometheus:latest test rules /t/alert-rules-blockchain-health.test.yml
+#
+# The tests encode the two miss-modes of the previous
+# `increase(wrfcoin_state_divergence_total[5m]) > 0` expression that motivated
+# the change to a `> 0` latch (2026-07-02 incident, infra#617):
+#   1. Prometheus (re)starts AFTER the divergence event: the counter is a flat
+#      non-zero series from the first sample, increase() is 0 forever, no page.
+#   2. The 5m increase() window expires while the notification path is down
+#      (the alert-receiver was being deployed the same night): the alert
+#      resolves after 5m and never re-notifies. The latch keeps firing, so
+#      AlertManager re-notifies every repeat_interval until the node restarts.
+
+rule_files:
+  - alert-rules-blockchain-health.yml
+
+evaluation_interval: 15s
+
+tests:
+  # ------------------------------------------------------------------
+  # 1. Counter increments 0 -> 1 while being scraped: fires immediately
+  #    and is STILL firing 30m later (latch; miss-mode 2 above).
+  - interval: 15s
+    input_series:
+      - series: 'wrfcoin_state_divergence_total{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '0 0 0 0 1+0x116'  # divergence at t=60s, then flat 1 for ~29m
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: StateDivergenceDetected
+        exp_alerts: []  # healthy counter at 0: silent
+      - eval_time: 2m
+        alertname: StateDivergenceDetected
+        exp_alerts:
+          - exp_labels:
+              job: wrfcoin-node
+              instance: wrfcoin-node:8556
+              severity: critical
+              component: chain-readiness
+            exp_annotations:
+              summary: "State divergence detected by wrfcoin-node"
+              description: "wrfcoin_state_divergence_total is 1 — this node has observed same-height peer state divergence at least once since it started. Hold launch promotion and inspect node logs plus peer state roots. The alert latches until the node restarts; use StateDivergenceActive to see whether the divergence is ongoing.\n"
+      - eval_time: 29m
+        alertname: StateDivergenceDetected
+        exp_alerts:
+          - exp_labels:
+              job: wrfcoin-node
+              instance: wrfcoin-node:8556
+              severity: critical
+              component: chain-readiness
+            exp_annotations:
+              summary: "State divergence detected by wrfcoin-node"
+              description: "wrfcoin_state_divergence_total is 1 — this node has observed same-height peer state divergence at least once since it started. Hold launch promotion and inspect node logs plus peer state roots. The alert latches until the node restarts; use StateDivergenceActive to see whether the divergence is ongoing.\n"
+
+  # ------------------------------------------------------------------
+  # 2. Prometheus started AFTER the event (miss-mode 1): the counter is a
+  #    flat 3 from the very first sample. increase() would be 0 forever;
+  #    the latch must fire.
+  - interval: 15s
+    input_series:
+      - series: 'wrfcoin_state_divergence_total{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '3+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: StateDivergenceDetected
+        exp_alerts:
+          - exp_labels:
+              job: wrfcoin-node
+              instance: wrfcoin-node:8556
+              severity: critical
+              component: chain-readiness
+            exp_annotations:
+              summary: "State divergence detected by wrfcoin-node"
+              description: "wrfcoin_state_divergence_total is 3 — this node has observed same-height peer state divergence at least once since it started. Hold launch promotion and inspect node logs plus peer state roots. The alert latches until the node restarts; use StateDivergenceActive to see whether the divergence is ongoing.\n"
+
+  # ------------------------------------------------------------------
+  # 3. Healthy node: counter registered at 0 for the whole window -> silent.
+  - interval: 15s
+    input_series:
+      - series: 'wrfcoin_state_divergence_total{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: StateDivergenceDetected
+        exp_alerts: []
+
+  # ------------------------------------------------------------------
+  # 4. StateDivergenceActive: gauge set at t=60s, cleared (#1713 recovery)
+  #    at t=150s. With for: 1m the alert fires at t=2m and must be resolved
+  #    once the gauge returns to 0.
+  - interval: 15s
+    input_series:
+      - series: 'wrfcoin_chain_state_diverged{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '0 0 0 0 1 1 1 1 1 1 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: StateDivergenceActive
+        exp_alerts: []  # not diverged yet
+      - eval_time: 1m15s
+        alertname: StateDivergenceActive
+        exp_alerts: []  # diverged but still pending (for: 1m)
+      - eval_time: 2m
+        alertname: StateDivergenceActive
+        exp_alerts:
+          - exp_labels:
+              job: wrfcoin-node
+              instance: wrfcoin-node:8556
+              severity: critical
+              component: chain-readiness
+            exp_annotations:
+              summary: "State divergence is ongoing (not yet re-converged)"
+              description: "wrfcoin_chain_state_diverged has been 1 for over a minute: the node's state root still differs from a connected same-height peer and the #1713 recovery has not re-confirmed convergence. Compare /state/root across nodes (verify-two-node-convergence.sh) and check for a fork or partition before any deploy or promotion.\n"
+      - eval_time: 4m
+        alertname: StateDivergenceActive
+        exp_alerts: []  # recovery cleared the gauge -> alert resolved
+
+  # ------------------------------------------------------------------
+  # 5. Validator participation zero remains visible as a known warning.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_consensus_validator_participation_rate{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ValidatorParticipationZero
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: ValidatorParticipationZero
+        exp_alerts:
+          - exp_labels:
+              job: wrfcoin-node
+              instance: wrfcoin-node:8556
+              severity: warning
+              component: consensus-observability
+            exp_annotations:
+              summary: "Validator participation metric is zero"
+              description: "wrfcoin_consensus_validator_participation_rate has remained 0 for 10+ minutes. On the current PoP testnet this truthfully reports that the runtime validator participation source is not yet wired; do not interpret zero as healthy participation. Runtime wiring is owned by the Phase 1 consensus-auth lane.\n"
+
+  # A non-zero participation sample must remain silent.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_consensus_validator_participation_rate{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '0.75+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ValidatorParticipationZero
+        exp_alerts: []
+
+  # ------------------------------------------------------------------
+  # 6. Block assembly drop detector trips only when the counter rises.
+  #    This proves the #2056 control fires for a genuine block-assembly
+  #    drop path and stays quiet for healthy nodes.
+  - interval: 15s
+    input_series:
+      - series: 'wrfcoin_blockchain_tx_dropped_total{job="wrfcoin-node", instance="wrfcoin-node:8556", reason="apply_failed"}'
+        values: '0 0 0 0 1+0x40'
+      - series: 'wrfcoin_blockchain_tx_dropped_total{job="wrfcoin-node", instance="wrfcoin-node:8556", reason="insufficient_balance"}'
+        values: '0+0x50'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: BlockAssemblyDropDetected
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: BlockAssemblyDropDetected
+        exp_alerts:
+          - exp_labels:
+              job: wrfcoin-node
+              instance: wrfcoin-node:8556
+              reason: apply_failed
+              severity: warning
+              service: core4
+              component: block-assembly
+            exp_annotations:
+              summary: "Transaction dropped during block assembly"
+              description: "apply_failed-reason drops rose in the last 5m: 1. These txs were admitted to mempool, then excluded when applied during block assembly. Investigate the first dropped tx and its log trace for #2056.\n"
+
+  # 7. Healthy node with no rise in drop counter stays silent.
+  - interval: 15s
+    input_series:
+      - series: 'wrfcoin_blockchain_tx_dropped_total{job="wrfcoin-node", instance="wrfcoin-node:8556", reason="apply_failed"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: BlockAssemblyDropDetected
+        exp_alerts: []
+
+  # ------------------------------------------------------------------
+  # 8. A node with no connected peers must not page before the two-minute
+  #    hold, then must page with the exact p2p labels.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_network_peer_count{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '1 0+0x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: NoConnectedPeers
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: NoConnectedPeers
+        exp_alerts:
+          - exp_labels:
+              job: wrfcoin-node
+              instance: wrfcoin-node:8556
+              severity: critical
+              component: p2p
+            exp_annotations:
+              summary: "WRFCoin node has no connected peers"
+              description: "wrfcoin_network_peer_count has been zero for over two minutes. Check bootstrap reachability and the P2P listener before promotion.\n"
+
+  # 9. A node that retains at least one peer stays silent.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_network_peer_count{job="wrfcoin-node", instance="wrfcoin-node:8556"}'
+        values: '1+0x5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: NoConnectedPeers
+        exp_alerts: []

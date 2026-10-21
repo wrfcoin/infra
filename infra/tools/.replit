@@ -1,0 +1,217 @@
+modules = ["nodejs-20", "rust", "postgresql-16", "python-3.11", "python3"]
+
+[nix]
+channel = "stable-24_05"
+packages = ["clang", "glib", "jq", "libyaml", "llvm", "openssl", "pkg-config", "protobuf", "unzip"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "IoT Sensor Networks Port 3002"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Cross-Chain WebSocket Port 5001"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Frontend Application"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Wallet Server Port 4000"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Cross-Chain Protocol Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Enhanced API Server Port 3001"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Governance Server Port 8000"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Weather Station Connector"
+
+[[workflows.workflow]]
+name = "Simple WebSocket ServerWebSocket Server Live"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "AI ML Networks Port 6001"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Performance Stress Test"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Rate-Limit Aware Performance Test"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Smart Performance Test"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "AcuRite Auto-Collector"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Enhanced 74-Test Suite"
+
+[[workflows.workflow]]
+name = "Cross-Chain Protocol Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node backend/server/cross_chain_protocol_server.js"
+waitForPort = 3000
+
+[[workflows.workflow]]
+name = "Frontend Application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd frontend && npm run dev -- --host 0.0.0.0 --port 5000"
+waitForPort = 5000
+
+[[workflows.workflow]]
+name = "IoT Sensor Networks Port 3002"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npx tsx backend/server/iot_sensor_networks_server_fixed.ts"
+waitForPort = 3002
+
+[[workflows.workflow]]
+name = "Cross-Chain WebSocket Port 5001"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node backend/server/cross_chain_websocket_server.js"
+waitForPort = 5001
+
+[[workflows.workflow]]
+name = "Wallet Server Port 4000"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node backend/server/wallet_server.js"
+waitForPort = 4000
+
+[[workflows.workflow]]
+name = "Enhanced API Server Port 3001"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd backend/server && PORT=3001 npx tsx enhanced_unified_api.ts"
+waitForPort = 3001
+
+[[workflows.workflow]]
+name = "Governance Server Port 8000"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd backend/server && node governance_server_stable.js"
+waitForPort = 8000
+
+[[workflows.workflow]]
+name = "Weather Station Connector"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd backend/server && node weather_station_connector.js"
+waitForPort = 4200
+
+[deployment]
+run = ["sh", "-c", "cd frontend && npm run dev -- --host 0.0.0.0 --port 5000"]
+
+[[ports]]
+localPort = 3000
+externalPort = 3000
+
+[[ports]]
+localPort = 3001
+externalPort = 8000
+
+[[ports]]
+localPort = 3002
+externalPort = 8008
+
+[[ports]]
+localPort = 3003
+externalPort = 8080
+
+[[ports]]
+localPort = 3004
+
+[[ports]]
+localPort = 3005
+externalPort = 6800
+
+[[ports]]
+localPort = 4000
+externalPort = 8099
+
+[[ports]]
+localPort = 4001
+
+[[ports]]
+localPort = 4002
+externalPort = 8081
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 5001
+externalPort = 3001
+
+[[ports]]
+localPort = 5002
+externalPort = 3002
+
+[[ports]]
+localPort = 5003
+externalPort = 4200
+
+[[ports]]
+localPort = 5004
+externalPort = 5000
+
+[[ports]]
+localPort = 5005
+externalPort = 3003
+
+[[ports]]
+localPort = 5006
+externalPort = 5173
+
+[[ports]]
+localPort = 6000
+externalPort = 9000
+
+[[ports]]
+localPort = 9000
+externalPort = 6000

@@ -1,0 +1,205 @@
+# Docker Compose for Wrfcoin Distributed Tracing Infrastructure
+# Includes Jaeger, OpenTelemetry Collector, and supporting services
+
+version: '3.8'
+
+services:
+  # Jaeger All-in-One for development
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: wrfcoin-jaeger
+    ports:
+      - '16686:16686' # Jaeger UI
+      - '14268:14268' # Jaeger HTTP
+      - '14250:14250' # Jaeger gRPC
+      - '6831:6831/udp' # Jaeger agent UDP
+      - '6832:6832/udp' # Jaeger agent UDP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    networks:
+      - wrfcoin-monitoring
+    volumes:
+      - jaeger-data:/tmp
+    restart: unless-stopped
+    labels:
+      - 'prometheus.io/scrape=true'
+      - 'prometheus.io/port=14269'
+      - 'prometheus.io/path=/metrics'
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.89.0
+    container_name: wrfcoin-otel-collector
+    command: ['--config=/etc/otel-collector-config.yaml']
+    ports:
+      - '127.0.0.1:4317:4317' # OTLP gRPC receiver
+      - '127.0.0.1:4318:4318' # OTLP HTTP receiver
+      - '127.0.0.1:8888:8888' # Prometheus metrics
+      - '127.0.0.1:8889:8889' # Prometheus exporter metrics
+      - '127.0.0.1:13133:13133' # Health check
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    depends_on:
+      - jaeger
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    labels:
+      - 'prometheus.io/scrape=true'
+      - 'prometheus.io/port=8888'
+      - 'prometheus.io/path=/metrics'
+
+  # Zipkin (alternative tracing backend)
+  zipkin:
+    image: openzipkin/zipkin:2.24
+    container_name: wrfcoin-zipkin
+    ports:
+      - '127.0.0.1:9411:9411'
+    environment:
+      - STORAGE_TYPE=mem
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    profiles:
+      - zipkin
+
+  # Tempo (alternative tracing backend for production)
+  tempo:
+    image: grafana/tempo:2.3.0
+    container_name: wrfcoin-tempo
+    command: ['-config.file=/etc/tempo.yaml']
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/tmp/tempo
+    ports:
+      - '127.0.0.1:3200:3200' # Tempo HTTP
+      - '127.0.0.1:4317:4317' # OTLP gRPC
+      - '127.0.0.1:4318:4318' # OTLP HTTP
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    profiles:
+      - tempo
+    labels:
+      - 'prometheus.io/scrape=true'
+      - 'prometheus.io/port=3200'
+      - 'prometheus.io/path=/metrics'
+
+  # Grafana with tracing support
+  grafana-tracing:
+    image: grafana/grafana:10.2.0
+    container_name: wrfcoin-grafana-tracing
+    ports:
+      - '3001:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - grafana-tracing-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources-tracing.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    depends_on:
+      - jaeger
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+
+  # Loki for log aggregation (complements tracing)
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: wrfcoin-loki
+    ports:
+      - '3100:3100'
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    profiles:
+      - logs
+
+  # Promtail for log collection
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: wrfcoin-promtail
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    profiles:
+      - logs
+
+  # OpenTelemetry Demo App for testing
+  otel-demo:
+    image: otel/opentelemetry-collector-contrib:0.89.0
+    container_name: wrfcoin-otel-demo
+    command: ['--config=/etc/demo-config.yaml']
+    volumes:
+      - ./otel-demo-config.yaml:/etc/demo-config.yaml:ro
+    depends_on:
+      - otel-collector
+    networks:
+      - wrfcoin-monitoring
+    restart: unless-stopped
+    profiles:
+      - demo
+
+networks:
+  wrfcoin-monitoring:
+    external: true
+
+volumes:
+  jaeger-data:
+    driver: local
+  tempo-data:
+    driver: local
+  grafana-tracing-data:
+    driver: local
+  loki-data:
+    driver: local
+
+# Health checks
+healthcheck:
+  jaeger:
+    test:
+      [
+        'CMD',
+        'wget',
+        '--quiet',
+        '--tries=1',
+        '--spider',
+        'http://localhost:16686/',
+      ]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+
+  otel-collector:
+    test:
+      [
+        'CMD',
+        'wget',
+        '--quiet',
+        '--tries=1',
+        '--spider',
+        'http://localhost:13133/',
+      ]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+
+  grafana-tracing:
+    test: ['CMD', 'curl', '-f', 'http://localhost:3000/api/health']
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s

@@ -1,0 +1,50 @@
+[
+  {
+    "file": "testnet/docker-compose.testnet.yml",
+    "service": "db-migrate",
+    "command": "set -e\nif [ -z \"$$DATABASE_URL\" ]; then\n  echo \"ERROR: DATABASE_URL is not set\" >&2\n  exit 1\nfi\nif [ ! -x /usr/local/bin/assert-migration-image-freshness ]; then\n  echo \"ERROR: stale db-migrate image lacks the freshness assertion; expected migration $${WRFCOIN_EXPECTED_DB_MIGRATION}.sql\" >&2\n  exit 1\nfi\n/usr/local/bin/assert-migration-image-freshness\necho \"Running Drizzle migrations...\"\nnode node_modules/drizzle-kit/bin.cjs migrate\necho \"Migrations complete.\"\n",
+    "reason": "runs drizzle-kit (node_modules/drizzle-kit/bin.cjs), not a backend bundle; the multi-line preflight (DATABASE_URL check, image-freshness assertion) is reviewed by hand"
+  },
+  {
+    "file": "testnet/docker-compose.testnet.yml",
+    "service": "weather-collector",
+    "command": "while true; do node tests/security/fetch-ambient-weather.cjs || true; sleep 300; done",
+    "reason": "runs tests/security/fetch-ambient-weather.cjs, not a backend bundle; the retry loop (while/||/sleep) is reviewed by hand"
+  },
+  {
+    "file": "testnet/docker-compose.testnet.yml",
+    "service": "weather-collector-multi",
+    "command": "while true; do node tests/security/fetch-ambient-weather-multi.cjs --credentials-file /secrets/ambient-roster.json || true; sleep 300; done",
+    "reason": "runs tests/security/fetch-ambient-weather-multi.cjs, not a backend bundle; the retry loop (while/||/sleep) is reviewed by hand"
+  },
+  {
+    "file": "infra/deployment/unraid/docker-compose.secure.yml",
+    "service": "wrf-monitoring",
+    "command": "[\"--path.procfs=/host/proc\", \"--path.sysfs=/host/sys\", \"--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)\", \"--web.disable-exporter-metrics\", \"--collector.textfile.directory=/var/lib/node_exporter/textfile_collector\"]",
+    "reason": "node-exporter flags: the substring trigger matches \"node\" in node_exporter paths; this service runs prometheus node-exporter, not Node.js (exec form, key is the JSON argv)."
+  },
+  {
+    "file": "infra/monitoring/docker-compose.alerting.yml",
+    "service": "node-exporter",
+    "command": "[\"--path.procfs=/host/proc\", \"--path.sysfs=/host/sys\", \"--path.rootfs=/rootfs\", \"--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)\", \"--collector.textfile.directory=/etc/node-exporter/\"]",
+    "reason": "node-exporter flags: the substring trigger matches \"node\" in node_exporter paths; this service runs prometheus node-exporter, not Node.js (exec form, key is the JSON argv)."
+  },
+  {
+    "file": "infra/monitoring/docker-compose.gfs-fetcher-health.yml",
+    "service": "node-exporter",
+    "command": "[\"--collector.disable-defaults\", \"--collector.textfile\", \"--collector.textfile.directory=/etc/node-exporter\"]",
+    "reason": "node-exporter flags: the substring trigger matches \"node\" in node_exporter paths; this service runs prometheus node-exporter, not Node.js (exec form, key is the JSON argv)."
+  },
+  {
+    "file": "infra/monitoring/docker-compose.alerting.yml",
+    "service": "gfs-fetch-health-init",
+    "command": "chown -R 1001:1001 /var/lib/node_exporter/textfile_collector /var/lib/gfs-fetch-health\ntest -w /var/lib/node_exporter/textfile_collector\ntest -w /var/lib/gfs-fetch-health\n",
+    "reason": "alpine init that chowns the node_exporter textfile directory; the substring trigger matches the path, and nothing here runs Node.js."
+  },
+  {
+    "file": "infra/monitoring/docker-compose.gfs-fetcher-health.yml",
+    "service": "gfs-fetch-health-init",
+    "command": "chown -R 1001:1001 /var/lib/node_exporter/textfile_collector /var/lib/gfs-fetch-health\ntest -w /var/lib/node_exporter/textfile_collector\ntest -w /var/lib/gfs-fetch-health\n",
+    "reason": "alpine init that chowns the node_exporter textfile directory; the substring trigger matches the path, and nothing here runs Node.js."
+  }
+]

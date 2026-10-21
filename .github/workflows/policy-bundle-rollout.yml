@@ -1,0 +1,79 @@
+permissions:
+  contents: read
+
+name: policy-bundle-rollout
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  pipeline-deploy:
+    if: ${{ github.event.inputs.action != 'rollback' }}
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_PATH: ${{ github.event.inputs.bundle_path || 'infra/policy-bundles/bundles/actor-governance-policy-bundle.v1.0.0.json' }}
+      TARGET_ENV: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Run deployment pipeline (validate, dry-run, deploy, smoke-test, manifest)
+        run: |
+          node scripts/pipeline-deploy-policy-bundle.cjs \
+            --bundle "$BUNDLE_PATH" \
+            --env "$TARGET_ENV"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: policy-bundle-release
+          path: infra/policy-bundles/releases/
+
+  pipeline-dry-run:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_PATH: ${{ github.event.inputs.bundle_path || 'infra/policy-bundles/bundles/actor-governance-policy-bundle.v1.0.0.json' }}
+      TARGET_ENV: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Run pipeline in dry-run mode
+        run: |
+          node scripts/pipeline-deploy-policy-bundle.cjs \
+            --bundle "$BUNDLE_PATH" \
+            --env "$TARGET_ENV" \
+            --dry-run
+
+  rollback:
+    if: ${{ github.event.inputs.action == 'rollback' }}
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ENV: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Rollback to previous bundle
+        run: |
+          node scripts/pipeline-deploy-policy-bundle.cjs \
+            --env "$TARGET_ENV" \
+            --rollback

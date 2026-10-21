@@ -1,0 +1,10 @@
+# OPT-IN overlay (infra#1327): enables rotation on the N5 heartbeat. Add AFTER docker-compose.block-heartbeat.yml.
+# DEPLOYMENT HELD until after the first node-share payout; requires core4#3590 (fixes #3588) deployed first.
+# BEFORE adding this file, COLLECTOR_MINE / WEATHER_COLLECTOR_MINE / WEATHER_COLLECTOR_MULTI_MINE MUST be false,
+# or the weather collectors mine out of turn. Not part of any default compose set.
+services:
+  block-heartbeat:
+    environment:
+      BLOCK_HEARTBEAT_ROTATION: n5-node-a,producer-standby,mango-mini
+      BLOCK_HEARTBEAT_SELF: n5-node-a
+      BLOCK_HEARTBEAT_FALLBACK_STEP_SECONDS: ${BLOCK_HEARTBEAT_FALLBACK_STEP_SECONDS:-60}

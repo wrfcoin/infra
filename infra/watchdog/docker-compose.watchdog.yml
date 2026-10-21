@@ -1,0 +1,49 @@
+# Standalone compose file for the watchdog image.
+#
+# NOT part of the testnet stack. The N5 deploy composes
+# `testnet/docker-compose.*.yml` explicitly, so nothing here is deployed by
+# bringing up the testnet; this file exists so the image has a *declared,
+# reproducible* build context instead of one that has to be rediscovered.
+# Before #745 the watchdog appeared in no compose file at all, and its
+# Dockerfile had not been buildable since the repo was extracted (infra#748).
+#
+#   docker compose -f infra/watchdog/docker-compose.watchdog.yml build
+#   docker compose -f infra/watchdog/docker-compose.watchdog.yml up
+#
+# Unlike every other image in this repository, the context is this directory —
+# no sibling repo and no deploy root are required.
+
+services:
+  watchdog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wrfcoin-watchdog:local
+    container_name: wrfcoin-watchdog
+    restart: unless-stopped
+    ports:
+      # 3334 health + Prometheus metrics; 8090 AlertManager webhook receiver
+      # (infra/monitoring/alertmanager-watchdog.yml posts to /alerts on 8090).
+      - "127.0.0.1:3334:3334"
+      - "127.0.0.1:8090:8090"
+    environment:
+      # Optional: overrides config/watchdog.yaml. Left empty on purpose —
+      # config.ts ignores an empty value, and the service degrades to
+      # health-check-only when the LLM is unreachable. See
+      # infra/homelab/llm-runtime.md for the runtime that
+      # terraform/autoresearch/docker-compose.autoresearch.yml provides.
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-}
+    volumes:
+      - watchdog-journal:/data
+      # The log-anomaly task (infra#86) additionally needs the Docker socket:
+      #
+      #   - /var/run/docker.sock:/var/run/docker.sock:ro
+      #
+      # It is deliberately NOT mounted by default. Read access to the socket is
+      # equivalent to root on the host — it exposes every container's config and
+      # environment, and the API surface behind it is not partitioned by verb.
+      # Put a filtering socket proxy in front of it before enabling this in any
+      # deployment; until then the other tasks run fine without it.
+
+volumes:
+  watchdog-journal:

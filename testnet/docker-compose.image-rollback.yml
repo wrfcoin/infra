@@ -1,0 +1,10 @@
+# Pin the node to the preserved OLD binary (pre-redeploy) for the held state.
+# The new binary (:testnet-local, main + 4 consensus PRs) is built and its
+# state_root convergence is proven, but #2008 is a fail-closed wire change, so
+# the fleet must not run mixed (new desktop + old N5) unattended — the new
+# desktop would reject the old N5's unsigned WeatherDataV2 gossip. This keeps
+# the desktop matched to the N5 on the old binary until the atomic both-node
+# cutover. Drop this override (use :testnet-local) at cutover time.
+services:
+  wrfcoin-node:
+    image: wrfcoin/native-chain:testnet-rollback

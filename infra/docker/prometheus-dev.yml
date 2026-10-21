@@ -1,0 +1,134 @@
+# Prometheus config for local development (Docker)
+# Scrapes host services via host.docker.internal
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Wrfcoin Blockchain API (Rust - Port 8556)
+  - job_name: 'wrfcoin-blockchain-api'
+    static_configs:
+      - targets: ['host.docker.internal:8556']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Enhanced Unified API (Port 3001)
+  - job_name: 'wrfcoin-unified-api'
+    static_configs:
+      - targets: ['host.docker.internal:3001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Cross-chain Protocol Server (Port 3000)
+  - job_name: 'wrfcoin-cross-chain'
+    static_configs:
+      - targets: ['host.docker.internal:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Main API Server (Port 4001)
+  - job_name: 'wrfcoin-main-api'
+    static_configs:
+      - targets: ['host.docker.internal:4001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Governance Server (Port 8000)
+  - job_name: 'wrfcoin-governance'
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # IoT Sensor Networks (Port 3002)
+  - job_name: 'wrfcoin-iot'
+    static_configs:
+      - targets: ['host.docker.internal:3002']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Weather Earnings (Port 8080)
+  - job_name: 'wrfcoin-weather'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Launch-critical health and readiness probes via blackbox exporter.
+  # Start the exporter from infra/monitoring/docker-compose.dependency-monitoring.yml.
+  - job_name: 'wrfcoin-launch-health'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['http://host.docker.internal:3001/api/health']
+        labels:
+          service: backend-dev
+          endpoint: api-health
+          layer: backend
+      - targets: ['http://host.docker.internal:4001/ready']
+        labels:
+          service: main-api
+          endpoint: ready
+          layer: compute-path
+      - targets: ['http://host.docker.internal:4001/live']
+        labels:
+          service: main-api
+          endpoint: live
+          layer: compute-path
+      - targets: ['http://host.docker.internal:6003/ready']
+        labels:
+          service: compute-contribution
+          endpoint: ready
+          layer: compute-path
+      - targets: ['http://host.docker.internal:3333/health']
+        labels:
+          service: compute-agent
+          endpoint: health
+          layer: compute-path
+      - targets: ['http://host.docker.internal:8556/health']
+        labels:
+          service: launch-api
+          endpoint: health
+          layer: blockchain
+      - targets: ['http://host.docker.internal:9090/-/ready']
+        labels:
+          service: prometheus
+          endpoint: ready
+          layer: monitoring
+      - targets: ['http://host.docker.internal:3100/api/health']
+        labels:
+          service: grafana
+          endpoint: health
+          layer: monitoring
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: host.docker.internal:9115
+
+  - job_name: 'wrfcoin-launch-websocket'
+    metrics_path: /probe
+    params:
+      module: [http_websocket]
+    static_configs:
+      - targets: ['http://host.docker.internal:4001/ws']
+        labels:
+          service: main-api
+          endpoint: websocket
+          layer: compute-path
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: host.docker.internal:9115
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

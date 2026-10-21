@@ -1,0 +1,446 @@
+version: '3.8'
+
+networks:
+  monitoring:
+    driver: bridge
+  app:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  alertmanager-data:
+  elasticsearch-data:
+  jaeger-data:
+  
+services:
+  # Core Monitoring Stack
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: wrfcoin-prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"  # Bind to localhost only
+    volumes:
+      - ./prometheus-enhanced.yml:/etc/prometheus/prometheus.yml
+      - ${WRFCOIN_PROMETHEUS_BEARER_TOKEN_FILE:-../../testnet/prometheus-bearer-token}:/etc/prometheus/bearer_token:ro
+      - ./alert-rules-enhanced.yml:/etc/prometheus/alert-rules.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      # SECURITY: --web.enable-lifecycle removed — exposes unauthenticated /-/reload and /-/quit
+      - '--storage.tsdb.wal-compression'
+      - '--web.enable-remote-write-receiver'
+      - '--web.listen-address=0.0.0.0:9090'
+      - '--web.route-prefix=/'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: "65534:65534"  # nobody user
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    networks:
+      - monitoring
+    depends_on:
+      - node-exporter
+      - cadvisor
+      
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: wrfcoin-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3004:3000"  # Bind to localhost only
+    environment:
+      # SECURITY: No fallback password - must be set in environment
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_SECURITY_COOKIE_SECURE=true
+      - GF_SECURITY_COOKIE_SAMESITE=strict
+      - GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION=false
+      - GF_SECURITY_LOGIN_REMEMBER_DAYS=7
+      - GF_SECURITY_LOGIN_MAXIMUM_INACTIVE_LIFETIME_DURATION=7d
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel,camptocamp-prometheus-alertmanager-datasource
+      - GF_FEATURE_TOGGLES_ENABLE=ngalert
+      - GF_UNIFIED_ALERTING_ENABLED=true
+      - GF_ALERTING_ENABLED=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: "472:472"  # grafana user
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/log/grafana:noexec,nosuid,size=50m
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    container_name: wrfcoin-alertmanager
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9093:9093"  # Bind to localhost only
+    volumes:
+      - ./alertmanager-enhanced.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.advertise-address=127.0.0.1:9093'  # Secure cluster address
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: "65534:65534"  # nobody user
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    networks:
+      - monitoring
+      
+  # System Monitoring
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: wrfcoin-node-exporter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9100"  # Bind to localhost only
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # SECURITY: Removed dangerous /:/rootfs:ro mount
+      # SECURITY: Removed /run/systemd/private mount for reduced attack surface
+    command:
+      - '--path.procfs=/host/proc'
+      # SECURITY: Removed --path.rootfs=/rootfs
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      # SECURITY: Disabled systemd collector to reduce privilege requirements
+      # - '--collector.systemd'
+      - '--collector.processes'
+      - '--web.listen-address=0.0.0.0:9100'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_TIME  # Required for time-related metrics
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    user: "65534:65534"  # nobody user
+    networks:
+      - monitoring
+      
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    container_name: wrfcoin-cadvisor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"  # Bind to localhost only
+    volumes:
+      # SECURITY: Removed dangerous /:/rootfs:ro mount
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # More specific than /var/run
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /proc:/rootfs/proc:ro  # More specific proc mount
+    # SECURITY: Removed privileged: true - CRITICAL SECURITY FIX
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN  # Required for container metrics
+      - DAC_READ_SEARCH  # Required for reading container data
+    user: "root"  # Required for Docker socket access - minimal privilege
+    networks:
+      - monitoring
+      
+  # Log Management
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    container_name: wrfcoin-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true  # SECURITY: Enable security
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false  # For development
+      - xpack.security.transport.ssl.enabled=false  # For development
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?ELASTIC_PASSWORD required}
+    ports:
+      - "127.0.0.1:9200:9200"  # Bind to localhost only
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: "1000:1000"  # elasticsearch user
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks:
+      - monitoring
+      
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.8.0
+    container_name: wrfcoin-logstash
+    restart: unless-stopped
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
+    ports:
+      - "127.0.0.1:5044:5044"
+      - "127.0.0.1:9600:9600"
+    environment:
+      - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
+    networks:
+      - monitoring
+    depends_on:
+      - elasticsearch
+      
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    container_name: wrfcoin-kibana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=wrfcoin-kibana
+    networks:
+      - monitoring
+    depends_on:
+      - elasticsearch
+      
+  # Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.47
+    container_name: wrfcoin-jaeger
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:16686:16686"  # Bind UI to localhost only
+      - "127.0.0.1:14268:14268"  # Bind collector to localhost only
+      - "127.0.0.1:6831:6831/udp"
+      - "127.0.0.1:6832:6832/udp"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=memory
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: "65534:65534"  # nobody user
+    networks:
+      - monitoring
+      
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.80.0
+    container_name: wrfcoin-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "127.0.0.1:4317:4317"   # OTLP gRPC receiver
+      - "127.0.0.1:4318:4318"   # OTLP HTTP receiver
+      - "127.0.0.1:8889:8889"   # Prometheus metrics
+    networks:
+      - monitoring
+    depends_on:
+      - jaeger
+      - prometheus
+      
+  # Security Monitoring
+  falco:
+    image: falcosecurity/falco-no-driver:0.35.0
+    container_name: wrfcoin-falco
+    restart: unless-stopped
+    # SECURITY: Removed privileged: true - CRITICAL SECURITY FIX
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock:ro  # Read-only Docker socket
+      # SECURITY: Removed dangerous host mounts - /dev, /proc, /boot, /lib/modules, /usr, /etc
+      # Use more specific mounts for Falco functionality
+      - /proc/sys/kernel:/host/proc/sys/kernel:ro
+      - /proc/version:/host/proc/version:ro
+      - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
+      - ./falco/rules:/etc/falco/rules.d:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_PTRACE  # Required for process monitoring
+      - SYS_ADMIN   # Required for security monitoring
+      - NET_ADMIN   # Required for network monitoring
+    user: "root"  # Required for security monitoring access
+    pid: host  # Required for process monitoring
+    networks:
+      - monitoring
+      
+  # Application Performance Monitoring
+  uptime-kuma:
+    image: louislam/uptime-kuma:1.22.1
+    container_name: wrfcoin-uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3001"  # Bind to localhost only
+    volumes:
+      - uptime-kuma-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: "1000:1000"  # node user
+    networks:
+      - monitoring
+      
+  # Database Monitoring
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.12.0
+    container_name: wrfcoin-postgres-exporter
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-wrfcoin}?sslmode=${POSTGRES_SSLMODE:-require}
+    ports:
+      - "127.0.0.1:9187:9187"  # Bind to localhost only
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "65534:65534"  # nobody user
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    networks:
+      - monitoring
+      
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.51.0
+    container_name: wrfcoin-redis-exporter
+    restart: unless-stopped
+    environment:
+      - REDIS_ADDR=redis://${REDIS_HOST:-redis}:6379
+    ports:
+      - "127.0.0.1:9121:9121"  # Bind to localhost only
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "65534:65534"  # nobody user
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    networks:
+      - monitoring
+      
+  # Custom WRFCoin Monitoring
+  wrfcoin-metrics-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.metrics-collector
+    container_name: wrfcoin-metrics-collector
+    restart: unless-stopped
+    environment:
+      - PROMETHEUS_GATEWAY=http://prometheus:9090
+      - BLOCKCHAIN_NODES=${BLOCKCHAIN_NODES:-http://localhost:8545}
+      - WEATHER_API_ENDPOINTS=${WEATHER_API_ENDPOINTS:-http://localhost:4001}
+    volumes:
+      - ./scripts/metrics-collector.js:/app/metrics-collector.js
+    networks:
+      - monitoring
+      - app
+    depends_on:
+      - prometheus
+      
+  # CI/CD Pipeline Monitoring
+  pipeline-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline-monitor
+    container_name: wrfcoin-pipeline-monitor
+    restart: unless-stopped
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPOSITORY:-wrfcoin/wrfcoin}
+      - PROMETHEUS_PUSHGATEWAY=http://prometheus:9090
+    volumes:
+      - ./scripts/pipeline-monitor.js:/app/pipeline-monitor.js
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      
+  # Smart Contract Monitoring
+  contract-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.contract-monitor
+    container_name: wrfcoin-contract-monitor
+    restart: unless-stopped
+    environment:
+      - ETHEREUM_RPC_URL=${ETHEREUM_RPC_URL:-http://localhost:8545}
+      - CONTRACT_ADDRESSES=${CONTRACT_ADDRESSES}
+      - PROMETHEUS_GATEWAY=http://prometheus:9090
+    volumes:
+      - ./scripts/contract-monitor.js:/app/contract-monitor.js
+      - ./contracts:/app/contracts
+    networks:
+      - monitoring
+      - app
+    depends_on:
+      - prometheus
+
+volumes:
+  uptime-kuma-data:

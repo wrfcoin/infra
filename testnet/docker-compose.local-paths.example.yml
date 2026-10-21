@@ -1,0 +1,84 @@
+# Public opt-in example. Read PUBLIC_DEPLOYMENT_EXAMPLES.md before use.
+# Installation-specific paths must be supplied explicitly.
+services:
+  wrfcoin-node:
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+    volumes:
+      - node-data:/app/data
+  wrfcoin-seed:
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+  wrfcoin-backend:
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+      - /app/backend/logs:noexec,nosuid,size=50m
+      - /run:noexec,nosuid,size=10m
+  wrfcoin-frontend:
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+  db-migrate:
+    image: wrfcoin/backend:testnet-local
+  wrfcoin-governance:
+    image: wrfcoin/backend:testnet-local
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+      - /app/backend/logs:noexec,nosuid,size=50m
+      - /run:noexec,nosuid,size=10m
+  wrfcoin-iot:
+    image: wrfcoin/backend:testnet-local
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+      - /app/backend/logs:noexec,nosuid,size=50m
+      - /run:noexec,nosuid,size=10m
+  wrfcoin-weather-earnings:
+    image: wrfcoin/backend:testnet-local
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+      - /app/backend/logs:noexec,nosuid,size=50m
+      - /run:noexec,nosuid,size=10m
+  wrfcoin-faucet:
+    image: wrfcoin/faucet:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}/infra
+      dockerfile: testnet/services/faucet/Dockerfile
+  wrfcoin-cross-chain:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+  wrfcoin-compute:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+  wrfcoin-ml:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+  wrfcoin-node-discovery:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+  wrfcoin-explorer:
+    build:
+      context: ${WRFCOIN_ROOT:?Set WRFCOIN_ROOT to the parent of the source checkouts}
+  cadvisor:
+    devices: !reset []
+  sdr-ingest:
+    devices: !reset []
+  postgres:
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  redis:
+    volumes:
+      - redis-data:/data
+
+volumes:
+  node-data:
+  postgres-data:
+  redis-data:

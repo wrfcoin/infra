@@ -1,0 +1,14 @@
+{
+  "workers": [
+    "scripts-tests-worker"
+  ],
+  "inputs": [
+    "README.md",
+    "infra/**",
+    "testnet/**",
+    "scripts/**",
+    "*.md",
+    "*Dockerfile*"
+  ],
+  "audit": "scripts-tests.yml executes explicit hosted Python/shell lists via scripts/ci-suites.py and named public testnet fixtures; private-input lists run only in scripts-tests-private.yml on private main/manual events. test-credential-argv-ratchet.sh invokes check-credential-argv.py --root: tracked_files + is_candidate select all tracked .sh/.bash/.yml/.yaml/.md, Dockerfile* basenames and *.dockerfile. All Markdown and Dockerfile-named documentation images are excluded. Remaining source/config suffixes are outside the image-only allowlist. Existing README, infra/**, testnet/** and scripts/** exclusions cover banner/Compose, recursive endpoint Markdown, operator/scrape/cutover docs and ws INSTALL. No remaining documentation-image content reader found in the executed suites or invoked checks."
+}

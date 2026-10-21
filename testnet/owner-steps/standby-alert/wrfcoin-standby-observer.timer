@@ -1,0 +1,11 @@
+[Unit]
+Description=Check workstation standby independently every minute
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=wrfcoin-standby-observer.service
+
+[Install]
+WantedBy=timers.target

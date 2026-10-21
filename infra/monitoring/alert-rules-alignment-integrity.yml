@@ -1,0 +1,80 @@
+groups:
+  - name: alignment_integrity_observability_alerts
+    rules:
+      - alert: AlignmentIntegrityAbuseSpike
+        expr: increase(wrfcoin_integrity_abuse_risk_high_total[15m]) > 20
+        for: 10m
+        labels:
+          severity: warning
+          category: integrity
+          campaign: alignment-90
+        annotations:
+          summary: 'High-risk abuse signal spike detected'
+          description: 'High-risk abuse events exceeded threshold (>20 in 15m).'
+          threshold: 'high-risk-abuse-events > 20 in 15m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/alignment-integrity-incident-response.md#abuse-spike-response'
+
+      - alert: AlignmentSybilCoverageDrop
+        expr: wrfcoin_integrity_sybil_detection_coverage_ratio < 0.85
+        for: 15m
+        labels:
+          severity: critical
+          category: integrity
+          campaign: alignment-90
+        annotations:
+          summary: 'Sybil detection coverage below SLO'
+          description: 'Detection coverage ratio fell below 0.85 for 15 minutes.'
+          threshold: 'sybil-detection-coverage-ratio < 0.85 for 15m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/alignment-integrity-incident-response.md#sybil-coverage-drop'
+
+      - alert: AlignmentSanctionParityDrift
+        expr: wrfcoin_integrity_sanction_parity_spread > 0.35
+        for: 20m
+        labels:
+          severity: warning
+          category: sanctions
+          campaign: alignment-90
+        annotations:
+          summary: 'Sanction parity drift detected'
+          description: 'Sanction parity spread exceeded 0.35 across actor classes.'
+          threshold: 'sanction-parity-spread > 0.35 for 20m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/alignment-integrity-incident-response.md#sanction-parity-drift'
+
+      - alert: AlignmentAppealOverturnRateHigh
+        expr: wrfcoin_integrity_appeal_overturn_rate > 0.20
+        for: 20m
+        labels:
+          severity: warning
+          category: sanctions
+          campaign: alignment-90
+        annotations:
+          summary: 'Appeal overturn rate above expected threshold'
+          description: 'Appeal overturn rate exceeded 20%, indicating possible false positives.'
+          threshold: 'appeal-overturn-rate > 0.20 for 20m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/alignment-integrity-incident-response.md#appeal-overturn-rate'
+
+      - alert: AlignmentParticipationAccessibilityDegraded
+        expr: wrfcoin_participation_accessibility_score < 0.95
+        for: 10m
+        labels:
+          severity: critical
+          category: participation
+          campaign: alignment-90
+        annotations:
+          summary: 'Participation accessibility degraded'
+          description: 'Participation accessibility score dropped below 0.95.'
+          threshold: 'participation-accessibility-score < 0.95 for 10m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/alignment-integrity-incident-response.md#participation-accessibility-drop'
+
+      - alert: AlignmentForecastCoverageRegression
+        expr: wrfcoin_environment_phase2_coverage_percent < 0.75
+        for: 30m
+        labels:
+          severity: warning
+          category: forecast
+          campaign: alignment-90
+        annotations:
+          summary: 'Environmental forecast coverage regressed'
+          description: 'Soil/ocean/hydrology coverage dropped below 75% threshold.'
+          threshold: 'environment-phase2-coverage-percent < 0.75 for 30m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/alignment-integrity-incident-response.md#forecast-coverage-regression'

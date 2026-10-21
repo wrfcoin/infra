@@ -1,0 +1,91 @@
+# WRFCoin main API backend (enhanced_unified_api_optimized) — UNBUNDLED runtime.
+#
+# Why this exists (backend #791): the esbuild CJS bundle (dist/server.cjs, built
+# by Dockerfile.backend) silently drops all 41 modular routes mounted via
+# safeMount(). Two reasons it cannot bundle them:
+#   1. safeMount uses createRequire + require(variablePath) — esbuild leaves
+#      these as runtime requires it cannot resolve.
+#   2. route modules use top-level `await import()` (e.g. weather-routes.js),
+#      which esbuild cannot emit in --format=cjs ("Top-level await not supported").
+# Result: /api/weather, /api/wallet, … all 404 in prod (web map + self-service
+# onboarding unreachable).
+#
+# Fix: run the API the same way `npm run dev` does — via tsx, directly on the
+# TS/JS source. tsx resolves .ts + .js, ESM + CJS interop, dynamic requires, and
+# top-level await natively, so every modular route mounts. This image ships the
+# full source + node_modules (larger than the slim bundle image, but correct).
+#
+# Used ONLY by the wrfcoin-backend service. All other backend services keep the
+# slim bundle image from Dockerfile.backend.
+#
+# Build context must be the workspace root (wrfcoin/).
+
+# =============================================================================
+# Stage 1: deps — install full backend dependencies (incl tsx devDependency)
+# =============================================================================
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS deps
+
+WORKDIR /app
+RUN apk add --no-cache python3 make g++ git
+
+# Root + backend package files for workspace resolution
+COPY package*.json ./
+COPY backend/package*.json ./backend/
+
+WORKDIR /app/backend
+# infra#1113 (owner ruling 2026-09-27): never download onnxruntime-node's GPU
+# (CUDA/TensorRT) providers. On linux/x64 (node:24-alpine reports linux/x64)
+# its postinstall otherwise fetches the ~238 MB Microsoft.ML.OnnxRuntime.Gpu.Linux
+# NuGet package on every install. They are glibc CUDA libraries that cannot
+# load on musl, and no WRFCoin host has a GPU. The CPU runtime is bundled.
+# ENV rather than COPY backend/.npmrc so the build does not depend on merge
+# order with backend#1278. Build stage only: the runtime stage never installs.
+ENV ONNXRUNTIME_NODE_INSTALL=skip
+
+# npm install (not ci) — lockfile drifts across @aws-sdk/@smithy patch versions.
+# Default install INCLUDES devDependencies, so tsx is present.
+RUN npm install
+
+# =============================================================================
+# Stage 2: runtime — full source + node_modules, run via tsx (mirrors `dev`)
+# =============================================================================
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
+
+# Release provenance (infra#991): source testnet/scripts/export-build-provenance.sh
+# before a release build. Unset args leave empty labels, which
+# render-release-manifest.sh classifies UNAVAILABLE (never FRESH). No build-time
+# guard: joiner, attester and CI builds pass no args and must keep building.
+ARG WRFCOIN_BUILD_REVISION
+ARG WRFCOIN_BUILD_CREATED
+LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
+      org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
+ENV WRFCOIN_BUILD_REVISION="$WRFCOIN_BUILD_REVISION" \
+    WRFCOIN_BUILD_CREATED="$WRFCOIN_BUILD_CREATED"
+
+WORKDIR /app/backend
+RUN apk add --no-cache curl
+
+# Full installed dependency tree (includes tsx in node_modules/.bin)
+COPY --from=deps /app/backend/node_modules ./node_modules/
+# Backend source (workspace-root .dockerignore excludes node_modules/dist/etc.)
+COPY backend/ ./
+
+# NOTE: keep "type": "module" — tsx runs the ESM TS entrypoint and handles the
+# CJS (.js, module.exports) route modules via interop, exactly as `npm run dev`
+# does. Do NOT strip it (that would break ESM source resolution).
+
+# Non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S wrfcoin -u 1001 -G nodejs && \
+    chown -R wrfcoin:nodejs /app
+
+USER wrfcoin
+
+EXPOSE 4001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-4001}/health || exit 1
+
+# Run via the locally-installed tsx (no network fetch). Mirrors:
+#   "dev": "tsx server/enhanced_unified_api_optimized.ts"
+CMD ["node_modules/.bin/tsx", "server/enhanced_unified_api_optimized.ts"]

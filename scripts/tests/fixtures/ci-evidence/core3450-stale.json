@@ -1,0 +1,132 @@
+{
+  "provenance": {
+    "fetched_at": "2026-10-03T11:01:26.739610+00:00",
+    "repo": "wrfcoin/core4",
+    "pr": 3450,
+    "run": 37108183340,
+    "job": 111160717750,
+    "note": "Live API subset; checkout identity extracted from bounded prefix of the actual job log."
+  },
+  "pr": {
+    "number": 3450,
+    "head": {
+      "sha": "299fc72d60c69930670ddc8f286a3d806e985a20"
+    },
+    "base": {
+      "sha": "dc7b011bd4750d620e2e749183a8c18b7c9f4e1c"
+    }
+  },
+  "check": {
+    "id": 111160717750,
+    "name": "native-chain is exactly as red as it is declared to be",
+    "head_sha": "5d31a3a558153772e4e1013d09a68ebfc634cde7",
+    "status": "completed",
+    "conclusion": "failure",
+    "details_url": "https://github.com/wrfcoin/core4/actions/runs/37108183340/job/111160717750"
+  },
+  "job": {
+    "id": 111160717750,
+    "run_id": 37108183340,
+    "check_run_url": "https://api.github.com/repos/wrfcoin/core4/check-runs/111160717750",
+    "name": "native-chain is exactly as red as it is declared to be",
+    "head_sha": "5d31a3a558153772e4e1013d09a68ebfc634cde7",
+    "status": "completed",
+    "conclusion": "failure",
+    "runner_name": "n5pro-ct102-2",
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-03T08:21:52Z",
+        "completed_at": "2026-10-03T08:21:55Z"
+      },
+      {
+        "name": "Checkout repository",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2,
+        "started_at": "2026-10-03T08:21:55Z",
+        "completed_at": "2026-10-03T08:21:55Z"
+      },
+      {
+        "name": "Put rustup's cargo on PATH",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-03T08:21:55Z",
+        "completed_at": "2026-10-03T08:21:55Z"
+      },
+      {
+        "name": "Preflight \u2014 enough disk for the build",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-03T08:21:55Z",
+        "completed_at": "2026-10-03T08:21:55Z"
+      },
+      {
+        "name": "Install Rust toolchain",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-03T08:21:55Z",
+        "completed_at": "2026-10-03T08:21:56Z"
+      },
+      {
+        "name": "Cache Cargo registry and build",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 6,
+        "started_at": "2026-10-03T08:21:56Z",
+        "completed_at": "2026-10-03T08:21:56Z"
+      },
+      {
+        "name": "Control \u2014 the classifier can reach every verdict it claims",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-03T08:21:56Z",
+        "completed_at": "2026-10-03T08:21:56Z"
+      },
+      {
+        "name": "Control \u2014 the baseline still describes this tree",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-03T08:21:56Z",
+        "completed_at": "2026-10-03T08:21:56Z"
+      },
+      {
+        "name": "Observe \u2014 is native-chain exactly as red as it is declared to be",
+        "status": "completed",
+        "conclusion": "failure",
+        "number": 9,
+        "started_at": "2026-10-03T08:21:56Z",
+        "completed_at": "2026-10-03T08:27:53Z"
+      },
+      {
+        "name": "Post Checkout repository",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 18,
+        "started_at": "2026-10-03T08:27:53Z",
+        "completed_at": "2026-10-03T08:27:53Z"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 19,
+        "started_at": "2026-10-03T08:27:53Z",
+        "completed_at": "2026-10-03T08:27:53Z"
+      }
+    ]
+  },
+  "checkout_sha": "5f33f6e607d98a399a84f53d77aafce3909e964b",
+  "parents": [
+    "1d51587803057f4db78bacf851930d2766a6ba89",
+    "5d31a3a558153772e4e1013d09a68ebfc634cde7"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "license": "MIT OR Apache-2.0",
+  "name": "wrfcoin-testnet-synthetic-collector",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node test-commit-authorization-golden.cjs && node test-contributor-identity-boundary.cjs"
+  }
+}

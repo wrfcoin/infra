@@ -1,0 +1,126 @@
+permissions:
+  contents: read
+
+# ci-self-hosted.yml
+#
+# Example workflow showing how to target the node host self-hosted runner.
+# Dispatched manually or triggered on push to branches matching the pattern.
+#
+# Prerequisites:
+#   - Runner registered via scripts/setup-self-hosted-runner.sh
+#   - Runner is online at Settings → Actions → Runners (label: n5pro)
+#
+# Issue: #115
+
+name: CI (self-hosted N5 Pro)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rust_test_flags:
+        description: 'Extra flags passed to cargo test (e.g. --release)'
+        required: false
+        default: ''
+  push:
+    branches:
+      - main
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Smoke test — verify the runner is reachable and Docker works
+  # ---------------------------------------------------------------------------
+  runner-smoke:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: Runner smoke test
+    runs-on: [self-hosted, n5pro]
+    timeout-minutes: 5
+    steps:
+      - name: System info
+        run: |
+          echo "Hostname : $(hostname)"
+          echo "Arch     : $(uname -m)"
+          echo "Kernel   : $(uname -r)"
+          echo "CPUs     : $(nproc)"
+          echo "RAM      : $(free -h | awk '/^Mem/{print $2}')"
+          echo "Disk     : $(df -h / | awk 'NR==2{print $4 " free of " $2}')"
+
+      - name: Docker available
+        run: docker info --format '{{.ServerVersion}}'
+
+  # ---------------------------------------------------------------------------
+  # Infra script linting — fast, runs on self-hosted
+  # ---------------------------------------------------------------------------
+  shellcheck:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: ShellCheck (infra scripts)
+    runs-on: [self-hosted, n5pro]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install shellcheck if absent
+        run: command -v shellcheck || (apt-get update -qq && apt-get install -y shellcheck)
+
+      - name: Lint all shell scripts
+        run: |
+          find scripts testnet -name '*.sh' -print0 \
+            | xargs -0 shellcheck --severity=warning --exclude=SC1091
+
+  # ---------------------------------------------------------------------------
+  # Testnet compose validation — leverages local Docker daemon
+  # ---------------------------------------------------------------------------
+  compose-validate:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: Compose config validation
+    runs-on: [self-hosted, n5pro]
+    timeout-minutes: 10
+    env:
+      POSTGRES_PASSWORD: ci-test-secret
+      JWT_SECRET: ci-jwt-secret-32chars-padded-ok
+      BOOTSTRAP_PEERS: /ip4/127.0.0.1/tcp/9000/p2p/12D3KooWtest
+      DOMAIN: localhost
+      # HSM PINs are mandatory (no insecure defaults); CI placeholders for compose interpolation.
+      WRFCOIN_HSM_PIN: ci
+      WRFCOIN_HSM_SO_PIN: ci
+      N8N_WEBHOOK_SECRET: ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate testnet compose
+        env:
+          # CI-only RFC 5737 documentation fixtures. Production Compose still
+          # requires operator-verified reachable node and seed addresses.
+          WRFCOIN_P2P_EXTERNAL_ADDR: /ip4/198.51.100.7/tcp/9000
+          WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000
+        run: |
+          bash testnet/tests/render-testnet-compose.sh \
+            -f testnet/docker-compose.testnet.yml \
+            -f testnet/docker-compose.override.yml \
+            config --quiet
+          echo "Compose config is valid"
+
+  # ---------------------------------------------------------------------------
+  # Rust workspace check — benefits most from warm target/ cache on node host
+  # ---------------------------------------------------------------------------
+  rust-check:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: Rust workspace check
+    runs-on: [self-hosted, n5pro]
+    timeout-minutes: 15
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /var/cache/sccache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+          token: ${{ secrets.CORE4_TOKEN }}
+          path: core4
+
+      - name: Cargo check (workspace)
+        working-directory: core4
+        run: |
+          cargo check --workspace ${{ github.event.inputs.rust_test_flags }}
+
+      - name: sccache stats
+        run: sccache --show-stats || true

@@ -1,0 +1,180 @@
+# Prometheus configuration addition for Contract Testing metrics
+# This should be merged with the main prometheus.yml configuration
+
+# Add this job to the scrape_configs section
+scrape_configs:
+  # Contract Test Metrics Collector
+  - job_name: 'contract-test-metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ['localhost:9095']
+    metrics_path: /metrics
+    scheme: http
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9095
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'pact_.*'
+        target_label: service
+        replacement: 'contract-testing'
+
+  # Pact Broker metrics (if Pact Broker exposes Prometheus metrics)
+  - job_name: 'pact-broker'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ['localhost:9292']
+    metrics_path: /metrics
+    scheme: http
+    honor_labels: true
+    relabel_configs:
+      - target_label: service
+        replacement: pact-broker
+
+# Rule files for contract testing alerts
+rule_files:
+  - 'contract-test-alerts.yml'
+
+# Alertmanager configuration for contract testing
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Recording rules for contract test SLOs
+recording_rules:
+  - name: contract_test_recording_rules
+    interval: 15s
+    rules:
+      # Contract test success rate over different time windows
+      - record: contract_test_success_rate_5m
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[5m])) /
+            sum(rate(pact_contract_tests_total[5m]))
+          ) * 100
+
+      - record: contract_test_success_rate_30m
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[30m])) /
+            sum(rate(pact_contract_tests_total[30m]))
+          ) * 100
+
+      - record: contract_test_success_rate_2h
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[2h])) /
+            sum(rate(pact_contract_tests_total[2h]))
+          ) * 100
+
+      - record: contract_test_success_rate_1d
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[1d])) /
+            sum(rate(pact_contract_tests_total[1d]))
+          ) * 100
+
+      # Consumer/Provider specific success rates
+      - record: contract_test_success_rate_by_pair_5m
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[5m])) by (consumer, provider) /
+            sum(rate(pact_contract_tests_total[5m])) by (consumer, provider)
+          ) * 100
+
+      # Contract test throughput metrics
+      - record: contract_tests_per_minute
+        expr: |
+          sum(rate(pact_contract_tests_total[5m])) * 60
+
+      - record: contract_test_failures_per_minute
+        expr: |
+          sum(rate(pact_contract_test_failures_total[5m])) * 60
+
+      # Test duration percentiles
+      - record: contract_test_duration_p50
+        expr: |
+          histogram_quantile(0.50, sum(rate(pact_contract_test_duration_seconds_bucket[5m])) by (le))
+
+      - record: contract_test_duration_p95
+        expr: |
+          histogram_quantile(0.95, sum(rate(pact_contract_test_duration_seconds_bucket[5m])) by (le))
+
+      - record: contract_test_duration_p99
+        expr: |
+          histogram_quantile(0.99, sum(rate(pact_contract_test_duration_seconds_bucket[5m])) by (le))
+
+      # Contract coverage metrics
+      - record: contract_coverage_total_endpoints
+        expr: |
+          sum(pact_contract_endpoint_coverage)
+
+      - record: contract_coverage_covered_endpoints
+        expr: |
+          sum(pact_contract_endpoint_coverage == 1)
+
+      - record: contract_coverage_percentage
+        expr: |
+          (
+            sum(pact_contract_endpoint_coverage == 1) /
+            sum(pact_contract_endpoint_coverage)
+          ) * 100
+
+      # Pact Broker health metrics
+      - record: pact_broker_response_time_p95
+        expr: |
+          histogram_quantile(0.95, sum(rate(pact_broker_http_request_duration_seconds_bucket[5m])) by (le))
+
+      - record: pact_publications_per_hour
+        expr: |
+          sum(rate(pact_broker_publications_total[1h])) * 3600
+
+      # Error rate analysis
+      - record: contract_test_error_rate_by_type
+        expr: |
+          sum(rate(pact_contract_test_failures_total[5m])) by (error_type)
+
+      - record: contract_test_failure_rate_by_consumer_provider
+        expr: |
+          (
+            sum(rate(pact_contract_test_failures_total[5m])) by (consumer, provider) /
+            sum(rate(pact_contract_tests_total[5m])) by (consumer, provider)
+          ) * 100
+
+# Specific configuration for contract testing monitoring
+global:
+  # Scrape targets every 15 seconds for contract testing
+  scrape_interval: 15s
+  # Evaluate rules every 15 seconds
+  evaluation_interval: 15s
+  # Attach these labels to any time series or alerts when communicating
+  external_labels:
+    cluster: 'wrfcoin-contract-testing'
+    environment: 'production'
+
+# Storage configuration for contract test metrics
+storage:
+  # Keep contract test metrics for 30 days
+  retention: '30d'
+  # Enable WAL for better durability
+  wal:
+    enabled: true
+
+# Query configuration optimized for contract testing dashboards
+query:
+  # Allow longer queries for historical analysis
+  timeout: '2m'
+  # Enable query logging for debugging
+  log_queries_longer_than: '10s'
+  # Limit concurrent queries
+  max_concurrent_queries: 20
+  # Allow looking back up to 30 days for trends
+  lookback_delta: '5m'

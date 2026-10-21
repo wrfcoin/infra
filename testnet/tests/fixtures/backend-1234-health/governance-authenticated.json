@@ -1,0 +1,15 @@
+{
+  "status": "healthy",
+  "service": "governance-server",
+  "version": "unknown",
+  "uptime": 0,
+  "timestamp": "2026-09-26T17:43:25.899Z",
+  "dependencies": {
+    "database": {
+      "critical": false,
+      "status": "up",
+      "mode": "connected"
+    }
+  },
+  "draining": false
+}

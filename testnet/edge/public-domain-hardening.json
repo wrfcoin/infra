@@ -1,0 +1,17 @@
+{
+  "domain": "wrfcoin.com",
+  "www_domain": "www.wrfcoin.com",
+  "expected_redirect_url": "https://wrfcoin-testnet.taila1c049.ts.net/",
+  "redirect_path_probes": [
+    "/wallet",
+    "/governance?limit=20&offset=0",
+    "/stations/caf%C3%A9%20one?tag=a%2Fb&q=x%20y"
+  ],
+  "redirect_statuses": [301, 302, 307, 308],
+  "minimum_hsts_max_age_seconds": 86400,
+  "allow_hsts_preload": false,
+  "approved_caa_issuers": ["pki.goog"],
+  "security_txt_url": "https://wrfcoin-testnet.taila1c049.ts.net/.well-known/security.txt",
+  "security_txt_canonical": "https://wrfcoin-testnet.taila1c049.ts.net/.well-known/security.txt",
+  "security_policy_url": "https://wrfcoin-testnet.taila1c049.ts.net/security"
+}

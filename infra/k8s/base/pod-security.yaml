@@ -1,0 +1,140 @@
+# WRFCoin Pod Security Configuration
+# Note: PodSecurityPolicy is deprecated (removed in K8s 1.25+)
+# This file uses Pod Security Admission (PSA) labels and SecurityContextConstraints
+
+---
+# Namespace with Pod Security Standards enforcement
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wrfcoin-production
+  labels:
+    # SECURITY: Enforce restricted pod security standard
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+
+---
+# For clusters still using PSP (K8s < 1.25)
+# Uncomment if needed
+# apiVersion: policy/v1beta1
+# kind: PodSecurityPolicy
+# metadata:
+#   name: wrfcoin-restricted
+#   annotations:
+#     seccomp.security.alpha.kubernetes.io/allowedProfiles: 'runtime/default'
+# spec:
+#   privileged: false
+#   allowPrivilegeEscalation: false
+#   requiredDropCapabilities:
+#     - ALL
+#   volumes:
+#     - 'configMap'
+#     - 'emptyDir'
+#     - 'projected'
+#     - 'secret'
+#     - 'downwardAPI'
+#     - 'persistentVolumeClaim'
+#   hostNetwork: false
+#   hostIPC: false
+#   hostPID: false
+#   runAsUser:
+#     rule: 'MustRunAsNonRoot'
+#   seLinux:
+#     rule: 'RunAsAny'
+#   supplementalGroups:
+#     rule: 'MustRunAs'
+#     ranges:
+#       - min: 1
+#         max: 65535
+#   fsGroup:
+#     rule: 'MustRunAs'
+#     ranges:
+#       - min: 1
+#         max: 65535
+#   readOnlyRootFilesystem: true
+
+---
+# ResourceQuota to limit resource consumption
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: wrfcoin-resource-quota
+  namespace: wrfcoin-production
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "100"
+    secrets: "50"
+    configmaps: "50"
+
+---
+# LimitRange to set default resource limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: wrfcoin-limit-range
+  namespace: wrfcoin-production
+spec:
+  limits:
+    - default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      type: Container
+    - max:
+        cpu: "4"
+        memory: "8Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+      type: Container
+
+---
+# ServiceAccount with minimal permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wrfcoin-app
+  namespace: wrfcoin-production
+automountServiceAccountToken: false
+
+---
+# Role with minimal permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wrfcoin-app-role
+  namespace: wrfcoin-production
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["wrfcoin-secrets"]
+    verbs: ["get"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wrfcoin-app-rolebinding
+  namespace: wrfcoin-production
+subjects:
+  - kind: ServiceAccount
+    name: wrfcoin-app
+    namespace: wrfcoin-production
+roleRef:
+  kind: Role
+  name: wrfcoin-app-role
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,9 @@
+# Tail overlay for the owner chain. Reuses the merged storage-node/ipfs-kubo/
+# weather-ipfs-archive services and profiles (infra#1174, #1177).
+# Explicit named startup only; default archive switch is OFF.
+services:
+  weather-ipfs-archive:
+    environment:
+      WRFCOIN_WEATHER_ARCHIVE_ENABLED: ${WRFCOIN_WEATHER_ARCHIVE_ENABLED:-}
+      WRFCOIN_STORAGE_NODE_URL: http://storage-node:7001
+      ENABLE_REAL_STORAGE: "false"

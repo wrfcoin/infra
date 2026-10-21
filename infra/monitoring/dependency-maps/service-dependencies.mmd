@@ -1,0 +1,86 @@
+graph TD
+    %% WRFCoin Service Dependency Map
+    %% Generated automatically - DO NOT EDIT MANUALLY
+    
+    prometheus["prometheus<br/>Port: 9090<br/>Metrics collection and alerting"]
+    wrfcoin_core["wrfcoin-core<br/>Port: 5000<br/>Core blockchain service with WVM"]
+    postgresql["postgresql<br/>Port: 5432<br/>Primary database (21-table schema)"]
+    redis_cache["redis-cache<br/>Port: 6379<br/>Primary caching layer"]
+    iot_sensor_networks["iot-sensor-networks<br/>Port: 3002<br/>20+ IoT platform integrations"]
+    node_discovery["node-discovery<br/>Port: 9001<br/>P2P network node discovery"]
+    clamav_antivirus["clamav-antivirus<br/>Port: 3310<br/>Antivirus scanning service"]
+    wrfcoin_main_api["wrfcoin-main-api<br/>Port: 4001<br/>Main API server with GraphQL"]
+    cross_chain_protocol["cross-chain-protocol<br/>Port: 3000<br/>13+ cross-chain bridges"]
+    weather_service["weather-service<br/>Port: 3001<br/>Weather data collection and validation"]
+    compute_networks["compute-networks<br/>Port: 6000<br/>Distributed computing coordination"]
+    ai_ml_networks["ai-ml-networks<br/>Port: 6001<br/>AI/ML model deployment network"]
+    storage_networks["storage-networks<br/>Port: 7000<br/>IPFS/Filecoin/Arweave integration"]
+    api_gateway["api-gateway<br/>Port: 4000<br/>API Gateway with routing"]
+    ml_inference["ml-inference<br/>Port: 8080<br/>ML inference with GPU support"]
+    etl_pipeline["etl-pipeline<br/>Port: 5000<br/>Data transformation pipeline"]
+    governance_server["governance-server<br/>Port: 8000<br/>DAO proposals and voting"]
+    nas_storage["nas-storage<br/>Port: 7001<br/>NAS storage node management"]
+    nft_service["nft-service<br/>Port: 4002<br/>NFT marketplace service"]
+    user_service["user-service<br/>Port: 4003<br/>User management service"]
+    weather_earnings["weather-earnings<br/>Port: 8080<br/>Weather station reward distribution"]
+
+    %% Dependencies
+    wrfcoin_core --> wrfcoin_main_api
+    postgresql --> wrfcoin_main_api
+    redis_cache --> wrfcoin_main_api
+    wrfcoin_core --> cross_chain_protocol
+    wrfcoin_core --> weather_service
+    iot_sensor_networks --> weather_service
+    wrfcoin_core --> compute_networks
+    wrfcoin_core --> ai_ml_networks
+    wrfcoin_core --> storage_networks
+    nft_service --> api_gateway
+    user_service --> api_gateway
+    wrfcoin_main_api --> api_gateway
+    wrfcoin_core --> ml_inference
+    ai_ml_networks --> ml_inference
+    wrfcoin_core --> etl_pipeline
+    weather_service --> etl_pipeline
+    postgresql --> etl_pipeline
+    wrfcoin_main_api --> governance_server
+    storage_networks --> nas_storage
+    wrfcoin_main_api --> nft_service
+    wrfcoin_main_api --> user_service
+    weather_service --> weather_earnings
+    wrfcoin_main_api --> weather_earnings
+
+    %% Styling by service tier
+    classDef monitoringClass fill:#FF6B6B,stroke:#333,stroke-width:2px
+    class prometheus monitoringClass
+    classDef coreClass fill:#4ECDC4,stroke:#333,stroke-width:2px
+    class wrfcoin_core coreClass
+    classDef databaseClass fill:#45B7D1,stroke:#333,stroke-width:2px
+    class postgresql databaseClass
+    classDef cacheClass fill:#96CEB4,stroke:#333,stroke-width:2px
+    class redis_cache cacheClass
+    classDef apiClass fill:#FFEAA7,stroke:#333,stroke-width:2px
+    class wrfcoin_main_api apiClass
+    classDef gatewayClass fill:#DDA0DD,stroke:#333,stroke-width:2px
+    class api_gateway gatewayClass
+    classDef bridgeClass fill:#FFB347,stroke:#333,stroke-width:2px
+    class cross_chain_protocol bridgeClass
+    classDef dataClass fill:#87CEEB,stroke:#333,stroke-width:2px
+    class weather_service,etl_pipeline dataClass
+    classDef networkClass fill:#F0E68C,stroke:#333,stroke-width:2px
+    class compute_networks,ai_ml_networks networkClass
+    classDef storageClass fill:#DEB887,stroke:#333,stroke-width:2px
+    class storage_networks,nas_storage storageClass
+    classDef computeClass fill:#FFA07A,stroke:#333,stroke-width:2px
+    class ml_inference computeClass
+    classDef microserviceClass fill:#B19CD9,stroke:#333,stroke-width:2px
+    class nft_service,user_service microserviceClass
+    classDef iotClass fill:#FFD700,stroke:#333,stroke-width:2px
+    class iot_sensor_networks iotClass
+    classDef discoveryClass fill:#98FB98,stroke:#333,stroke-width:2px
+    class node_discovery discoveryClass
+    classDef securityClass fill:#F08080,stroke:#333,stroke-width:2px
+    class clamav_antivirus securityClass
+    classDef governanceClass fill:#20B2AA,stroke:#333,stroke-width:2px
+    class governance_server governanceClass
+    classDef rewardsClass fill:#FF69B4,stroke:#333,stroke-width:2px
+    class weather_earnings rewardsClass

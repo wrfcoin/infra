@@ -1,0 +1,145 @@
+# Storage Providers Alerting Rules
+# Prometheus AlertManager rules for IPFS, Filecoin, and Arweave monitoring
+
+groups:
+  - name: storage-providers
+    rules:
+      # --- IPFS ---
+
+      - alert: IPFSPinFailureHigh
+        expr: rate(ipfs_pin_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: storage-providers
+          component: ipfs
+        annotations:
+          summary: "IPFS pin failure rate elevated"
+          description: "IPFS pin failure rate is {{ $value | humanize }}/s over the last 5 minutes."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#ipfs-pin-failure"
+
+      - alert: IPFSPinFailureCritical
+        expr: rate(ipfs_pin_failures_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          service: storage-providers
+          component: ipfs
+        annotations:
+          summary: "IPFS pin failure rate critically high"
+          description: "IPFS pin failure rate is {{ $value | humanize }}/s. Immediate investigation required."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#ipfs-pin-failure"
+
+      # --- Filecoin ---
+
+      - alert: FilecoinDealExpiringSoon
+        expr: filecoin_deal_expiry_seconds < 86400 * 7
+        for: 1h
+        labels:
+          severity: warning
+          service: storage-providers
+          component: filecoin
+        annotations:
+          summary: "Filecoin deal expiring within 7 days"
+          description: "Filecoin deal {{ $labels.deal_id }} expires in {{ $value | humanizeDuration }}. Renew the deal to avoid data loss."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#filecoin-deal-renewal"
+
+      - alert: FilecoinDealFailureRateHigh
+        expr: |
+          rate(filecoin_deal_failures_total[15m]) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: storage-providers
+          component: filecoin
+        annotations:
+          summary: "Filecoin deal creation failure rate elevated"
+          description: "Filecoin deal failures are occurring at {{ $value | humanize }}/s."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#filecoin-deal-failure"
+
+      # --- Retrieval ---
+
+      - alert: StorageRetrievalLatencyHigh
+        expr: histogram_quantile(0.99, rate(storage_retrieval_duration_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: storage-providers
+        annotations:
+          summary: "Storage retrieval p99 latency exceeds 10s"
+          description: "p99 retrieval latency is {{ $value | humanize }}s. Users may experience slow data loads."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#retrieval-latency"
+
+      - alert: StorageRetrievalLatencyCritical
+        expr: histogram_quantile(0.99, rate(storage_retrieval_duration_seconds_bucket[5m])) > 30
+        for: 2m
+        labels:
+          severity: critical
+          service: storage-providers
+        annotations:
+          summary: "Storage retrieval p99 latency exceeds 30s"
+          description: "p99 retrieval latency is {{ $value | humanize }}s. Service is effectively degraded."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#retrieval-latency"
+
+      # --- Provider Health ---
+
+      - alert: StorageProviderDown
+        expr: storage_provider_health == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: storage-providers
+        annotations:
+          summary: "Storage provider {{ $labels.provider }} is down"
+          description: "Storage provider {{ $labels.provider }} has been unreachable for more than 2 minutes. Failover should engage automatically."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#provider-down"
+
+      - alert: AllProvidersUnhealthy
+        expr: count(storage_provider_health == 1) == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: storage-providers
+        annotations:
+          summary: "All storage providers are unhealthy"
+          description: "No healthy storage providers detected. All data writes and reads will fail. Immediate intervention required."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#all-providers-down"
+
+      # --- Integrity ---
+
+      - alert: IntegrityCheckFailure
+        expr: increase(storage_integrity_failures_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: storage-providers
+        annotations:
+          summary: "Storage integrity check failure detected"
+          description: "{{ $value }} integrity check failures in the last hour for provider {{ $labels.provider }}. Data corruption or tampering may have occurred."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#integrity-failure"
+
+      # --- Capacity ---
+
+      - alert: StorageCapacityWarning
+        expr: |
+          (storage_capacity_used_bytes / storage_capacity_total_bytes) > 0.8
+        for: 15m
+        labels:
+          severity: warning
+          service: storage-providers
+        annotations:
+          summary: "Storage provider {{ $labels.provider }} over 80% capacity"
+          description: "Provider {{ $labels.provider }} is at {{ $value | humanizePercentage }} capacity. Plan to expand or archive old data."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#capacity"
+
+      - alert: StorageCapacityCritical
+        expr: |
+          (storage_capacity_used_bytes / storage_capacity_total_bytes) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          service: storage-providers
+        annotations:
+          summary: "Storage provider {{ $labels.provider }} over 95% capacity"
+          description: "Provider {{ $labels.provider }} is at {{ $value | humanizePercentage }} capacity. Writes may fail imminently."
+          runbook_url: "https://docs.wrfcoin.io/runbooks/storage-providers#capacity"

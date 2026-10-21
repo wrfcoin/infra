@@ -1,0 +1,89 @@
+---
+# IPFS Kubo StatefulSet
+# Provides content-addressed storage for weather data
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ipfs
+  namespace: storage
+  labels:
+    app: ipfs
+    component: storage
+spec:
+  serviceName: ipfs
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ipfs
+  template:
+    metadata:
+      labels:
+        app: ipfs
+        component: storage
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5001"
+        prometheus.io/path: "/debug/metrics/prometheus"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ipfs
+          image: ipfs/kubo:v0.24.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: swarm
+              containerPort: 4001
+              protocol: TCP
+            - name: api
+              containerPort: 5001
+              protocol: TCP
+            - name: gateway
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: IPFS_PROFILE
+              value: server
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+          volumeMounts:
+            - name: ipfs-data
+              mountPath: /data/ipfs
+          readinessProbe:
+            httpGet:
+              path: /api/v0/id
+              port: 5001
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/v0/id
+              port: 5001
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: ipfs-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 100Gi

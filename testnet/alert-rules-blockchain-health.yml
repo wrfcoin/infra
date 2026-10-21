@@ -1,0 +1,358 @@
+# WRFCoin Blockchain Health — Prometheus Alert Rules (#119)
+#
+# Covers fork detection, chain reorg detection, finality lag, and block production stalls.
+#
+# IMPORTANT: Metric names below are derived from WRFCoin's monitoring conventions and
+# must be validated against the actual metrics exported by core4's blockchain node.
+# Reference: core4/shared-protocol/src/monitoring/mod.rs
+#
+# Confirmed metrics (wired in core4 PR #1150 / issue #1148):
+#   wrfcoin_blockchain_block_height    — current chain tip height
+#   wrfcoin_network_peer_count         — connected peer count
+#   wrfcoin_chain_fork_count           — cumulative forks observed (counter)
+#   wrfcoin_chain_fork_active          — 1 when an unresolvable fork was observed (gauge)
+#   wrfcoin_chain_reorg_depth          — depth of the most recently executed reorg (gauge)
+#   wrfcoin_chain_reorg_total          — cumulative reorgs executed (counter)
+#   wrfcoin_chain_finalized_height     — chain tip minus MAX_REORG_DEPTH (gauge)
+#   wrfcoin_chain_bft_finalized_height — raw BFT-only finalized height (gauge, #1399)
+#   wrfcoin_chain_bft_last_advance_timestamp_seconds — unix ts of last BFT advance (gauge, #1399)
+#   wrfcoin_chain_bft_finality_active  — 0/1 latch, 1 once BFT has ever fired (gauge, #1388/#1417)
+#   wrfcoin_state_divergence_total     — same-height peer state divergence events (counter, core4#1620)
+#   wrfcoin_chain_state_diverged       — 1 while a same-height peer state-root divergence is
+#                                        outstanding, 0 after #1713 recovery re-confirms (gauge, core4#1528)
+
+groups:
+  - name: wrfcoin_state_divergence
+    rules:
+      # Fires on ANY divergence ever observed since process start (latch until
+      # node restart — intended for a launch gate).
+      #
+      # Deliberately NOT increase()/rate(): the counter series does not exist
+      # until the first divergence, and increase() needs a prior sample to
+      # diff against — so the first-ever event (exactly the one that matters)
+      # produces no alert. This is how the 2026-07-02 incident fired the
+      # metric and paged no one (infra#617).
+      - alert: StateDivergenceDetected
+        expr: wrfcoin_state_divergence_total > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: chain-readiness
+        annotations:
+          summary: "State divergence detected by wrfcoin-node"
+          description: >
+            wrfcoin_state_divergence_total is {{ $value }} — this node has
+            observed same-height peer state divergence at least once since it
+            started. Hold launch promotion and inspect node logs plus peer
+            state roots. The alert latches until the node restarts; use
+            StateDivergenceActive to see whether the divergence is ongoing.
+
+      # Fires while a divergence is OUTSTANDING right now: the gauge is set on
+      # detection and cleared when a same-height peer re-confirms a matching
+      # tip and non-zero state root (core4#1713 recovery). Complements the
+      # latch above (any-ever vs currently-diverged).
+      - alert: StateDivergenceActive
+        expr: wrfcoin_chain_state_diverged == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: chain-readiness
+        annotations:
+          summary: "State divergence is ongoing (not yet re-converged)"
+          description: >
+            wrfcoin_chain_state_diverged has been 1 for over a minute: the
+            node's state root still differs from a connected same-height peer
+            and the #1713 recovery has not re-confirmed convergence. Compare
+            /state/root across nodes (verify-two-node-convergence.sh) and
+            check for a fork or partition before any deploy or promotion.
+
+  - name: wrfcoin_peer_health
+    rules:
+      - alert: NoConnectedPeers
+        expr: wrfcoin_network_peer_count == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "WRFCoin node has no connected peers"
+          description: >
+            wrfcoin_network_peer_count has been zero for over two minutes.
+            Check bootstrap reachability and the P2P listener before promotion.
+
+  - name: wrfcoin_chain_forks
+    rules:
+      # Alert when the node detects it is on an active non-canonical fork.
+      # wrfcoin_chain_fork_active is expected to be 1 when the local chain tip
+      # diverges from the peer-consensus canonical chain.
+      - alert: ChainForkDetected
+        expr: wrfcoin_chain_fork_active == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Chain fork detected — node is on non-canonical branch"
+          description: >
+            The node is currently on a fork that is not the canonical chain
+            (wrfcoin_chain_fork_active=1) for more than 1 minute. This indicates
+            a consensus split. Investigate peer connectivity and chain state.
+            Current block height: {{ $value }}.
+
+      # Alert when the fork counter increases rapidly, suggesting network instability.
+      - alert: ChainForkRateHigh
+        expr: increase(wrfcoin_chain_fork_count[10m]) > 2
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated chain fork rate"
+          description: >
+            More than 2 forks detected in the past 10 minutes
+            (wrfcoin_chain_fork_count increased by {{ $value }}).
+            This may indicate network instability, eclipse attack, or misconfigured
+            block time parameters. Check peer connections and block propagation.
+
+  - name: wrfcoin_chain_reorgs
+    rules:
+      # Alert when a reorg of depth > 2 blocks occurs. Shallow reorgs (1–2 blocks)
+      # are normal under fast block times; deep reorgs indicate consensus failure.
+      - alert: ChainReorgDetected
+        expr: wrfcoin_chain_reorg_depth > 2
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Deep chain reorganization detected (depth > 2)"
+          description: >
+            A chain reorganization with depth {{ $value }} was detected
+            (wrfcoin_chain_reorg_depth > 2). Reorgs deeper than 2 blocks may
+            invalidate finalized transactions. Investigate the cause immediately.
+            If this repeats, check for eclipse attacks or consensus bugs.
+
+      # Warning-level alert for any reorg event, even shallow ones.
+      - alert: ChainReorgOccurred
+        expr: increase(wrfcoin_chain_reorg_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Chain reorganization occurred"
+          description: >
+            {{ $value }} chain reorg event(s) detected in the last 5 minutes
+            (wrfcoin_chain_reorg_total increased). Shallow reorgs are expected
+            under rapid block-time transitions, but frequent reorgs should be
+            investigated. Check consensus engine logs.
+
+  - name: wrfcoin_finality
+    rules:
+      # Alert when the gap between the chain tip and the last finalized block
+      # grows beyond the structural floor + slack.
+      #
+      # Structural floor: wrfcoin_chain_finalized_height = chain_tip - MAX_REORG_DEPTH
+      # (MAX_REORG_DEPTH = 100 in shared-protocol/src/blockchain/chain.rs). On a
+      # healthy chain the gap is therefore always exactly 100; anything larger
+      # indicates the finalized_height metric update has fallen behind chain_height
+      # (metric wiring bug, e.g., the regression that motivated #1148).
+      #
+      # Threshold > 150 = 100 floor + 50 blocks of slack. This fires when the
+      # metric is stale or the tip/finalized computation drifts.
+      - alert: FinalityLag
+        expr: (wrfcoin_blockchain_block_height - wrfcoin_chain_finalized_height) > 150
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Finality lag exceeds structural floor by 50+ blocks"
+          description: >
+            The chain tip is {{ $value }} blocks ahead of the last finalized block
+            (wrfcoin_blockchain_block_height - wrfcoin_chain_finalized_height > 150,
+            vs the structural floor of MAX_REORG_DEPTH = 100). This indicates the
+            finalized_height metric update has fallen behind the chain tip — check
+            that CoreMetricSnapshot.chain_finalized_height is being populated on
+            every apply_snapshot call. See core4 PR #1150 / issue #1148.
+
+      # Critical: finality has not advanced for an extended period.
+      - alert: FinalityStalled
+        expr: changes(wrfcoin_chain_finalized_height[15m]) == 0 and wrfcoin_chain_finalized_height > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Chain finality has stalled"
+          description: >
+            The finalized block height (wrfcoin_chain_finalized_height) has not
+            advanced in 20 minutes (15m range + 5m for). This means no blocks
+            are being finalized. Check validator participation and consensus logs.
+
+      # Critical: BFT-specific finality has not advanced in 10+ minutes.
+      #
+      # `wrfcoin_chain_finalized_height` collapses the BFT-actual value with
+      # the probabilistic floor (`tip - MAX_REORG_DEPTH`) via max(), so it can
+      # still advance even when the BFT gadget has gone silent. This alert
+      # keys off `wrfcoin_chain_bft_last_advance_timestamp_seconds` — the
+      # wall-clock timestamp stamped by the finality signal consumer every
+      # time the raw BFT-finalized height advances (core4 #1399). The guard
+      # `> 0` skips nodes that have never fired BFT (those are caught by the
+      # separate `BftFinalityInert` alert on `wrfcoin_chain_bft_finality_active`).
+      - alert: BftFinalityStalled
+        expr: time() - wrfcoin_chain_bft_last_advance_timestamp_seconds > 600 and wrfcoin_chain_bft_last_advance_timestamp_seconds > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "BFT finality has not advanced in 10+ minutes"
+          description: >
+            The BFT-finalized height on this node has not advanced in more
+            than 10 minutes (time() - wrfcoin_chain_bft_last_advance_timestamp_seconds > 600).
+            Unlike FinalityStalled, this alert cannot be masked by the
+            probabilistic `tip - MAX_REORG_DEPTH` fallback gauge. It fires
+            even if `wrfcoin_chain_finalized_height` is still advancing.
+            Investigate the BFT finality gadget, validator vote flow, and the
+            `wrfcoin/finality-votes/1` gossip topic. See wrfcoin/core4#1399.
+
+      # Critical: BFT finality has never fired on this node.
+      #
+      # Complements BftFinalityStalled (which uses `... > 0` to skip
+      # fresh/never-fired nodes). This rule fires on the opposite failure
+      # mode: the node has been running long enough that BFT should have
+      # emitted at least one FinalitySignal, but the `bft_finality_active`
+      # latch is still 0. Covers "BFT is wired but never emitting" — e.g.
+      # missing validator config, broken vote gossip, or a regressed
+      # finality gadget. The 10m `for:` duration tolerates a slow cold
+      # start without false-paging.
+      #
+      # Metric shipped by wrfcoin/core4#1417 (detector for #1388).
+      - alert: BftFinalityInert
+        expr: wrfcoin_chain_bft_finality_active == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "BFT finality gadget has never fired on this node"
+          description: >
+            wrfcoin_chain_bft_finality_active has been 0 for 10+ minutes.
+            The BFT finality channel exists but has never delivered a
+            finality message — distinguish from healthy nodes with active
+            finality. Pairs with BftFinalityStalled (never-fired vs
+            fired-then-stopped). See core4#1417 + #1388.
+
+      # Warning: the exported validator participation source is currently zero
+      # on the PoP testnet runtime. Keep that truth visible instead of filling
+      # the dashboard with a synthetic healthy value. Bob's Phase 1
+      # consensus-auth lane owns the runtime validator-set source.
+      - alert: ValidatorParticipationZero
+        expr: wrfcoin_consensus_validator_participation_rate == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: consensus-observability
+        annotations:
+          summary: "Validator participation metric is zero"
+          description: >
+            wrfcoin_consensus_validator_participation_rate has remained 0 for
+            10+ minutes. On the current PoP testnet this truthfully reports
+            that the runtime validator participation source is not yet wired;
+            do not interpret zero as healthy participation. Runtime wiring is
+            owned by the Phase 1 consensus-auth lane.
+
+  - name: wrfcoin_block_production
+    rules:
+      # Alert when no new blocks are produced. Complements the existing ChainStalled
+      # alert in alert-rules.yml, but uses the produced-block counter so it is less
+      # sensitive to sparse height changes during slow block phases.
+      - alert: BlockProductionStalled
+        expr: increase(wrfcoin_block_production_total{consensus="pop"}[5m]) == 0 and wrfcoin_blockchain_block_height > 10
+        for: 7m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block production stalled (early warning)"
+          description: >
+            No new blocks produced in the last 12 minutes
+            (wrfcoin_block_production_total{consensus="pop"} unchanged for 5m range + 7m for).
+            This keeps the alert above the documented 10-minute cadence phase so it
+            avoids healthy-operation false positives. This is an early-warning companion
+            to ChainStalled. May be expected
+            at genesis with 4h block time; the rule ignores the first 10 blocks
+            to avoid slow-start false positives.
+
+  # ---------------------------------------------------------------------------
+  # Faucet depletion (infra#629)
+  # ---------------------------------------------------------------------------
+  # The faucet is the only new-user onramp; if its wallet runs dry, new users
+  # silently get nothing. These rules ride on gauges exported by
+  # testnet/services/faucet/server.js (scraped by the wrfcoin-faucet job):
+  #   wrfcoin_faucet_wallet_balance                — live balance, WRF base units
+  #   wrfcoin_faucet_wallet_balance_floor          — configured post-transfer floor
+  #   wrfcoin_faucet_wallet_balance_scrape_success — 1 ok / 0 refresh failed
+  # Once balance <= floor the faucet already refuses transfers (503), so that
+  # threshold is treated as effectively DRY. Delivery: FaucetWalletDry and
+  # FaucetBalanceUnknown are `critical`, so they page via the alert-receiver
+  # webhook wired in infra#627. FaucetWalletLow is `warning` (early heads-up,
+  # captured to logs).
+  - name: wrfcoin_faucet
+    rules:
+      - alert: FaucetWalletLow
+        expr: wrfcoin_faucet_wallet_balance <= (wrfcoin_faucet_wallet_balance_floor * 5)
+        for: 15m
+        labels:
+          severity: warning
+          service: faucet
+          component: faucet
+        annotations:
+          summary: "Faucet wallet running low"
+          description: >
+            wrfcoin_faucet_wallet_balance is {{ $value }} base units — within 5x
+            of the configured post-transfer floor. Top up the faucet wallet
+            before it hits the floor and stops serving new users.
+      - alert: FaucetWalletDry
+        expr: wrfcoin_faucet_wallet_balance <= wrfcoin_faucet_wallet_balance_floor
+        for: 5m
+        labels:
+          severity: critical
+          service: faucet
+          component: faucet
+        annotations:
+          summary: "Faucet wallet is dry — new users cannot be funded"
+          description: >
+            wrfcoin_faucet_wallet_balance ({{ $value }} base units) is at or below
+            the post-transfer floor. The faucet is refusing transfers (503) and
+            the only new-user onramp is down. Top up the faucet wallet now.
+      - alert: FaucetBalanceUnknown
+        expr: wrfcoin_faucet_wallet_balance_scrape_success == 0
+        for: 15m
+        labels:
+          severity: critical
+          service: faucet
+          component: faucet
+        annotations:
+          summary: "Faucet cannot read its own wallet balance"
+          description: >
+            wrfcoin_faucet_wallet_balance_scrape_success has been 0 for 15m — the
+            faucet has been unable to read its wallet balance from the node (node
+            down, auth broken, or unparseable response). Depletion is now
+            invisible; investigate the faucet -> node balance path.
+
+  # ---------------------------------------------------------------------------
+  # Block assembly drops (#625 / #2056)
+  # ---------------------------------------------------------------------------
+  # `wrfcoin_blockchain_tx_dropped_total` is a reason-labeled cumulative counter
+  # shipped in core4 for all governor/transfer txs that were admitted to mempool
+  # but dropped when block assembly apply failed. A rise means transfers can vanish
+  # from user-visible mempool with no execution. Any sustained rise deserves paging.
+  - name: wrfcoin_block_assembly
+    rules:
+      - alert: BlockAssemblyDropDetected
+        expr: sum by (job, instance, reason) (increase(wrfcoin_blockchain_tx_dropped_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: core4
+          component: block-assembly
+        annotations:
+          summary: "Transaction dropped during block assembly"
+          description: >
+            {{ $labels.reason }}-reason drops rose in the last 5m: {{ $value }}.
+            These txs were admitted to mempool, then excluded when applied during
+            block assembly. Investigate the first dropped tx and its log trace for
+            #2056.

@@ -1,0 +1,238 @@
+# Grafana Datasources Configuration for Wrfcoin Monitoring
+# This file defines all datasources needed for comprehensive monitoring
+
+apiVersion: 1
+
+# List of datasources to configure in Grafana
+datasources:
+  # Prometheus - Primary metrics collection
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus-uid
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      # Enable query timeout
+      queryTimeout: 60s
+      # Enable time interval
+      timeInterval: 15s
+      # Enable exemplars for trace correlation
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger-uid
+          url: http://localhost:16686/trace/$${__value.raw}
+
+  # Jaeger - Distributed tracing
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger-uid
+    access: proxy
+    url: http://jaeger:16686
+    editable: false
+    jsonData:
+      # Enable trace to logs correlation
+      tracesToLogs:
+        datasourceUid: loki-uid
+        tags: ['job', 'instance', 'pod', 'namespace']
+        mappedTags:
+          [
+            { key: 'service.name', value: 'service' },
+            { key: 'service.namespace', value: 'namespace' },
+          ]
+        mapTagNamesEnabled: true
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+      # Enable trace to metrics correlation
+      tracesToMetrics:
+        datasourceUid: prometheus-uid
+        tags:
+          [
+            { key: 'service.name', value: 'service' },
+            { key: 'service.namespace', value: 'namespace' },
+          ]
+        queries:
+          - name: 'Sample query'
+            query: 'sum(rate(wrfcoin_tracing_span_duration_seconds_count{$$__tags}[5m]))'
+      # Node graph configuration
+      nodeGraph:
+        enabled: true
+      # Service map configuration
+      serviceMap:
+        datasourceUid: prometheus-uid
+
+  # Tempo - Alternative tracing backend
+  - name: Tempo
+    type: tempo
+    uid: tempo-uid
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      # Enable trace to logs correlation
+      tracesToLogs:
+        datasourceUid: loki-uid
+        tags: ['job', 'instance']
+        mappedTags: [{ key: 'service.name', value: 'service' }]
+        mapTagNamesEnabled: true
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+      # Enable trace to metrics correlation
+      tracesToMetrics:
+        datasourceUid: prometheus-uid
+        tags: [{ key: 'service.name', value: 'service' }]
+        queries:
+          - name: 'Sample query'
+            query: 'sum(rate(wrfcoin_tracing_span_duration_seconds_count{$$__tags}[5m]))'
+      # Node graph configuration
+      nodeGraph:
+        enabled: true
+      # Service map configuration
+      serviceMap:
+        datasourceUid: prometheus-uid
+
+  # Loki - Log aggregation (optional for log correlation)
+  - name: Loki
+    type: loki
+    uid: loki-uid
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      # Maximum lines to return
+      maxLines: 1000
+      # Enable derived fields for trace correlation
+      derivedFields:
+        - datasourceUid: jaeger-uid
+          matcherRegex: "trace_id=(\\w+)"
+          name: 'TraceID'
+          url: '$${__value.raw}'
+        - datasourceUid: tempo-uid
+          matcherRegex: "trace_id=(\\w+)"
+          name: 'TraceID'
+          url: '$${__value.raw}'
+
+  # AlertManager - For alert management
+  - name: AlertManager
+    type: alertmanager
+    uid: alertmanager-uid
+    access: proxy
+    url: http://alertmanager:9093
+    editable: false
+    jsonData:
+      # Implementation type
+      implementation: prometheus
+      # Handle Grafana managed alerts
+      handleGrafanaManagedAlerts: true
+
+  # TestData - For testing and development
+  - name: TestData
+    type: testdata
+    uid: testdata-uid
+    access: direct
+    editable: false
+    jsonData: {}
+
+  # Additional monitoring datasources for specialized metrics
+
+  # Node Exporter metrics (if running separately)
+  - name: Node Metrics
+    type: prometheus
+    uid: node-metrics-uid
+    access: proxy
+    url: http://node-exporter:9100/metrics
+    editable: false
+    jsonData:
+      httpMethod: GET
+      scrapeInterval: 15s
+
+  # Bitcoin/Ethereum network metrics (if monitoring external chains)
+  - name: Chain Metrics
+    type: prometheus
+    uid: chain-metrics-uid
+    access: proxy
+    url: http://chain-exporter:8080/metrics
+    editable: false
+    jsonData:
+      httpMethod: GET
+      scrapeInterval: 30s
+
+  # Weather data metrics (specialized for IoT monitoring)
+  - name: Weather Metrics
+    type: prometheus
+    uid: weather-metrics-uid
+    access: proxy
+    url: http://weather-exporter:8090/metrics
+    editable: false
+    jsonData:
+      httpMethod: GET
+      scrapeInterval: 60s
+
+  # PostgreSQL metrics (if using external DB monitoring)
+  - name: PostgreSQL
+    type: postgres
+    uid: postgres-uid
+    access: proxy
+    url: postgres:5432
+    database: wrfcoin_monitoring
+    user: monitoring_user
+    editable: false
+    secureJsonData:
+      password: ${POSTGRES_MONITORING_PASSWORD}
+    jsonData:
+      sslmode: require
+      maxOpenConns: 10
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+
+  # Redis metrics (if using for caching/session storage)
+  - name: Redis
+    type: redis-datasource
+    uid: redis-uid
+    access: proxy
+    url: rediss://redis:6379
+    editable: false
+    secureJsonData:
+      password: ${REDIS_PASSWORD}
+    jsonData:
+      client: standalone
+      poolSize: 5
+      timeout: 10
+      pingInterval: 0
+      pipelineWindow: 0
+      tlsAuth: true
+      tlsSkipVerify: false
+
+# Folder configuration for dashboard organization
+folders:
+  - name: 'Wrfcoin Core'
+    uid: 'wrfcoin-core'
+
+  - name: 'Real-Time Monitoring'
+    uid: 'real-time'
+
+  - name: 'Security & Compliance'
+    uid: 'security'
+
+  - name: 'Infrastructure'
+    uid: 'infrastructure'
+
+  - name: 'Cross-Chain'
+    uid: 'cross-chain'
+
+  - name: 'Weather & IoT'
+    uid: 'weather-iot'
+
+  - name: 'Distributed Tracing'
+    uid: 'tracing'
+
+# Provider configuration
+providers:
+  - name: 'dashboards'
+    type: file
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards

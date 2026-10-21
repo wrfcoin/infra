@@ -1,0 +1,205 @@
+name: Public Exposure Edge Gate
+
+# THREE jobs. Read this before changing any runs-on.
+#
+# 1. `static-boundary` is BLOCKING. It executes on the self-hosted build runner infra
+#    runner and produces real evidence on every run. Keep EXPECTED aligned with
+#    the owner's approved exposure decision; do not weaken the verifier to make
+#    it green.
+#
+# 2. `runtime-edge` runs the real verifier on the same self-hosted build runner infra
+#    runner as the static gate. It does NOT decide the run itself -- see §3 and
+#    §4 -- but a genuine failure in it still blocks, via the classifier.
+#    It was previously on ubuntu-latest, which is VOID
+#    on this account (hosted minutes exhausted: runner_name="" and steps=0 on
+#    every run), so the gate reported a verdict it never earned -- infra#894.
+#
+#    It could not move earlier because the verifier shells out to
+#    `docker run/port/logs/rm` and build runner's `gh-runner` user could not open
+#    /var/run/docker.sock. That is fixed: core4#2958 landed, and as of
+#    2026-08-31T23:28Z `gh-runner` is in the `docker` group
+#    (`docker:x:112:gh-runner`), `docker version` returns 20.10.24+dfsg1 for that
+#    user, and `docker run --rm hello-world` succeeds. Python 3.11.2, curl 7.88.1
+#    and git 2.39.5 are present, and the container has 138G free for the image
+#    build.
+#
+#    `runs-on: [self-hosted, n5pro]` is how you target that runner.
+#    `n5pro-ct102-infra` is the runner's NAME, not a label -- its labels are
+#    [self-hosted, Linux, X64, n5pro, wrfcoin]. A job asking for a
+#    `n5pro-ct102-infra` label matches no runner and queues until it times out.
+#
+# 3. `runtime-evidence` is THE BLOCKING JOB, and it is the only one whose exit
+#    status decides this gate. It reads `runtime-edge`'s job record and
+#    classifies it, then carries the verdict in its own exit code:
+#
+#      REAL-RED     exit 1  a real step failed on a real runner -> BLOCKS
+#      UNKNOWN      exit 1  the record could not be read        -> BLOCKS (fail closed)
+#      ENV-REFUSED  exit 0  the runner could not serve the job  -> announced, no block
+#      VOID         exit 0  nothing executed at all             -> announced, no block
+#      SKIPPED/CANCELLED exit 0  null result                    -> announced, no block
+#      REAL-GREEN   exit 0  real steps, all passed
+#
+#    That is the split: a code failure blocks; an infrastructure refusal is
+#    loudly announced and does not. Neither is ever silent, and an infrastructure
+#    failure can never be read as a code failure -- the misattribution that made
+#    core4#2958's docker fault look like an execution-engine test bug.
+#
+#    STATED HONESTLY: it now shares a runner class with the job it classifies.
+#    While `runtime-edge` was on ubuntu-latest the separation was real -- the
+#    checker ran on a class that worked while the checked job's class was VOID.
+#    That separation is gone, and there is nowhere to restore it to: the only
+#    other class available is ubuntu-latest, which is VOID, so a checker hosted
+#    there could report nothing at all. The consequence is bounded and
+#    fail-closed: if the self-hosted runner itself dies, both jobs go VOID, the
+#    classification is not produced, and the run FAILS. That is a loud stop, not
+#    a silent pass. What it is not any more is a guarantee that the reason will
+#    be explained. Restoring the separation needs a second working runner class.
+#
+# 4. WHY `continue-on-error` IS NOT THE LEVER, IN EITHER DIRECTION. This is the
+#    part that took three attempts, so it is written down.
+#
+#    - WITH it and nothing else (the first attempt): the job never fails the run,
+#      but neither does a genuine edge-config failure. Real breakage stops
+#      blocking. Not acceptable.
+#    - WITHOUT it (the second attempt): every failure blocks, including a Docker
+#      refusal. An infrastructure fault becomes a blocking main verdict -- the
+#      exact sin infra#894 was filed about. Not acceptable either.
+#
+#    The flag only decides WHETHER this job's conclusion reaches the run. The
+#    conclusion itself conflates "the environment cannot serve this" with "the
+#    edge config is broken", and no setting of a flag separates two facts that
+#    share one exit status. The fix is to move the decision to a job that can
+#    tell them apart. Hence: flag ON here, verdict carried by §3.
+#
+#    STEP-LEVEL `continue-on-error` IS ALSO WRONG, and worse. A step marked that
+#    way reports `conclusion: success` in the job record (only `outcome` retains
+#    the failure), so the classifier would read a refused preflight as an
+#    all-green job and MANUFACTURE A FALSE GREEN. Job-level is the only correct
+#    placement.
+#
+# WHAT NOT TO DO (infra#891, infra#893): #891 moved only `static-boundary` to
+# self-hosted and left this job on ubuntu-latest; #893 then renamed the job to
+# "(VOID -- hosted minutes exhausted)" and changed nothing else. Renaming a job
+# retires the alarm and keeps the hole, and it poisons name-based VOID detection.
+# Change the runner or change what blocks -- never only the label.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'testnet/edge/**'
+      - 'testnet/docker-compose*.yml'
+      - 'testnet/nginx-frontend.conf'
+      - 'testnet/edge/verify_public_exposure_boundary.py'
+      - 'testnet/edge/verify_public_exposure_runtime.py'
+      - '.github/workflows/public-exposure-edge-gate.yml'
+      - '.github/scripts/classify_job_evidence.py'
+  pull_request:
+    paths:
+      - 'testnet/edge/**'
+      - 'testnet/docker-compose*.yml'
+      - 'testnet/nginx-frontend.conf'
+      - 'testnet/edge/verify_public_exposure_boundary.py'
+      - 'testnet/edge/verify_public_exposure_runtime.py'
+      - '.github/workflows/public-exposure-edge-gate.yml'
+      - '.github/scripts/classify_job_evidence.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Refs infra#1113: superseded PRs share a group; every other run is isolated,
+# including pending main/dispatch/schedule jobs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  static-boundary:
+    name: Static public exposure boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Boundary verifier RED controls
+        run: python3 testnet/edge/verify_public_exposure_boundary.py --self-test
+
+      # This step is after the RED controls; if they fail, its skip is not success evidence.
+      - name: Verify approved public exposure
+        run: python3 testnet/edge/verify_public_exposure_boundary.py
+
+  runtime-edge:
+    name: Runtime public exposure harness
+    runs-on: ubuntu-latest
+    # `continue-on-error` is REQUIRED here and its removal was a defect (see §4).
+    # This job touches infrastructure, so its exit status cannot be the run's
+    # verdict: a Docker or runner refusal and a broken edge config both surface
+    # as "job failed", and one job's conclusion cannot express two different
+    # facts. The verdict is decided by `runtime-evidence`, which can tell them
+    # apart. This does NOT make the job unblocking -- a real failure here still
+    # fails the run, via the classifier reporting REAL-RED.
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Declared environment preflight. Its NAME is load-bearing: it is passed to
+      # the classifier as --environment-step, which is how a missing daemon is
+      # reported as ENV-REFUSED instead of being misread as a broken edge config
+      # (the core4#2958 misattribution).
+      - name: Docker preflight
+        run: |
+          set -euo pipefail
+          if ! docker version --format '{{.Server.Version}}' 2>/dev/null | grep -q .; then
+            echo "::error title=ENVIRONMENT REFUSAL::DOCKER_DAEMON_UNAVAILABLE -- 'docker version' returned no server version for this runner user. The runtime edge verifier needs a working daemon to assert anything; refusing rather than reporting a confusing low-level failure. This is not evidence about the edge configuration (core4#2958)."
+            docker version || true
+            exit 3
+          fi
+          echo "docker daemon reachable: $(docker version --format '{{.Server.Version}}')"
+
+      - name: Build local Caddy verifier image
+        run: docker build -f testnet/edge/Dockerfile.caddy -t wrfcoin/edge-caddy:testnet-local testnet/edge
+
+      - name: Run runtime verifier and RED controls
+        run: python3 testnet/edge/verify_public_exposure_runtime.py
+
+  runtime-evidence:
+    # API access required by this job only.
+    permissions:
+      contents: read
+      actions: read
+    name: Runtime edge evidence (blocking)
+    needs: runtime-edge
+    # `always()` is required: without it this job is skipped exactly when
+    # runtime-edge fails, i.e. in every case worth classifying.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Classifier RED controls
+        run: python3 .github/scripts/classify_job_evidence.py --self-test
+
+      - name: Fetch this run attempt's job records
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Attempt-scoped so a re-run classifies ITS OWN attempt, not the first one.
+          # infra#1073: the token goes to curl on stdin (-H @-), never argv, so it
+          # is not visible in the self-hosted runner's process list.
+          printf 'Authorization: Bearer %s\n' "${GH_TOKEN}" |
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 --max-time 60 \
+            -H @- \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+            -o jobs.json
+          echo "retrieved $(python3 -c 'import json;print(len(json.load(open("jobs.json"))["jobs"]))') job record(s)"
+
+      - name: Classify runtime edge evidence
+        run: |
+          python3 .github/scripts/classify_job_evidence.py \
+            --jobs-file jobs.json \
+            --job-name 'Runtime public exposure harness' \
+            --environment-step 'Docker preflight'

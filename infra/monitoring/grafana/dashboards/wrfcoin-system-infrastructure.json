@@ -1,0 +1,596 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin System Infrastructure Monitoring",
+    "tags": ["wrfcoin", "infrastructure", "system", "resources"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "15s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "15s", "30s", "1m", "5m"],
+      "time_options": ["15m", "30m", "1h", "3h", "6h", "12h", "24h"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "query": "label_values(up, instance)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "job",
+          "type": "query",
+          "query": "label_values(up, job)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "System Restarts",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_system_start_time[5m]) > 0"
+        },
+        {
+          "name": "Resource Alerts",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertname=~\".*Resource.*\", alertstate=\"firing\"}"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Uptime",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "(time() - wrfcoin_system_start_time) / 86400",
+            "legendFormat": "Uptime (days)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-GrYlRd"
+            },
+            "unit": "d",
+            "decimals": 2
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Service Availability",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "avg(up)",
+            "legendFormat": "Availability %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.95 },
+                { "color": "green", "value": 0.99 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 4, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Load Average",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_system_load_average)",
+            "legendFormat": "Load Average"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1 },
+                { "color": "red", "value": 2 }
+              ]
+            },
+            "unit": "short",
+            "decimals": 2
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 8, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "Network Throughput",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_system_network_bytes_total[1m])",
+            "legendFormat": "Network Bytes/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-BlPu"
+            },
+            "unit": "binBps",
+            "decimals": 1
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 12, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "Open File Descriptors",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_system_open_fds)",
+            "legendFormat": "Open FDs"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1000 },
+                { "color": "red", "value": 5000 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 16, "y": 0 }
+      },
+      {
+        "id": 6,
+        "title": "Thread Count",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_system_thread_count)",
+            "legendFormat": "Active Threads"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-YlOrRd"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 6, "w": 4, "x": 20, "y": 0 }
+      },
+      {
+        "id": 7,
+        "title": "CPU Usage by Core",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_cpu_usage_percent",
+            "legendFormat": "CPU Usage % - {{instance}}"
+          },
+          {
+            "expr": "wrfcoin_system_cpu_cores_count",
+            "legendFormat": "CPU Cores - {{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "CPU %",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 0, "y": 6 }
+      },
+      {
+        "id": 8,
+        "title": "Memory Usage Details",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_memory_usage_percent",
+            "legendFormat": "Memory Usage % - {{instance}}"
+          },
+          {
+            "expr": "wrfcoin_system_memory_available_bytes / 1024 / 1024 / 1024",
+            "legendFormat": "Available Memory GB - {{instance}}"
+          },
+          {
+            "expr": "wrfcoin_system_swap_usage_percent",
+            "legendFormat": "Swap Usage % - {{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Memory %/GB",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 12, "y": 6 }
+      },
+      {
+        "id": 9,
+        "title": "Disk I/O Operations",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_system_disk_reads_total[5m])",
+            "legendFormat": "Disk Reads/sec - {{instance}}"
+          },
+          {
+            "expr": "rate(wrfcoin_system_disk_writes_total[5m])",
+            "legendFormat": "Disk Writes/sec - {{instance}}"
+          },
+          {
+            "expr": "rate(wrfcoin_system_disk_read_bytes_total[5m])",
+            "legendFormat": "Read Bytes/sec - {{instance}}"
+          },
+          {
+            "expr": "rate(wrfcoin_system_disk_write_bytes_total[5m])",
+            "legendFormat": "Write Bytes/sec - {{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "I/O Operations & Bytes/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 }
+      },
+      {
+        "id": 10,
+        "title": "Disk Space Usage",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_disk_usage_percent",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "percent"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "yellow", "value": 70 },
+                      { "color": "red", "value": 90 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
+      },
+      {
+        "id": 11,
+        "title": "Network Interface Statistics",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_system_network_receive_bytes_total[5m])",
+            "legendFormat": "RX Bytes/sec - {{interface}}"
+          },
+          {
+            "expr": "rate(wrfcoin_system_network_transmit_bytes_total[5m])",
+            "legendFormat": "TX Bytes/sec - {{interface}}"
+          },
+          {
+            "expr": "rate(wrfcoin_system_network_errors_total[5m])",
+            "legendFormat": "Network Errors/sec - {{interface}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Network Bytes/sec",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "binBps"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+      },
+      {
+        "id": 12,
+        "title": "Process Resource Usage",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_process_memory_bytes / 1024 / 1024",
+            "legendFormat": "Process Memory MB - {{process}}"
+          },
+          {
+            "expr": "wrfcoin_system_process_cpu_percent",
+            "legendFormat": "Process CPU % - {{process}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Memory MB / CPU %",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
+      },
+      {
+        "id": 13,
+        "title": "System Temperature & Hardware",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_temperature_celsius",
+            "legendFormat": "Temperature °C - {{sensor}}"
+          },
+          {
+            "expr": "wrfcoin_system_fan_speed_rpm",
+            "legendFormat": "Fan Speed RPM - {{fan}}"
+          },
+          {
+            "expr": "wrfcoin_system_power_consumption_watts",
+            "legendFormat": "Power Consumption W"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Temperature/RPM/Watts",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 }
+      },
+      {
+        "id": 14,
+        "title": "Container Resource Usage",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_system_container_cpu_usage_seconds_total[5m])",
+            "legendFormat": "Container CPU Usage - {{container}}"
+          },
+          {
+            "expr": "wrfcoin_system_container_memory_usage_bytes / 1024 / 1024",
+            "legendFormat": "Container Memory MB - {{container}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "CPU Usage / Memory MB",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 }
+      },
+      {
+        "id": 15,
+        "title": "System Health Checks",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "wrfcoin_system_health_check_status",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "mappings": [
+              { "type": "value", "value": "0", "text": "Failed" },
+              { "type": "value", "value": "1", "text": "Passed" }
+            ]
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "red", "value": null },
+                      { "color": "green", "value": 1 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 }
+      },
+      {
+        "id": 16,
+        "title": "Garbage Collection & Memory Management",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_system_gc_collections_total[5m])",
+            "legendFormat": "GC Collections/sec - {{generation}}"
+          },
+          {
+            "expr": "wrfcoin_system_gc_pause_duration_seconds",
+            "legendFormat": "GC Pause Duration - {{generation}}"
+          },
+          {
+            "expr": "wrfcoin_system_memory_heap_size_bytes / 1024 / 1024",
+            "legendFormat": "Heap Size MB"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "GC Events/sec & Duration",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 }
+      }
+    ]
+  }
+}

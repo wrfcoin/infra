@@ -1,0 +1,43 @@
+name: Alignment Campaign Rollup
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  rollup:
+    # API access required by this job only.
+    permissions:
+      contents: read
+      issues: read
+    name: Build Cross-Repo Campaign Board
+    runs-on: ubuntu-latest
+    env:
+      ALIGNMENT_OWNER: wrfcoin
+      ALIGNMENT_REPOS: core4,backend,frontend,defi-protocols,storage-providers,smart-contracts,infra,security-testing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Generate campaign board + rubric rollup
+        env:
+          GITHUB_TOKEN: ${{ secrets.CROSS_REPO_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN || github.token }}
+        run: node scripts/alignment-campaign-rollup.js
+
+      - name: Upload alignment rollup artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: alignment-campaign-rollup
+          path: artifacts/alignment/
+          retention-days: 14
+
+      - name: Publish board to workflow summary
+        run: |
+          cat artifacts/alignment/alignment-campaign-board.md >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/alignment/alignment-rubric-rollup.md >> "$GITHUB_STEP_SUMMARY"

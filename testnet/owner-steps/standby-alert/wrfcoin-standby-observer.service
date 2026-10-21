@@ -1,0 +1,18 @@
+[Unit]
+Description=Independent workstation standby observer on Proxmox
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /opt/wrfcoin-standby/check-standby-external.py --config /etc/wrfcoin-standby/config.json
+TimeoutStartSec=45
+StateDirectory=wrfcoin-standby
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

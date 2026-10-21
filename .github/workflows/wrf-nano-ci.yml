@@ -1,0 +1,55 @@
+permissions:
+  contents: read
+
+name: WRF Nano CI
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  build-wrf-nano:
+    name: Build WRF Nano Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90  # WRF compilation takes 20-30 min; allow headroom
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Cache Docker layers
+        uses: actions/cache@v6
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-wrf-nano-${{ hashFiles('infra/docker/Dockerfile.wrf-nano') }}
+          restore-keys: |
+            ${{ runner.os }}-wrf-nano-
+
+      - name: Build WRF Nano image
+        uses: docker/build-push-action@v7
+        with:
+          context: infra/docker
+          file: infra/docker/Dockerfile.wrf-nano
+          push: false
+          load: true
+          tags: wrfcoin/wrf-nano:ci
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Run health check
+        run: |
+          docker run --rm wrfcoin/wrf-nano:ci -c "/usr/local/bin/healthcheck-wrf.sh --wrf"
+
+      - name: Verify WRF executables
+        run: |
+          docker run --rm wrfcoin/wrf-nano:ci -c "ls -la /wrf/main/wrf.exe /wrf/main/real.exe"
+
+      # Rotate cache to prevent unbounded growth
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache

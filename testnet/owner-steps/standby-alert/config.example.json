@@ -1,0 +1,9 @@
+{
+  "node_ready_url": "http://workstation.example.invalid:8556/readyz",
+  "remote_target": "watch@workstation.example.invalid",
+  "node_usb_device": "/dev/bus/usb/001/002",
+  "attester_usb_device": "/dev/bus/usb/001/003",
+  "receiver_type": "healthchecks",
+  "receiver_url": "",
+  "heartbeat_url": ""
+}

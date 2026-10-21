@@ -1,0 +1,162 @@
+# Legacy/experimental RTL-433 stack. This file is not the public testnet path.
+# Every host port is loopback-only; use the hardened testnet/ stack for launch.
+
+services:
+  # RTL-433 sidecar: decodes RF sensor data via software-defined radio
+  rtl_433:
+    image: rtl433/rtl_433:latest
+    container_name: wrfcoin-rtl-433
+    devices:
+      # RTL-SDR dongle device mapping (adjust for your USB device)
+      - /dev/bus/usb:/dev/bus/usb
+    environment:
+      # Output JSON format for easier parsing
+      - RTL_433_ARGS="-F json -M newmodel -f 433.05M"
+    ports:
+      # MQTT broker for rtl_433 output (internal)
+      - "127.0.0.1:${RTL433_MQTT_PORT:-1884}:1884"
+    command: >
+      rtl_433 -F json
+      -M newmodel
+      -f 433.05M
+      -c /etc/rtl_433/rtl_433.conf
+    volumes:
+      # Configuration file (optional)
+      - ./rtl433.conf:/etc/rtl_433/rtl_433.conf:ro
+    networks:
+      - wrfcoin-network
+    restart: unless-stopped
+
+  # MQTT Broker: receives rtl_433 JSON output
+  mqtt_broker:
+    image: eclipse-mosquitto:latest
+    container_name: wrfcoin-mqtt-broker
+    environment:
+      MQTT_USERNAME: ${MQTT_USERNAME:?MQTT_USERNAME is required}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD is required}
+    command: ["/bin/sh", "/mosquitto/config/provision-auth.sh"]
+    ports:
+      - "127.0.0.1:${MQTT_PORT:-1883}:1883"
+      - "127.0.0.1:${MQTT_WEBSOCKET_PORT:-9001}:9001"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./provision-mosquitto-auth.sh:/mosquitto/config/provision-auth.sh:ro
+      - mqtt_auth:/mosquitto/auth
+      - mqtt_data:/mosquitto/data
+      - mqtt_logs:/mosquitto/log
+    networks:
+      - wrfcoin-network
+    restart: unless-stopped
+
+  # IoT Edge Gateway: processes sensor data, validates, deduplicates
+  iot_gateway:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+      target: iot-gateway
+    container_name: wrfcoin-iot-gateway
+    ports:
+      - "127.0.0.1:${IOT_GATEWAY_MQTT_PORT:-1885}:1883"  # MQTT sensor input
+      - "127.0.0.1:${IOT_GATEWAY_COAP_PORT:-5683}:5683/udp"  # CoAP
+      - "127.0.0.1:${IOT_GATEWAY_HTTP_PORT:-5684}:5684"  # HTTP health
+    environment:
+      - MQTT_PORT=1883
+      - COAP_PORT=5683
+      - GATEWAY_HTTP_PORT=5684
+      - LOG_LEVEL=info
+    networks:
+      - wrfcoin-network
+    depends_on:
+      - mqtt_broker
+    restart: unless-stopped
+
+  # RTL-433 Ingestion Microservice: normalizes and submits readings to backend
+  rtl433_ingestion:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+      target: rtl433-ingestion
+    container_name: wrfcoin-rtl433-ingestion
+    ports:
+      - "127.0.0.1:${RTL433_INGESTION_PORT:-3052}:3052"  # HTTP health/metrics
+    environment:
+      - RTL433_PORT=3052
+      # Credentials in URL userinfo (mqtt.js honors them); anonymous access is
+      # refused by the broker now that password_file auth is enforced. Values
+      # come from the same operator env the broker's provisioner reads — see
+      # docker/.env.rtl433.example. The provisioner rejects passwords outside
+      # the URL-unreserved alphabet so mqtt.js and Mosquitto receive identical
+      # credentials.
+      - MQTT_BROKER_URL=mqtt://${MQTT_USERNAME:?MQTT_USERNAME is required}:${MQTT_PASSWORD:?MQTT_PASSWORD is required}@mqtt_broker:1883
+      - WEATHER_API_URL=http://backend:4001
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    networks:
+      - wrfcoin-network
+    depends_on:
+      - mqtt_broker
+      - iot_gateway
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3052/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Backend API (for weather data submission)
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+      target: main-api
+    container_name: wrfcoin-backend
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-4001}:4001"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-wrfcoin}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-wrfcoin}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
+      - NODE_ENV=production
+    networks:
+      - wrfcoin-network
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: wrfcoin-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-wrfcoin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - POSTGRES_DB=${POSTGRES_DB:-wrfcoin}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - wrfcoin-network
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: wrfcoin-redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - wrfcoin-network
+    restart: unless-stopped
+
+volumes:
+  mqtt_auth:
+  mqtt_data:
+  mqtt_logs:
+  postgres_data:
+  redis_data:
+
+networks:
+  wrfcoin-network:
+    driver: bridge

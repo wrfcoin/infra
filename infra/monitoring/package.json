@@ -1,0 +1,50 @@
+{
+  "name": "wrfcoin-monitoring-suite",
+  "version": "1.0.0",
+  "description": "WRFCoin Comprehensive Monitoring Suite - Dependency Monitoring, Contract Testing, and Metrics Collection",
+  "main": "dependency-monitor.js",
+  "scripts": {
+    "start": "node dependency-monitor.js",
+    "start:dependency-monitor": "node dependency-monitor.js",
+    "start:contract-metrics": "node contract-test-metrics-collector.js",
+    "start:dr-benchmarker": "node disaster-recovery-performance-benchmarker.js",
+    "analyze:dr-performance": "node ../scripts/analyze-dr-performance.js",
+    "benchmark:dr": "node disaster-recovery-performance-benchmarker.js",
+    "generate-maps": "node generate-service-dependency-map.js",
+    "health-check": "./health-check.sh",
+    "contract-test:collect-metrics": "curl -X POST http://localhost:9095/collect-metrics",
+    "docker:build:contract-metrics": "docker build -f Dockerfile.contract-metrics -t wrfcoin/contract-metrics:latest .",
+    "docker:run:contract-metrics": "docker run -p 9095:9095 --name contract-metrics wrfcoin/contract-metrics:latest",
+    "monitoring:start-all": "docker-compose -f docker-compose.monitoring.yml -f docker-compose.contract-testing.yml up -d",
+    "validate:dr-config": "node -e \"console.log('Validating DR performance configuration...'); require('./disaster-recovery-performance-benchmarker.js')\""
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "express": "^5.2.1",
+    "prom-client": "^15.1.0",
+    "winston": "^3.11.0",
+    "node-cron": "^4.6.0",
+    "graphviz": "^0.0.9",
+    "@aws-sdk/client-cloudwatch": "^3.1146.0",
+    "@aws-sdk/client-rds": "^3.1146.0",
+    "@aws-sdk/client-s3": "^3.1146.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "WRFCoin Development Team",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "contract-testing",
+    "pact",
+    "monitoring",
+    "prometheus",
+    "metrics",
+    "dependency-monitoring",
+    "disaster-recovery",
+    "performance-benchmarking",
+    "rto",
+    "rpo",
+    "wrfcoin"
+  ]
+}

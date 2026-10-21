@@ -1,0 +1,205 @@
+digraph WRFCoinServiceDependencies {
+  rankdir=TB;
+  node [fontname="Arial", fontsize=10, shape=box, style=filled];
+  edge [fontname="Arial", fontsize=8];
+  
+  // Service tier subgraphs for better organization
+
+  subgraph cluster_monitoring {
+    label="Monitoring Infrastructure";
+    style=filled;
+    color="#FF6B6B30";
+    fontsize=12;
+    fontweight=bold;
+    "prometheus" [label="prometheus\nPort: 9090\nMetrics collection and alerting", fillcolor="#FF6B6B", penwidth=2, color="#FFA500"];
+  }
+
+  subgraph cluster_core {
+    label="Blockchain Core";
+    style=filled;
+    color="#4ECDC430";
+    fontsize=12;
+    fontweight=bold;
+    "wrfcoin-core" [label="wrfcoin-core\nPort: 5000\nCore blockchain service with WVM", fillcolor="#4ECDC4", penwidth=3, color="#FF0000"];
+  }
+
+  subgraph cluster_database {
+    label="Data Storage";
+    style=filled;
+    color="#45B7D130";
+    fontsize=12;
+    fontweight=bold;
+    "postgresql" [label="postgresql\nPort: 5432\nPrimary database (21-table schema)", fillcolor="#45B7D1", penwidth=3, color="#FF0000"];
+  }
+
+  subgraph cluster_cache {
+    label="Caching Layer";
+    style=filled;
+    color="#96CEB430";
+    fontsize=12;
+    fontweight=bold;
+    "redis-cache" [label="redis-cache\nPort: 6379\nPrimary caching layer", fillcolor="#96CEB4", penwidth=2, color="#FFA500"];
+  }
+
+  subgraph cluster_iot {
+    label="IoT Networks";
+    style=filled;
+    color="#FFD70030";
+    fontsize=12;
+    fontweight=bold;
+    "iot-sensor-networks" [label="iot-sensor-networks\nPort: 3002\n20+ IoT platform integrations", fillcolor="#FFD700", penwidth=1, color="#FFFF00"];
+  }
+
+  subgraph cluster_discovery {
+    label="Service Discovery";
+    style=filled;
+    color="#98FB9830";
+    fontsize=12;
+    fontweight=bold;
+    "node-discovery" [label="node-discovery\nPort: 9001\nP2P network node discovery", fillcolor="#98FB98", penwidth=1, color="#FFFF00"];
+  }
+
+  subgraph cluster_security {
+    label="Security Services";
+    style=filled;
+    color="#F0808030";
+    fontsize=12;
+    fontweight=bold;
+    "clamav-antivirus" [label="clamav-antivirus\nPort: 3310\nAntivirus scanning service", fillcolor="#F08080", penwidth=1, color="#90EE90"];
+  }
+
+  subgraph cluster_api {
+    label="API Services";
+    style=filled;
+    color="#FFEAA730";
+    fontsize=12;
+    fontweight=bold;
+    "wrfcoin-main-api" [label="wrfcoin-main-api\nPort: 4001\nMain API server with GraphQL", fillcolor="#FFEAA7", penwidth=3, color="#FF0000"];
+  }
+
+  subgraph cluster_bridge {
+    label="Cross-Chain Bridges";
+    style=filled;
+    color="#FFB34730";
+    fontsize=12;
+    fontweight=bold;
+    "cross-chain-protocol" [label="cross-chain-protocol\nPort: 3000\n13+ cross-chain bridges", fillcolor="#FFB347", penwidth=2, color="#FFA500"];
+  }
+
+  subgraph cluster_data {
+    label="Data Processing";
+    style=filled;
+    color="#87CEEB30";
+    fontsize=12;
+    fontweight=bold;
+    "weather-service" [label="weather-service\nPort: 3001\nWeather data collection and validation", fillcolor="#87CEEB", penwidth=1, color="#FFFF00"];
+    "etl-pipeline" [label="etl-pipeline\nPort: 5000\nData transformation pipeline", fillcolor="#87CEEB", penwidth=1, color="#FFFF00"];
+  }
+
+  subgraph cluster_network {
+    label="Network Services";
+    style=filled;
+    color="#F0E68C30";
+    fontsize=12;
+    fontweight=bold;
+    "compute-networks" [label="compute-networks\nPort: 6000\nDistributed computing coordination", fillcolor="#F0E68C", penwidth=1, color="#FFFF00"];
+    "ai-ml-networks" [label="ai-ml-networks\nPort: 6001\nAI/ML model deployment network", fillcolor="#F0E68C", penwidth=1, color="#FFFF00"];
+  }
+
+  subgraph cluster_storage {
+    label="Storage Services";
+    style=filled;
+    color="#DEB88730";
+    fontsize=12;
+    fontweight=bold;
+    "storage-networks" [label="storage-networks\nPort: 7000\nIPFS/Filecoin/Arweave integration", fillcolor="#DEB887", penwidth=1, color="#FFFF00"];
+    "nas-storage" [label="nas-storage\nPort: 7001\nNAS storage node management", fillcolor="#DEB887", penwidth=1, color="#90EE90"];
+  }
+
+  subgraph cluster_gateway {
+    label="API Gateway";
+    style=filled;
+    color="#DDA0DD30";
+    fontsize=12;
+    fontweight=bold;
+    "api-gateway" [label="api-gateway\nPort: 4000\nAPI Gateway with routing", fillcolor="#DDA0DD", penwidth=2, color="#FFA500"];
+  }
+
+  subgraph cluster_compute {
+    label="Compute Services";
+    style=filled;
+    color="#FFA07A30";
+    fontsize=12;
+    fontweight=bold;
+    "ml-inference" [label="ml-inference\nPort: 8080\nML inference with GPU support", fillcolor="#FFA07A", penwidth=1, color="#FFFF00"];
+  }
+
+  subgraph cluster_governance {
+    label="Governance";
+    style=filled;
+    color="#20B2AA30";
+    fontsize=12;
+    fontweight=bold;
+    "governance-server" [label="governance-server\nPort: 8000\nDAO proposals and voting", fillcolor="#20B2AA", penwidth=1, color="#FFFF00"];
+  }
+
+  subgraph cluster_microservice {
+    label="Microservices";
+    style=filled;
+    color="#B19CD930";
+    fontsize=12;
+    fontweight=bold;
+    "nft-service" [label="nft-service\nPort: 4002\nNFT marketplace service", fillcolor="#B19CD9", penwidth=1, color="#FFFF00"];
+    "user-service" [label="user-service\nPort: 4003\nUser management service", fillcolor="#B19CD9", penwidth=2, color="#FFA500"];
+  }
+
+  subgraph cluster_rewards {
+    label="Reward Systems";
+    style=filled;
+    color="#FF69B430";
+    fontsize=12;
+    fontweight=bold;
+    "weather-earnings" [label="weather-earnings\nPort: 8080\nWeather station reward distribution", fillcolor="#FF69B4", penwidth=1, color="#FFFF00"];
+  }
+
+  // Dependencies
+  "wrfcoin-core" -> "wrfcoin-main-api" [penwidth=3, color="#FF0000"];
+  "postgresql" -> "wrfcoin-main-api" [penwidth=3, color="#FF0000"];
+  "redis-cache" -> "wrfcoin-main-api" [penwidth=3, color="#FF0000"];
+  "wrfcoin-core" -> "cross-chain-protocol" [penwidth=3, color="#FF0000"];
+  "wrfcoin-core" -> "weather-service" [penwidth=3, color="#FF0000"];
+  "iot-sensor-networks" -> "weather-service" [penwidth=1, color="#666666"];
+  "wrfcoin-core" -> "compute-networks" [penwidth=3, color="#FF0000"];
+  "wrfcoin-core" -> "ai-ml-networks" [penwidth=3, color="#FF0000"];
+  "wrfcoin-core" -> "storage-networks" [penwidth=3, color="#FF0000"];
+  "nft-service" -> "api-gateway" [penwidth=2, color="#FFA500"];
+  "user-service" -> "api-gateway" [penwidth=2, color="#FFA500"];
+  "wrfcoin-main-api" -> "api-gateway" [penwidth=3, color="#FF0000"];
+  "wrfcoin-core" -> "ml-inference" [penwidth=3, color="#FF0000"];
+  "ai-ml-networks" -> "ml-inference" [penwidth=1, color="#666666"];
+  "wrfcoin-core" -> "etl-pipeline" [penwidth=3, color="#FF0000"];
+  "weather-service" -> "etl-pipeline" [penwidth=1, color="#666666"];
+  "postgresql" -> "etl-pipeline" [penwidth=3, color="#FF0000"];
+  "wrfcoin-main-api" -> "governance-server" [penwidth=3, color="#FF0000"];
+  "storage-networks" -> "nas-storage" [penwidth=1, color="#666666"];
+  "wrfcoin-main-api" -> "nft-service" [penwidth=3, color="#FF0000"];
+  "wrfcoin-main-api" -> "user-service" [penwidth=3, color="#FF0000"];
+  "weather-service" -> "weather-earnings" [penwidth=1, color="#666666"];
+  "wrfcoin-main-api" -> "weather-earnings" [penwidth=3, color="#FF0000"];
+
+  // Legend
+  subgraph cluster_legend {
+    label="Service Criticality Legend";
+    style=filled;
+    color="#F0F0F0";
+    fontsize=10;
+    
+    legend_critical [label="Critical Service", fillcolor="#FF4444", shape=box];
+    legend_high [label="High Priority", fillcolor="#FFA500", shape=box];
+    legend_medium [label="Medium Priority", fillcolor="#FFFF00", shape=box];
+    legend_low [label="Low Priority", fillcolor="#90EE90", shape=box];
+    
+    legend_critical -> legend_high -> legend_medium -> legend_low [style=invis];
+  }
+
+}

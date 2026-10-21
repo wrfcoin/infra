@@ -1,0 +1,325 @@
+# =============================================================================
+# Alignment Gate — PR Governance + Release Alignment-95 Gate
+# =============================================================================
+#
+# This workflow has two responsibilities:
+# 1) PR alignment impact check (warn/enforce rollout with exemption label).
+# 2) Production-promotion gate (alignment-95):
+#    - Requires campaign prerequisite closure across key repos.
+#    - Requires KPI thresholds to pass (privacy, permissionless, parity, forecast).
+#    - Allows audited emergency override path.
+#
+# Related:
+# - PR template: .github/pull_request_template.md
+# - Issue: infra#4 (PR alignment gate phase 2)
+# - Issue: infra#6 (alignment-95 release gate)
+# =============================================================================
+
+name: Alignment Gate
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+    paths-ignore:
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      promotion_target:
+        description: 'Promotion target (e.g. production)'
+        required: false
+        default: 'production'
+      thresholds_path:
+        description: 'Versioned threshold config path'
+        required: false
+        default: 'infra/release-gates/alignment-95-thresholds.2026-03-04.v1.json'
+      kpi_source:
+        description: 'KPI JSON source (local path or https URL)'
+        required: false
+        default: 'infra/release-gates/sample-kpi-summary.2026-03-04.v1.json'
+      allowed_open_issues:
+        description: 'Comma-separated alignment-90 issues allowed to remain open (owner/repo#num)'
+        required: false
+        default: 'wrfcoin/infra#6'
+      override_ticket:
+        description: 'Emergency override ticket or incident ID'
+        required: false
+        default: ''
+      override_reason:
+        description: 'Emergency override justification'
+        required: false
+        default: ''
+      override_approver:
+        description: 'Approver for emergency override (required when override is used)'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      promotion_target:
+        required: false
+        type: string
+        default: 'production'
+      thresholds_path:
+        required: false
+        type: string
+        default: 'infra/release-gates/alignment-95-thresholds.2026-03-04.v1.json'
+      kpi_source:
+        required: false
+        type: string
+        default: 'infra/release-gates/sample-kpi-summary.2026-03-04.v1.json'
+      allowed_open_issues:
+        required: false
+        type: string
+        default: 'wrfcoin/infra#6'
+      override_ticket:
+        required: false
+        type: string
+        default: ''
+      override_reason:
+        required: false
+        type: string
+        default: ''
+      override_approver:
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# Refs infra#1113: superseded PRs share a group; every other run is isolated,
+# including pending main/dispatch/schedule jobs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  alignment-check:
+    # API access required by this job only.
+    permissions:
+      contents: read
+      pull-requests: write
+    name: Alignment Impact Check
+    # build runner self-hosted (2026-08-30): API-only github-script job; must stay
+    # REAL when hosted minutes are exhausted (zero-step billing failures
+    # otherwise).
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'alignment-exempt')
+    steps:
+      - name: Check for Alignment Impact section
+        uses: actions/github-script@v9
+        env:
+          # Set to 'warn' for Phase 1 (warn-only), 'enforce' for Phase 2 (blocking)
+          ALIGNMENT_GATE_MODE: 'warn'
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const mode = process.env.ALIGNMENT_GATE_MODE || 'warn';
+
+            const hasSection = body.includes('## Alignment Impact');
+
+            // Extract the alignment section content (between ## Alignment Impact and next ##)
+            const sectionMatch = body.split('## Alignment Impact')[1];
+            const sectionContent = sectionMatch ? sectionMatch.split(/\n## /)[0] : '';
+
+            // Check if at least one dimension is checked [x] or [X]
+            const hasCheckedDimension = /- \[x\]/i.test(sectionContent);
+
+            const issues = [];
+            if (!hasSection) {
+              issues.push('PR body must contain an "## Alignment Impact" section.');
+            }
+            if (hasSection && !hasCheckedDimension) {
+              issues.push('At least one alignment rubric dimension must be checked in the "## Alignment Impact" section.');
+            }
+
+            if (issues.length > 0) {
+              const message = [
+                '### Alignment Gate Check',
+                '',
+                issues.map(i => `- ${i}`).join('\n'),
+                '',
+                'See the [PR template](/.github/pull_request_template.md) for the required format.',
+                'Add the `alignment-exempt` label to bypass this check if not applicable.',
+              ].join('\n');
+
+              if (mode === 'enforce') {
+                core.setFailed(message);
+              } else {
+                // Warn-only mode: post a comment but don't fail
+                core.warning(message);
+
+                if (context.payload.pull_request.head.repo.full_name !== context.repo.owner + "/" + context.repo.repo) {
+                  return; // Fork token is read-only; the warning above remains visible.
+                }
+
+                // Post a PR comment with the warning
+                const { data: comments } = await github.rest.issues.listComments({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                });
+
+                const botComment = comments.find(c =>
+                  c.body && c.body.includes('### Alignment Gate Check')
+                );
+
+                const commentBody = `${message}\n\n> *Phase 1 (warn-only): This check will become mandatory after the rollout window.*`;
+
+                if (botComment) {
+                  await github.rest.issues.updateComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: botComment.id,
+                    body: commentBody,
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    body: commentBody,
+                  });
+                }
+              }
+            } else {
+              core.info('Alignment Impact section found with at least one dimension checked.');
+            }
+
+  release-alignment-95-gate:
+    # API access required by this job only.
+    permissions:
+      contents: read
+      issues: read
+    name: Release Alignment-95 Gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+    env:
+      PROMOTION_TARGET: ${{ inputs.promotion_target || github.event.inputs.promotion_target || 'production' }}
+      THRESHOLDS_PATH: ${{ inputs.thresholds_path || github.event.inputs.thresholds_path || 'infra/release-gates/alignment-95-thresholds.2026-03-04.v1.json' }}
+      KPI_SOURCE: ${{ inputs.kpi_source || github.event.inputs.kpi_source || 'infra/release-gates/sample-kpi-summary.2026-03-04.v1.json' }}
+      ALLOWED_OPEN_ISSUES: ${{ inputs.allowed_open_issues || github.event.inputs.allowed_open_issues || 'wrfcoin/infra#6' }}
+      OVERRIDE_TICKET: ${{ inputs.override_ticket || github.event.inputs.override_ticket || '' }}
+      OVERRIDE_REASON: ${{ inputs.override_reason || github.event.inputs.override_reason || '' }}
+      OVERRIDE_APPROVER: ${{ inputs.override_approver || github.event.inputs.override_approver || '' }}
+      KPI_JSON: /tmp/alignment-release-kpis.json
+      AUDIT_JSON: /tmp/alignment-release-gate-audit.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Verify alignment-90 issue prerequisite closure
+        uses: actions/github-script@v9
+        env:
+          ALLOWED_OPEN_ISSUES: ${{ env.ALLOWED_OPEN_ISSUES }}
+        with:
+          script: |
+            const repos = ['infra', 'backend', 'security-testing', 'defi-protocols'];
+            const allowed = new Set(
+              (process.env.ALLOWED_OPEN_ISSUES || '')
+                .split(',')
+                .map(value => value.trim())
+                .filter(Boolean)
+            );
+
+            const unresolved = [];
+
+            for (const repo of repos) {
+              let page = 1;
+              while (true) {
+                const { data } = await github.rest.issues.listForRepo({
+                  owner: context.repo.owner,
+                  repo,
+                  state: 'open',
+                  labels: 'alignment-90',
+                  per_page: 100,
+                  page,
+                });
+
+                if (data.length === 0) {
+                  break;
+                }
+
+                for (const issue of data) {
+                  if (issue.pull_request) {
+                    continue;
+                  }
+                  const issueKey = `${context.repo.owner}/${repo}#${issue.number}`;
+                  if (!allowed.has(issueKey)) {
+                    unresolved.push({
+                      issueKey,
+                      title: issue.title,
+                      url: issue.html_url,
+                    });
+                  }
+                }
+
+                if (data.length < 100) {
+                  break;
+                }
+                page += 1;
+              }
+            }
+
+            if (unresolved.length > 0) {
+              const details = unresolved
+                .slice(0, 20)
+                .map(issue => `- ${issue.issueKey}: ${issue.title} (${issue.url})`)
+                .join('\n');
+
+              core.setFailed(
+                `Alignment campaign prerequisite failed: ${unresolved.length} open alignment-90 issue(s) outside allowlist.\n${details}`
+              );
+              return;
+            }
+
+            core.info('Alignment campaign prerequisite check passed.');
+
+      - name: Resolve KPI source
+        run: |
+          set -euo pipefail
+          if [[ "$KPI_SOURCE" =~ ^https?:// ]]; then
+            curl -fsSL "$KPI_SOURCE" -o "$KPI_JSON"
+          else
+            cp "$KPI_SOURCE" "$KPI_JSON"
+          fi
+
+      - name: Evaluate rubric KPI thresholds and override policy
+        run: |
+          set -euo pipefail
+          cmd=(
+            node scripts/evaluate-alignment-release-gate.cjs
+            --kpis "$KPI_JSON"
+            --thresholds "$THRESHOLDS_PATH"
+            --target "$PROMOTION_TARGET"
+            --audit-output "$AUDIT_JSON"
+          )
+
+          if [[ -n "$OVERRIDE_TICKET" || -n "$OVERRIDE_REASON" || -n "$OVERRIDE_APPROVER" ]]; then
+            cmd+=(
+              --override-ticket "$OVERRIDE_TICKET"
+              --override-reason "$OVERRIDE_REASON"
+              --override-approver "$OVERRIDE_APPROVER"
+            )
+          fi
+
+          "${cmd[@]}"
+
+      - name: Upload release gate audit artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: alignment-release-gate-audit
+          path: ${{ env.AUDIT_JSON }}
+
+      - name: Publish gate summary
+        if: always()
+        run: |
+          if [[ -f "$AUDIT_JSON" ]]; then
+            echo "## Alignment-95 Release Gate" >> "$GITHUB_STEP_SUMMARY"
+            node -e "const fs=require('fs');const a=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));console.log('- target: '+a.target);console.log('- decision: '+a.decision);console.log('- thresholds_version: '+a.thresholds_version);console.log('- failed_metrics: '+(a.failed_metrics.length?a.failed_metrics.join(', '):'none'));" "$AUDIT_JSON" >> "$GITHUB_STEP_SUMMARY"
+          fi

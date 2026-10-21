@@ -1,0 +1,10 @@
+# Only the three public release metadata files; no directory browsing.
+(public_downloads) {
+    @release_metadata path /downloads/manifest.json /downloads/SHA256SUMS /downloads/manifest.json.asc
+    handle @release_metadata {
+        uri strip_prefix /downloads
+        root * /srv/wrfcoin-downloads/current
+        header Cache-Control "no-cache"
+        file_server
+    }
+}

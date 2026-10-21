@@ -1,0 +1,39 @@
+# Explicit overlay plus opt-in profile; main stack stays independent of this simulator.
+services:
+  wrfcoin-defi:
+    profiles: [defi]
+    image: wrfcoin/defi-node:testnet-simulator-b71a90b1322d
+    pull_policy: never
+    build:
+      context: ./services/defi
+      args:
+        DEFI_REVISION: b71a90b1322d83b8368ebc9fe2376768e2d4e7ac
+      network: none
+    environment:
+      DEFI_NODE_BIND: 0.0.0.0:7100
+      DEFI_NODE_POOLS: /etc/defi-node/pools.toml
+      RUST_LOG: info
+    networks:
+      wrfcoin-testnet: {}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 1
+    healthcheck:
+      test: [CMD, /usr/local/bin/defi-healthcheck]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  wrfcoin-backend:
+    environment:
+      # Existing relay remains unavailable unless the owner supplies this target.
+      DEFI_NODE_URL: ${DEFI_NODE_URL:-}
+    depends_on:
+      wrfcoin-defi:
+        condition: service_healthy
+        required: false

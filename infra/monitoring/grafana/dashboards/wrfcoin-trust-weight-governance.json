@@ -1,0 +1,492 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Trust-Weight Governance & Observability",
+    "tags": ["wrfcoin", "trust", "governance", "rewards", "observability"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m", "15m"],
+      "time_options": ["15m", "1h", "6h", "12h", "24h", "7d", "30d"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "query": "label_values(wrfcoin_trust_impact_blocks_observed, instance)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Trust Weight Changes",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_current_trust_weights_unverified_weight[5m]) > 0"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 100,
+        "title": "Trust-Weight Governance",
+        "type": "row",
+        "collapsed": false,
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+      },
+      {
+        "id": 1,
+        "title": "Effective Weighted Multiplier",
+        "description": "Combined trust × quality multiplier estimate across all observed blocks",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "wrfcoin_effective_weighted_multiplier_estimate{instance=~\"$instance\"}",
+            "legendFormat": "Effective Multiplier"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.4 },
+                { "color": "green", "value": 0.7 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 1 }
+      },
+      {
+        "id": 2,
+        "title": "Trust Weighted Multiplier",
+        "description": "Weighted average trust multiplier across all blocks",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "wrfcoin_trust_weighted_multiplier_estimate{instance=~\"$instance\"}",
+            "legendFormat": "Trust Multiplier"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.5 },
+                { "color": "green", "value": 0.8 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 1 }
+      },
+      {
+        "id": 3,
+        "title": "Quality Weighted Multiplier",
+        "description": "Weighted average quality multiplier across all blocks",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "wrfcoin_quality_weighted_multiplier_estimate{instance=~\"$instance\"}",
+            "legendFormat": "Quality Multiplier"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.5 },
+                { "color": "green", "value": 0.8 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 1 }
+      },
+      {
+        "id": 4,
+        "title": "Trust Impact Blocks Observed",
+        "description": "Total number of blocks with trust reward impact data",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_trust_impact_blocks_observed{instance=~\"$instance\"}",
+            "legendFormat": "Blocks Observed"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 10 },
+                { "color": "green", "value": 100 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 1 }
+      },
+      {
+        "id": 101,
+        "title": "Current Trust Weights",
+        "type": "row",
+        "collapsed": false,
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+      },
+      {
+        "id": 5,
+        "title": "Current Trust Weights by Class",
+        "description": "Active trust weighting policy — weight assigned to each contributor class",
+        "type": "bargauge",
+        "targets": [
+          {
+            "expr": "wrfcoin_current_trust_weights_unverified_weight{instance=~\"$instance\"}",
+            "legendFormat": "Unverified"
+          },
+          {
+            "expr": "wrfcoin_current_trust_weights_verified_station_weight{instance=~\"$instance\"}",
+            "legendFormat": "Verified Station"
+          },
+          {
+            "expr": "wrfcoin_current_trust_weights_trusted_provider_weight{instance=~\"$instance\"}",
+            "legendFormat": "Trusted Provider"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "orange", "value": 0.3 },
+                { "color": "yellow", "value": 0.6 },
+                { "color": "green", "value": 0.8 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient",
+          "showUnfilled": true
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 }
+      },
+      {
+        "id": 6,
+        "title": "Trust Weights Over Time",
+        "description": "Historical trust weight values for each contributor class",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_current_trust_weights_unverified_weight{instance=~\"$instance\"}",
+            "legendFormat": "Unverified Weight"
+          },
+          {
+            "expr": "wrfcoin_current_trust_weights_verified_station_weight{instance=~\"$instance\"}",
+            "legendFormat": "Verified Station Weight"
+          },
+          {
+            "expr": "wrfcoin_current_trust_weights_trusted_provider_weight{instance=~\"$instance\"}",
+            "legendFormat": "Trusted Provider Weight"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Weight",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "auto",
+              "stacking": { "mode": "none" }
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 }
+      },
+      {
+        "id": 102,
+        "title": "Trust-Class Distribution",
+        "type": "row",
+        "collapsed": false,
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }
+      },
+      {
+        "id": 7,
+        "title": "Trust-Class Distribution (Contributors)",
+        "description": "Number of contributors in each trust class across observed blocks",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "wrfcoin_trust_class_distribution_total_unverified{instance=~\"$instance\"}",
+            "legendFormat": "Unverified"
+          },
+          {
+            "expr": "wrfcoin_trust_class_distribution_total_verified_station{instance=~\"$instance\"}",
+            "legendFormat": "Verified Station"
+          },
+          {
+            "expr": "wrfcoin_trust_class_distribution_total_trusted_provider{instance=~\"$instance\"}",
+            "legendFormat": "Trusted Provider"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "values": ["value", "percent"]
+          },
+          "pieType": "donut",
+          "tooltip": { "mode": "single" }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 0, "y": 19 }
+      },
+      {
+        "id": 8,
+        "title": "Trust-Class Distribution Over Time",
+        "description": "Contributor count per trust class trending over time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_trust_class_distribution_total_unverified{instance=~\"$instance\"}",
+            "legendFormat": "Unverified"
+          },
+          {
+            "expr": "wrfcoin_trust_class_distribution_total_verified_station{instance=~\"$instance\"}",
+            "legendFormat": "Verified Station"
+          },
+          {
+            "expr": "wrfcoin_trust_class_distribution_total_trusted_provider{instance=~\"$instance\"}",
+            "legendFormat": "Trusted Provider"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Contributors",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never",
+              "stacking": { "mode": "normal" }
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 12, "y": 19 }
+      },
+      {
+        "id": 103,
+        "title": "Reward Multiplier Trends",
+        "type": "row",
+        "collapsed": false,
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 }
+      },
+      {
+        "id": 9,
+        "title": "Effective Multiplier Trend",
+        "description": "Combined trust × quality multiplier over time — reflects overall reward scaling",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_effective_weighted_multiplier_estimate{instance=~\"$instance\"}",
+            "legendFormat": "Effective (Trust × Quality)"
+          },
+          {
+            "expr": "wrfcoin_trust_weighted_multiplier_estimate{instance=~\"$instance\"}",
+            "legendFormat": "Trust Multiplier"
+          },
+          {
+            "expr": "wrfcoin_quality_weighted_multiplier_estimate{instance=~\"$instance\"}",
+            "legendFormat": "Quality Multiplier"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Multiplier",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "auto",
+              "stacking": { "mode": "none" }
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 9, "w": 24, "x": 0, "y": 30 }
+      },
+      {
+        "id": 104,
+        "title": "Block-Level Observability",
+        "type": "row",
+        "collapsed": false,
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 }
+      },
+      {
+        "id": 10,
+        "title": "Latest Trust Impact Block Height",
+        "description": "Most recent block height with trust reward impact data",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_latest_trust_impact_block_height{instance=~\"$instance\"}",
+            "legendFormat": "Latest Block"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-GrYlRd"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 6, "w": 6, "x": 0, "y": 40 }
+      },
+      {
+        "id": 11,
+        "title": "Trust Impact Blocks Growth Rate",
+        "description": "Rate of new blocks with trust impact data",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_trust_impact_blocks_observed{instance=~\"$instance\"}[$__rate_interval])",
+            "legendFormat": "Blocks/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Blocks/sec",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 6, "w": 18, "x": 6, "y": 40 }
+      },
+      {
+        "id": 12,
+        "title": "Trust Weight Ordering Invariant",
+        "description": "Verifies ordering: trusted_provider >= verified_station >= unverified. Values should always be >= 0.",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_current_trust_weights_trusted_provider_weight{instance=~\"$instance\"} - wrfcoin_current_trust_weights_verified_station_weight{instance=~\"$instance\"}",
+            "legendFormat": "Trusted - Verified (should be >= 0)"
+          },
+          {
+            "expr": "wrfcoin_current_trust_weights_verified_station_weight{instance=~\"$instance\"} - wrfcoin_current_trust_weights_unverified_weight{instance=~\"$instance\"}",
+            "legendFormat": "Verified - Unverified (should be >= 0)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Weight Difference",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "auto"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 0 }
+              ]
+            },
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 46 }
+      }
+    ]
+  }
+}

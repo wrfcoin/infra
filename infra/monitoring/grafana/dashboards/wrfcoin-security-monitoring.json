@@ -1,0 +1,575 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Security & Threat Monitoring",
+    "tags": ["wrfcoin", "security", "hsm", "threats"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "10s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+      "time_options": ["30m", "1h", "3h", "6h", "12h", "24h", "7d"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "security_component",
+          "type": "query",
+          "query": "label_values(wrfcoin_security_auth_attempts_total, component)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "threat_level",
+          "type": "custom",
+          "options": [
+            { "text": "All", "value": ".*", "selected": true },
+            { "text": "Critical", "value": "critical", "selected": false },
+            { "text": "High", "value": "high", "selected": false },
+            { "text": "Medium", "value": "medium", "selected": false },
+            { "text": "Low", "value": "low", "selected": false }
+          ],
+          "multi": true,
+          "includeAll": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Security Incidents",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_security_incidents_total[10m]) > 0"
+        },
+        {
+          "name": "HSM Events",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_security_hsm_operations_failed_total[5m]) > 0"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Security Alert Level",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_security_threat_level",
+            "legendFormat": "Current Threat Level"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1 },
+                { "color": "orange", "value": 2 },
+                { "color": "red", "value": 3 }
+              ]
+            },
+            "unit": "short",
+            "mappings": [
+              { "type": "value", "value": "0", "text": "Low" },
+              { "type": "value", "value": "1", "text": "Medium" },
+              { "type": "value", "value": "2", "text": "High" },
+              { "type": "value", "value": "3", "text": "Critical" }
+            ]
+          }
+        },
+        "gridPos": { "h": 8, "w": 4, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "HSM Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_security_hsm_status",
+            "legendFormat": "HSM Status"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "green", "value": 1 }
+              ]
+            },
+            "unit": "short",
+            "mappings": [
+              { "type": "value", "value": "0", "text": "Offline" },
+              { "type": "value", "value": "1", "text": "Online" }
+            ]
+          }
+        },
+        "gridPos": { "h": 8, "w": 4, "x": 4, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Failed Authentications",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_auth_failures_total[5m])",
+            "legendFormat": "Auth Failures/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.1 },
+                { "color": "red", "value": 1 }
+              ]
+            },
+            "unit": "short",
+            "decimals": 3
+          }
+        },
+        "gridPos": { "h": 8, "w": 4, "x": 8, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "Suspicious Activities",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_suspicious_activities_total[5m])",
+            "legendFormat": "Suspicious Events/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.01 },
+                { "color": "red", "value": 0.1 }
+              ]
+            },
+            "unit": "short",
+            "decimals": 4
+          }
+        },
+        "gridPos": { "h": 8, "w": 4, "x": 12, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "Active Security Incidents",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_security_active_incidents_count",
+            "legendFormat": "Active Incidents"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1 },
+                { "color": "red", "value": 5 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 4, "x": 16, "y": 0 }
+      },
+      {
+        "id": 6,
+        "title": "Key Management Operations",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_key_operations_total[5m])",
+            "legendFormat": "Key Ops/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-BlPu"
+            },
+            "unit": "short",
+            "decimals": 2
+          }
+        },
+        "gridPos": { "h": 8, "w": 4, "x": 20, "y": 0 }
+      },
+      {
+        "id": 7,
+        "title": "Authentication Events Timeline",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_auth_attempts_total[1m])",
+            "legendFormat": "Auth Attempts/sec - {{component}}"
+          },
+          {
+            "expr": "rate(wrfcoin_security_auth_failures_total[1m])",
+            "legendFormat": "Auth Failures/sec - {{component}}"
+          },
+          {
+            "expr": "rate(wrfcoin_security_auth_success_total[1m])",
+            "legendFormat": "Auth Success/sec - {{component}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Authentication Events/sec",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 1,
+              "pointSize": 4,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 8,
+        "title": "Security Incident Heatmap",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_incidents_by_severity_bucket[5m])",
+            "legendFormat": "{{le}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "scaleDistribution": {
+                "type": "linear"
+              }
+            }
+          }
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 9,
+        "title": "HSM Operations Monitoring",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_hsm_operations_total[5m])",
+            "legendFormat": "HSM Operations/sec - {{operation_type}}"
+          },
+          {
+            "expr": "rate(wrfcoin_security_hsm_operations_failed_total[5m])",
+            "legendFormat": "HSM Failures/sec - {{operation_type}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(wrfcoin_security_hsm_operation_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th Percentile Duration"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Operations/sec & Duration",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 }
+      },
+      {
+        "id": 10,
+        "title": "Threat Detection by Source",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "sum by (source_ip, threat_type) (rate(wrfcoin_security_threats_detected_total[10m]))",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "short",
+            "decimals": 4
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "yellow", "value": 0.001 },
+                      { "color": "red", "value": 0.01 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 }
+      },
+      {
+        "id": 11,
+        "title": "Key Rotation Status",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "wrfcoin_security_key_age_days",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "d"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "yellow", "value": 30 },
+                      { "color": "red", "value": 90 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 }
+      },
+      {
+        "id": 12,
+        "title": "Access Control Violations",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_access_violations_total[5m])",
+            "legendFormat": "Access Violations/sec - {{violation_type}}"
+          },
+          {
+            "expr": "rate(wrfcoin_security_privilege_escalations_total[5m])",
+            "legendFormat": "Privilege Escalations/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Violations/sec",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 2,
+              "pointSize": 4,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 }
+      },
+      {
+        "id": 13,
+        "title": "Network Security Events",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_security_network_intrusions_total[5m])",
+            "legendFormat": "Network Intrusions/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_security_ddos_attempts_total[5m])",
+            "legendFormat": "DDoS Attempts/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_security_port_scans_total[5m])",
+            "legendFormat": "Port Scans/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Security Events/sec",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 1,
+              "pointSize": 4,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 }
+      },
+      {
+        "id": 14,
+        "title": "Security Event Distribution",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (event_type) (rate(wrfcoin_security_events_total[1h]))",
+            "legendFormat": "{{event_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 }
+      },
+      {
+        "id": 15,
+        "title": "Certificate Status & Expiry",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "wrfcoin_security_certificate_expiry_days",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "d"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "red", "value": null },
+                      { "color": "yellow", "value": 30 },
+                      { "color": "green", "value": 90 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 }
+      }
+    ]
+  }
+}

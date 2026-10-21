@@ -1,0 +1,24 @@
+# Desktop peer #2 overrides.
+#
+# The base compose mounts postgres-backup at /var/lib/postgresql/data/backup,
+# nested inside the postgres data volume. postgres:15-alpine's docker-entrypoint
+# refuses to initdb when the data directory isn't empty, so a fresh bring-up
+# fails. The N5 Pro only works because its volume was initialized long before
+# the backup mount was added.
+#
+# Nest PGDATA one level deeper so initdb writes to .../data/pgdata and the
+# backup mount sits alongside at .../data/backup.
+
+services:
+  postgres:
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+  # R100 (2026-05-22): pass WRFCOIN_MIN_WORK_FACTOR from .env into the
+  # container. The producer self-relaxes via #1492 but the validator path
+  # uses min_work_factor_floor() which reads the env var directly; without
+  # this passthrough the desktop rejects N5's empty-liveness blocks at
+  # height 1 with min_work_factor=1000.
+  wrfcoin-node:
+    environment:
+      WRFCOIN_MIN_WORK_FACTOR: ${WRFCOIN_MIN_WORK_FACTOR:-0}

@@ -1,0 +1,21 @@
+# Explicit genesis-cut overlay. Never included in steady-state defaults.
+# Pair with a reviewed core4 binary and owner-supplied public genesis inputs.
+# Empty schedule/version/sets/address refuse at Compose render time.
+x-genesis: &genesis
+  WRFCOIN_CHAIN_ID: ${WRFCOIN_CHAIN_ID:?set the reviewed cut chain id}
+  WRFCOIN_SIGNING_PROTOCOL_VERSION: ${WRFCOIN_SIGNING_PROTOCOL_VERSION:?set the reviewed genesis signing version}
+  WRFCOIN_GENESIS_ACTIVATION_SCHEDULE: ${WRFCOIN_GENESIS_ACTIVATION_SCHEDULE:?set the reviewed genesis schedule}
+  WRFCOIN_GENESIS_PRODUCER_SET: ${WRFCOIN_GENESIS_PRODUCER_SET:?set the reviewed producer set}
+  WRFCOIN_GENESIS_ORACLE_SET: ${WRFCOIN_GENESIS_ORACLE_SET:?set the reviewed oracle set}
+  WRFCOIN_GENESIS_FAUCET_ADDRESS: ${WRFCOIN_GENESIS_FAUCET_ADDRESS:?set the genesis faucet address}
+  WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS: ${WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS:?set the owner-approved reward per block}
+  WRFCOIN_GENESIS_FLAT_REWARD_SECONDS: ${WRFCOIN_GENESIS_FLAT_REWARD_SECONDS:?set the reviewed flat reward tier}
+  WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS: ${WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS:?set the owner-approved faucet allocation}
+  WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS: ${WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS:?set the reviewed schedule governance keys}
+  WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS: ${WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS:?set the reviewed node-pay epoch}
+  WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS: ${WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS:?set the reviewed node-pay challenge window}
+services:
+  wrfcoin-node:
+    environment: *genesis
+  wrfcoin-seed:
+    environment: *genesis

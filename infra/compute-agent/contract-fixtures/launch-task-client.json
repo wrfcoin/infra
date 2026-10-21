@@ -1,0 +1,42 @@
+{
+  "seam": "compute-agent-task-client",
+  "register": {
+    "endpoint": "/api/compute/register",
+    "preferences": {
+      "preferredTasks": ["weather_model"],
+      "autoStart": false
+    },
+    "requiredResponseFields": ["success", "nodeId", "capabilities", "recommendedTasks"]
+  },
+  "heartbeat": {
+    "endpoint": "/api/compute/heartbeat",
+    "status": {
+      "active": false,
+      "currentTask": null
+    },
+    "requiredResponseFields": ["success", "nodeId", "nextHeartbeat", "availableTasks", "systemHealth"]
+  },
+  "poll": {
+    "endpointTemplate": "/api/compute/tasks/available/{nodeId}",
+    "requiredResponseFields": ["success", "nodeId", "availableTasks"]
+  },
+  "start": {
+    "endpoint": "/api/compute/tasks/start",
+    "taskType": "weather_model",
+    "requiredResponseFields": ["success", "taskId", "nodeId", "task"]
+  },
+  "status": {
+    "endpointTemplate": "/api/compute/tasks/{taskId}/status",
+    "requiredStates": ["running", "completed"]
+  },
+  "mainApiSubmission": {
+    "endpoint": "/api/compute/tasks",
+    "taskType": "weather_model",
+    "payload": {
+      "model": "wrf-arw",
+      "domain": "conus",
+      "forecastHours": 6
+    },
+    "expectedQueuedStatus": "queued"
+  }
+}

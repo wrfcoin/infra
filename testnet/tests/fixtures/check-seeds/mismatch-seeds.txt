@@ -1,0 +1,2 @@
+# Synthetic peer-id mismatch fixture.
+/ip4/198.51.100.42/tcp/9000/p2p/12D3KooWSyntheticMismatch

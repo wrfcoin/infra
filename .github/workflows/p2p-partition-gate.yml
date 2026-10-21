@@ -1,0 +1,70 @@
+permissions:
+  contents: read
+
+# NOTE: This gate requires core4#663 to merge first — the Docker build
+# depends on core4/native-chain/Dockerfile which is added in that PR.
+# Until core4#663 lands, the "Build wrfcoin-node image" step will fail.
+
+name: P2P Partition Gate
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  p2p-partition:
+    name: P2P Partition Regression Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v7
+        with:
+          path: wrfcoin/infra
+
+      - name: Checkout core4
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+          path: wrfcoin/core4
+          token: ${{ secrets.WRFCOIN_OPERATOR_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build wrfcoin-node image
+        uses: docker/build-push-action@v7
+        with:
+          context: wrfcoin/core4
+          file: wrfcoin/core4/native-chain/Dockerfile
+          push: false
+          load: true
+          tags: wrfcoin/wrfcoin-node:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run deterministic partition scenario
+        env:
+          REPORT_DIR: artifacts/p2p-partition
+          P2P_PARTITION_IMAGE: wrfcoin/wrfcoin-node:latest
+          WRFCOIN_OPERATOR_TOKEN: ci-test-token
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/p2p-partition
+          bash wrfcoin/infra/scripts/run-p2p-partition-ci.sh | tee artifacts/p2p-partition/workflow-output.txt
+
+      - name: Publish partition summary
+        if: always()
+        run: |
+          if [ -f artifacts/p2p-partition/summary.md ]; then
+            cat artifacts/p2p-partition/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload partition artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: p2p-partition
+          path: artifacts/p2p-partition/

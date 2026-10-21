@@ -1,0 +1,387 @@
+version: '3.8'
+services:
+  wrfcoin-core:
+    build:
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.core
+    container_name: wrfcoin-core
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8556:8556'
+      - '0.0.0.0:9000:9000'
+    environment:
+      WRFCOIN_API_HOST: '0.0.0.0'
+      WRFCOIN_API_PORT: '8556'
+      WRFCOIN_P2P_PORT: '9000'
+      WRFCOIN_P2P_ENABLED: 'true'
+      RUST_LOG: info
+    volumes:
+      - 'core-data:/app/data'
+      - './logs:/app/logs'
+      - './config:/app/config'
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8556/readyz']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  weather-service:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.weather
+    container_name: wrfcoin-weather
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3001:3000'
+    environment:
+      SERVICE_NAME: weather-service
+      PORT: '3000'
+    depends_on:
+      wrfcoin-core:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+  ml-inference:
+    profiles: ["full"]
+    build:
+      # Deploy root, not the repo root: this image needs backend/services/ml/,
+      # which lives in the sibling backend repository. Same convention as
+      # wrfcoin-core and wrfcoin-backend below.
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.ml
+    container_name: wrfcoin-ml
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3002:8080'
+    environment:
+      SERVICE_NAME: ml-inference
+      PORT: '8080'
+      GPU_SUPPORT: 'true'
+    depends_on:
+      wrfcoin-core:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8080/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+  etl-pipeline:
+    profiles: ["full"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.etl
+    container_name: wrfcoin-etl
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3003:5000'
+    environment:
+      SERVICE_NAME: etl-pipeline
+      PORT: '5000'
+    depends_on:
+      wrfcoin-core:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:5000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+  redis-cache:
+    image: 'redis:7-alpine'
+    container_name: wrfcoin-redis
+    restart: unless-stopped
+    # SECURITY: Remove public port exposure - Redis should only be accessible internally
+    # ports:
+    #   - '6379:6379'
+    # SECURITY: Redis password MUST be set via REDIS_PASSWORD environment variable
+    # No default fallback - deployment will fail if password is not configured
+    # SECURITY: TLS is enforced — provision certs at REDIS_TLS_CERT_DIR (default: ./tls/redis/)
+    command: >-
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      --appendonly yes
+      --protected-mode yes
+      --bind 0.0.0.0
+      --tls-port 6379
+      --port 0
+      --tls-cert-file /tls/redis.crt
+      --tls-key-file /tls/redis.key
+      --tls-ca-cert-file /tls/ca.crt
+      --tls-auth-clients optional
+    volumes:
+      - 'redis-data:/data'
+      - '../../backend/server/config/redis.conf:/usr/local/etc/redis/redis.conf'
+      - '${REDIS_TLS_CERT_DIR:-./tls/redis}:/tls:ro'
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'redis-cli',
+          '--no-auth-warning',
+          '--tls',
+          '--cacert', '/tls/ca.crt',
+          '-a',
+          '${REDIS_PASSWORD}',
+          'ping',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  meshtastic-gateway:
+    profiles: ["full"]
+    build:
+      context: ../../../core4/services/meshtastic-gateway
+      dockerfile: Dockerfile
+    container_name: wrfcoin-meshtastic-gateway
+    restart: unless-stopped
+    # SECURITY: Bind to localhost only - not publicly accessible
+    ports:
+      - '127.0.0.1:8001:8001'
+    environment:
+      MESHTASTIC_GW_GATEWAY_ID: gw-dev-001
+      MESHTASTIC_GW_BACKEND_URL: http://wrfcoin-backend:4001
+      MESHTASTIC_GW_MESHTASTIC_MODE: mock
+      MESHTASTIC_GW_LOG_LEVEL: INFO
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - '-f'
+        - 'http://localhost:8001/health'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    # SECURITY: Container hardening
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+  # ===== Backend Microservices =====
+  wrfcoin-backend:
+    build:
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.backend
+    container_name: wrfcoin-backend
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:4001:4001'
+    environment:
+      PORT: '4001'
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      # backend#1234: /metrics (and /health detail) need an operator or reader
+      # bearer. The prometheus service below scrapes with the mounted
+      # WRFCOIN_PROMETHEUS_BEARER_TOKEN_FILE, which must hold one of these.
+      WRFCOIN_READER_TOKEN: ${WRFCOIN_READER_TOKEN:-}
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:-}
+    depends_on:
+      redis-cache:
+        condition: service_healthy
+      wrfcoin-core:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4001/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  wrfcoin-governance:
+    profiles: ["full"]
+    build:
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.backend
+    container_name: wrfcoin-governance
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8000:8000'
+    environment:
+      PORT: '8000'
+      NODE_ENV: production
+    command: ['node', 'backend/server/governance_server.js']
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  wrfcoin-iot:
+    profiles: ["full"]
+    build:
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.backend
+    container_name: wrfcoin-iot
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3002:3002'
+    environment:
+      PORT: '3002'
+      NODE_ENV: production
+    command: ['node', 'backend/server/iot_sensor_networks_server.js']
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3002/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  wrfcoin-cross-chain:
+    profiles: ["full"]
+    build:
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.backend
+    container_name: wrfcoin-cross-chain
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      PORT: '3000'
+      NODE_ENV: production
+    command: ['node', 'backend/server/cross_chain_protocol_server.js']
+    depends_on:
+      wrfcoin-backend:
+        condition: service_healthy
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  wrfcoin-storage:
+    profiles: ["full"]
+    # The real storage-node daemon (storage-providers#65, infra#944). It was
+    # backend's mocked storage server. IPFS-only testnet profile: expects a kubo
+    # at http://ipfs:5001 (see docker-compose.storage.yml). Without one, /health
+    # answers 503.
+    build:
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.storage
+    container_name: wrfcoin-storage
+    restart: unless-stopped
+    ports:
+      # Host port 7000 kept for the existing dev probes; the daemon listens on 7001.
+      - '127.0.0.1:7000:7001'
+    environment:
+      STORAGE_NODE_PROFILE: testnet
+    networks:
+      - wrfcoin-network
+    # distroless image: no shell or curl, so no container healthcheck.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  prometheus:
+    profiles: ["full"]
+    # SECURITY: Pin to specific version
+    image: 'prom/prometheus:v2.48.0'
+    container_name: wrfcoin-prometheus
+    restart: unless-stopped
+    # SECURITY: Bind to localhost only - not publicly accessible
+    ports:
+      - '127.0.0.1:9090:9090'
+    volumes:
+      - './prometheus.yml:/etc/prometheus/prometheus.yml'
+      - '${WRFCOIN_PROMETHEUS_BEARER_TOKEN_FILE:-../../testnet/prometheus-bearer-token}:/etc/prometheus/bearer_token:ro'
+      - 'prometheus-data:/prometheus'
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      # SECURITY: Do NOT enable --web.enable-lifecycle or --web.enable-admin-api
+      # These expose unauthenticated /-/reload and /-/quit endpoints.
+      # Use `docker compose restart prometheus` or `kill -HUP 1` inside the container instead.
+    # SECURITY: Container hardening
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    user: '65534:65534'
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    networks:
+      - wrfcoin-network
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:9090/-/healthy']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+networks:
+  wrfcoin-network:
+    driver: bridge
+volumes:
+  redis-data: {}
+  prometheus-data: {}
+  core-data: {}

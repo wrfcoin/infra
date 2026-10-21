@@ -1,0 +1,102 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: 'wrfcoin-main-api'
+    static_configs:
+      - targets: ['host.docker.internal:4001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    # backend#1234: the main API /metrics requires an operator/reader bearer.
+    # The token file is mounted by every compose file that loads this config
+    # (WRFCOIN_PROMETHEUS_BEARER_TOKEN_FILE, default: the testnet
+    # prometheus-bearer-token, which setup-env writes from WRFCOIN_READER_TOKEN).
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/bearer_token
+
+  - job_name: 'wrfcoin-blockchain-api'
+    static_configs:
+      - targets: ['host.docker.internal:8556']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  - job_name: 'wrfcoin-launch-health'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['http://host.docker.internal:3001/api/health']
+        labels:
+          service: backend-dev
+          endpoint: api-health
+          layer: backend
+      - targets: ['http://host.docker.internal:4001/ready']
+        labels:
+          service: main-api
+          endpoint: ready
+          layer: compute-path
+      - targets: ['http://host.docker.internal:4001/live']
+        labels:
+          service: main-api
+          endpoint: live
+          layer: compute-path
+      - targets: ['http://host.docker.internal:6003/ready']
+        labels:
+          service: compute-contribution
+          endpoint: ready
+          layer: compute-path
+      - targets: ['http://host.docker.internal:3333/health']
+        labels:
+          service: compute-agent
+          endpoint: health
+          layer: compute-path
+      - targets: ['http://host.docker.internal:8556/health']
+        labels:
+          service: launch_api
+          endpoint: health
+          layer: blockchain
+      - targets: ['http://host.docker.internal:9090/-/ready']
+        labels:
+          service: prometheus
+          endpoint: ready
+          layer: monitoring
+      - targets: ['http://host.docker.internal:3100/api/health']
+        labels:
+          service: grafana
+          endpoint: health
+          layer: monitoring
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: 'wrfcoin-launch-websocket'
+    metrics_path: /probe
+    params:
+      module: [http_websocket]
+    static_configs:
+      - targets: ['http://host.docker.internal:4001/ws']
+        labels:
+          service: main-api
+          endpoint: websocket
+          layer: compute-path
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

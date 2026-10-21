@@ -1,0 +1,50 @@
+# WRFCoin dev infrastructure — postgres + redis only
+# App services are started directly by relaunch-testnet-stack.sh
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: wrfcoin-postgres
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5432:5432'
+    environment:
+      POSTGRES_USER: wrfcoin
+      POSTGRES_PASSWORD: ${POSTGRES_DEV_PASSWORD:?POSTGRES_DEV_PASSWORD must be set}
+      POSTGRES_DB: wrfcoin
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - wrfcoin-dev
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wrfcoin']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis-cache:
+    image: redis:7-alpine
+    container_name: wrfcoin-redis
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:6379:6379'
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set} --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - wrfcoin-dev
+    healthcheck:
+      test: ['CMD', 'redis-cli', '--no-auth-warning', '-a', '${REDIS_PASSWORD}', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  wrfcoin-dev:
+    driver: bridge
+
+volumes:
+  postgres-data: {}
+  redis-data: {}

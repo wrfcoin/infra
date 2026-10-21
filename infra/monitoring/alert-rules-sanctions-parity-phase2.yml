@@ -1,0 +1,67 @@
+groups:
+  - name: sanctions_parity_fairness_phase2
+    rules:
+      - alert: AlignmentSanctionParityActorClassDriftCritical
+        expr: max_over_time(wrfcoin_sanctions_parity_actor_class_spread[20m]) > 0.08
+        for: 20m
+        labels:
+          severity: critical
+          category: sanctions-parity
+          campaign: alignment-90
+        annotations:
+          summary: 'Actor-class sanction parity drift exceeded SLO'
+          description: 'Spread across human/AI/robot sanction rates is > 0.08 for 20m.'
+          threshold: 'actor-class-spread > 0.08 for 20m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/sanctions-parity-drift-response.md#actor-class-parity-drift'
+
+      - alert: AlignmentSanctionParitySeverityDriftCritical
+        expr: max_over_time(wrfcoin_sanctions_parity_offense_severity_spread[20m]) > 0.10
+        for: 20m
+        labels:
+          severity: critical
+          category: sanctions-parity
+          campaign: alignment-90
+        annotations:
+          summary: 'Offense-severity sanction parity drift exceeded SLO'
+          description: 'Spread between equivalent offense-severity outcomes is > 0.10 for 20m.'
+          threshold: 'offense-severity-spread > 0.10 for 20m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/sanctions-parity-drift-response.md#offense-severity-parity-drift'
+
+      - alert: AlignmentSanctionParityOutcomeBiasWarning
+        expr: max_over_time(wrfcoin_sanctions_outcome_bias_score[30m]) > 0.12
+        for: 30m
+        labels:
+          severity: warning
+          category: sanctions-parity
+          campaign: alignment-90
+        annotations:
+          summary: 'Outcome bias score indicates unequal-liability pressure'
+          description: 'Outcome bias score is > 0.12 across actor-class and severity cohorts.'
+          threshold: 'outcome-bias-score > 0.12 for 30m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/sanctions-parity-drift-response.md#outcome-bias-detected'
+
+      - alert: AlignmentSanctionParityTelemetryCoverageDrop
+        expr: wrfcoin_sanctions_parity_label_coverage_ratio < 0.98
+        for: 15m
+        labels:
+          severity: warning
+          category: sanctions-parity
+          campaign: alignment-90
+        annotations:
+          summary: 'Parity telemetry coverage dropped below minimum threshold'
+          description: 'Less than 98% of sanction events have actor_class + offense_severity labels.'
+          threshold: 'label-coverage-ratio < 0.98 for 15m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/sanctions-parity-drift-response.md#telemetry-coverage-drop'
+
+      - alert: AlignmentSanctionParityRemediationLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(wrfcoin_sanctions_parity_remediation_latency_seconds_bucket[2h]))) > 14400
+        for: 30m
+        labels:
+          severity: warning
+          category: sanctions-parity
+          campaign: alignment-90
+        annotations:
+          summary: 'Parity remediation latency exceeded target'
+          description: 'p95 parity remediation latency is above 4 hours.'
+          threshold: 'remediation-latency-p95 > 14400s for 30m'
+          runbook_url: 'https://github.com/wrfcoin/infra/blob/main/infra/monitoring/runbooks/sanctions-parity-drift-response.md#remediation-latency-breach'

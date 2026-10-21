@@ -1,0 +1,1 @@
+[{"Type":"bind","Source":"/root/wrfcoin/infra/testnet/config/node.toml","Destination":"/app/config/node.toml","Mode":"ro","RW":false,"Propagation":"rprivate"},{"Type":"volume","Name":"testnet_node-data","Source":"/var/lib/docker/volumes/testnet_node-data/_data","Destination":"/app/data","Driver":"local","Mode":"z","RW":true,"Propagation":""}]

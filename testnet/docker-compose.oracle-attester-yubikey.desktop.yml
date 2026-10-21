@@ -1,0 +1,19 @@
+# Desktop/WSL2 transport for an existing ceremony YubiKey oracle identity.
+# Include after docker-compose.oracle-attester.yml. The owner must attach only
+# the intended oracle token through usbipd-win before starting the service.
+
+services:
+  oracle-attester:
+    user: root
+    security_opt: !reset []
+    cap_add:
+      - SETUID
+      - SETGID
+    environment:
+      WRFCOIN_HSM_MODULE_PATH: /usr/lib/x86_64-linux-gnu/libykcs11.so
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    tmpfs:
+      - /run/pcscd
+      - /tmp:noexec,nosuid,size=16m
+      - /app/logs:noexec,nosuid,size=32m

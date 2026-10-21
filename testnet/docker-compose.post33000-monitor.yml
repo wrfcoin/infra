@@ -1,0 +1,28 @@
+# Optional independent observer; never installed by the lane or a default boot.
+# No exporter: native node height and existing faucet balance metrics already exist.
+services:
+  post33000-prometheus:
+    profiles: [post33000-monitor]
+    image: prom/prometheus:v3.1.0
+    pull_policy: never
+    network_mode: host
+    user: "${POST33000_UID:-1000}:${POST33000_GID:-1000}"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.listen-address=127.0.0.1:9097
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ${POST33000_PROM_CONFIG:-../infra/monitoring/post33000/prometheus.yml}:/etc/prometheus/prometheus.yml:ro
+      - ../infra/monitoring/post33000/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${POST33000_READER_FILE:-/nonexistent/post33000-reader-token}:/run/secrets/reader-token:ro
+      - post33000-prometheus-data:/prometheus
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    restart: "no"
+volumes:
+  post33000-prometheus-data:

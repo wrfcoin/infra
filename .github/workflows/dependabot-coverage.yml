@@ -1,0 +1,36 @@
+permissions:
+  contents: read
+
+# Dependabot coverage gate (infra#474).
+#
+# DELIBERATELY no `paths:` filter and no `needs:`: the failure this gate exists
+# to catch is a NEW manifest landing anywhere in the tree without a grouped
+# weekly Dependabot entry — no paths expression can reliably match "any new
+# package.json anywhere", a filtered trigger would SKIP on exactly that change,
+# and a skipped required check reads green in branch-protection rollups. It is
+# a sub-second script; it runs on every PR.
+name: Dependabot coverage
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Refs infra#1113: superseded PRs share a group; every other run is isolated,
+# including pending main/dispatch/schedule jobs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dependabot-coverage:
+    # build runner self-hosted (2026-08-30): PR-blocking guards must stay REAL when
+    # hosted minutes are exhausted (zero-step billing failures otherwise).
+    # Needs only python3 + python3-yaml, both preinstalled on build runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Derived surfaces are all grouped weekly
+        run: bash scripts/test-dependabot-groups.sh
+      - name: Temporary ignores match their review ledger
+        run: bash scripts/test-dependabot-temporary-ignore.sh

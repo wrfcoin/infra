@@ -1,0 +1,33 @@
+{
+  "passed": 26,
+  "total": 26,
+  "execution_time_s": 0.0,
+  "test_names": [
+    "adversarial_suite::clock_skew::test_beyond_window_clock_skew_rejection",
+    "adversarial_suite::clock_skew::test_boundary_timestamp_validation",
+    "adversarial_suite::clock_skew::test_extreme_clock_skew_within_window",
+    "adversarial_suite::clock_skew::test_gradual_clock_drift",
+    "adversarial_suite::clock_skew::test_honest_validator_clock_variance",
+    "adversarial_suite::clock_skew::test_progressive_clock_skew",
+    "adversarial_suite::clock_skew::test_timestamp_manipulation_in_proposals",
+    "adversarial_suite::clock_skew::test_timestamp_regression_between_blocks",
+    "adversarial_suite::network_partition::test_asymmetric_partition",
+    "adversarial_suite::network_partition::test_partition_byzantine_isolation",
+    "adversarial_suite::network_partition::test_partition_heal_recovery",
+    "adversarial_suite::network_partition::test_partition_no_majority",
+    "adversarial_suite::network_partition::test_partition_with_byzantine",
+    "adversarial_suite::network_partition::test_rapid_partition_heal_cycles",
+    "adversarial_suite::oracle_collusion::test_attestation_for_unknown_commit_id_ignored",
+    "adversarial_suite::oracle_collusion::test_duplicate_attestation_flooding",
+    "adversarial_suite::oracle_collusion::test_invalid_signature_attestations_ignored",
+    "adversarial_suite::oracle_collusion::test_mixed_collusion_scenario",
+    "adversarial_suite::oracle_collusion::test_oracle_collusion_above_threshold",
+    "adversarial_suite::oracle_collusion::test_oracle_collusion_below_threshold",
+    "adversarial_suite::replay_attack::test_attestation_replay_burst",
+    "adversarial_suite::replay_attack::test_cross_context_replay",
+    "adversarial_suite::replay_attack::test_independent_sender_nonce_tracking",
+    "adversarial_suite::replay_attack::test_nonce_replay_burst",
+    "adversarial_suite::replay_attack::test_nonce_replay_prevention",
+    "adversarial_suite::replay_attack::test_nonce_sequential_replay_prevention"
+  ]
+}

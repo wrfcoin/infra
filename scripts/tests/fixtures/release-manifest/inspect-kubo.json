@@ -1,0 +1,14 @@
+[
+  {
+    "Id": "sha256:3f7c1e9a5b2d4c6e8f0a1b3c5d7e9f2a4b6c8d0e1f3a5b7c9d1e2f4a6b8c0d1e",
+    "RepoTags": ["__IMAGE__"],
+    "RepoDigests": ["ipfs/kubo@sha256:abababababababababababababababababababababababababababababababab"],
+    "Created": "2024-01-05T10:00:00Z",
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Config": {
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+      "Labels": {}
+    }
+  }
+]

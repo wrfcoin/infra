@@ -1,0 +1,292 @@
+# Istio Service Mesh Configuration for Advanced Traffic Management
+# Provides fine-grained traffic control, security, and observability
+
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: wrfcoin-gateway
+  namespace: wrfcoin-production
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: wrfcoin-tls-secret
+      hosts:
+        - wrfcoin.com
+        - api.wrfcoin.com
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - wrfcoin.com
+        - api.wrfcoin.com
+      redirect:
+        httpsRedirect: true
+
+---
+# Virtual Service for Advanced Traffic Management
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: wrfcoin-api-vs
+  namespace: wrfcoin-production
+spec:
+  hosts:
+    - api.wrfcoin.com
+  gateways:
+    - wrfcoin-gateway
+  http:
+    # Canary routing with multiple strategies
+    - match:
+        - headers:
+            x-canary:
+              exact: 'true'
+      route:
+        - destination:
+            host: wrfcoin-api-canary
+            port:
+              number: 80
+          weight: 100
+      fault:
+        delay:
+          percentage:
+            value: 0.1
+          fixedDelay: 5s
+
+    # Geographic routing
+    - match:
+        - headers:
+            x-region:
+              exact: 'us-west'
+      route:
+        - destination:
+            host: wrfcoin-api-stable
+            subset: us-west
+            port:
+              number: 80
+          weight: 100
+
+    # Default stable routing with traffic split
+    - route:
+        - destination:
+            host: wrfcoin-api-stable
+            port:
+              number: 80
+          weight: 95
+        - destination:
+            host: wrfcoin-api-canary
+            port:
+              number: 80
+          weight: 5
+      timeout: 30s
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+        retryOn: 5xx,reset,connect-failure,refused-stream
+
+---
+# Destination Rules for Load Balancing and Circuit Breaking
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: wrfcoin-api-dr
+  namespace: wrfcoin-production
+spec:
+  host: wrfcoin-api-stable
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        tcpNoDelay: true
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        maxRetries: 3
+        idleTimeout: 900s
+        h2UpgradePolicy: UPGRADE
+    circuitBreaker:
+      consecutiveGatewayErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+  subsets:
+    - name: us-west
+      labels:
+        region: us-west
+    - name: us-east
+      labels:
+        region: us-east
+
+---
+# Service Entry for External Dependencies
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-weather-api
+  namespace: wrfcoin-production
+spec:
+  hosts:
+    - api.openweathermap.org
+    - api.weatherapi.com
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+    - number: 80
+      name: http
+      protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# Security Policy for mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: wrfcoin-mtls
+  namespace: wrfcoin-production
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Authorization Policy
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: wrfcoin-api-authz
+  namespace: wrfcoin-production
+spec:
+  selector:
+    matchLabels:
+      app: wrfcoin-api
+  rules:
+    - from:
+        - source:
+            principals:
+              ['cluster.local/ns/wrfcoin-production/sa/wrfcoin-frontend']
+    - to:
+        - operation:
+            methods: ['GET', 'POST']
+            paths: ['/api/*']
+    - when:
+        - key: request.headers[x-api-key]
+          values: ['*']
+
+---
+# Rate Limiting Policy
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: rate-limit-filter
+  namespace: wrfcoin-production
+spec:
+  workloadSelector:
+    labels:
+      app: wrfcoin-api
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: 'envoy.filters.network.http_connection_manager'
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.local_ratelimit
+          typed_config:
+            '@type': type.googleapis.com/udpa.type.v1.TypedStruct
+            type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+            value:
+              stat_prefix: rate_limiter
+              token_bucket:
+                max_tokens: 1000
+                tokens_per_fill: 100
+                fill_interval: 1s
+              filter_enabled:
+                runtime_key: rate_limit_enabled
+                default_value:
+                  numerator: 100
+                  denominator: HUNDRED
+              filter_enforced:
+                runtime_key: rate_limit_enforced
+                default_value:
+                  numerator: 100
+                  denominator: HUNDRED
+
+---
+# Telemetry Configuration
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: wrfcoin-metrics
+  namespace: wrfcoin-production
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+    - overrides:
+        - match:
+            metric: ALL_METRICS
+          tagOverrides:
+            request_protocol:
+              operation: UPSERT
+              value: '%{REQUEST_PROTOCOL}'
+            response_code:
+              operation: UPSERT
+              value: '%{RESPONSE_CODE}'
+            service_name:
+              operation: UPSERT
+              value: '%{DOWNSTREAM_REMOTE_ADDRESS}'
+  accessLogging:
+    - providers:
+        - name: otel
+
+---
+# Fault Injection for Chaos Engineering
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: wrfcoin-chaos-testing
+  namespace: wrfcoin-production
+spec:
+  hosts:
+    - wrfcoin-api-stable
+  http:
+    - match:
+        - headers:
+            x-chaos-test:
+              exact: 'true'
+      fault:
+        abort:
+          percentage:
+            value: 1
+          httpStatus: 500
+        delay:
+          percentage:
+            value: 5
+          fixedDelay: 10s
+      route:
+        - destination:
+            host: wrfcoin-api-stable

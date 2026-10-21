@@ -1,0 +1,336 @@
+# SLI/SLO-based Alert Rules for Wrfcoin Blockchain Monitoring
+# Defines Service Level Indicators and Service Level Objectives with alerting thresholds
+
+groups:
+  # Blockchain Core SLO Alerts
+  - name: blockchain_core_slo_alerts
+    rules:
+      # Block Production SLO: 99.9% uptime (blocks produced every 3 seconds)
+      - alert: BlockProductionSLOBreach
+        expr: wrfcoin:blockchain:block_production_rate_5m < 0.33 # Less than 1 block per 3 seconds
+        for: 2m
+        labels:
+          severity: critical
+          category: blockchain_core
+          slo_type: availability
+          slo_target: '99.9%'
+        annotations:
+          summary: 'Block production SLO breach detected'
+          description: 'Block production rate is {{ $value }} blocks/second (SLO: 0.33 blocks/second)'
+          impact: 'Network transaction processing severely degraded'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="block_processing"'
+
+      # Transaction Processing SLO: 99.5% success rate
+      - alert: TransactionProcessingSLOBreach
+        expr: (wrfcoin:blockchain:transaction_success_rate_5m / rate(wrfcoin_blockchain_transactions_received_total[5m])) < 0.995
+        for: 3m
+        labels:
+          severity: critical
+          category: blockchain_core
+          slo_type: success_rate
+          slo_target: '99.5%'
+        annotations:
+          summary: 'Transaction processing SLO breach'
+          description: 'Transaction success rate is {{ $value | humanizePercentage }} (SLO: 99.5%)'
+          impact: 'User transactions failing above acceptable threshold'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="transaction_processing" AND status="error"'
+
+      # API Response Time SLO: 95% of requests < 2 seconds
+      - alert: APIResponseTimeSLOBreach
+        expr: wrfcoin:api:response_time_95th_5m > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: api
+          slo_type: latency
+          slo_target: '95% < 2s'
+        annotations:
+          summary: 'API response time SLO breach'
+          description: '95th percentile API response time is {{ $value }}s (SLO: 2s)'
+          impact: 'Poor user experience, application timeouts possible'
+          trace_query: 'service.name="wrfcoin-api" AND duration > 2s'
+
+  # Consensus System SLO Alerts
+  - name: consensus_slo_alerts
+    rules:
+      # Consensus Round Success SLO: 99.8% success rate
+      - alert: ConsensusSuccessRateSLOBreach
+        expr: wrfcoin:consensus:round_success_rate_5m < 0.998
+        for: 2m
+        labels:
+          severity: critical
+          category: consensus
+          slo_type: success_rate
+          slo_target: '99.8%'
+        annotations:
+          summary: 'Consensus success rate SLO breach'
+          description: 'Consensus round success rate is {{ $value | humanizePercentage }} (SLO: 99.8%)'
+          impact: 'Network consensus stability at risk'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="consensus_round" AND status="failed"'
+
+      # Validator Participation SLO: 90% minimum participation
+      - alert: ValidatorParticipationSLOBreach
+        expr: wrfcoin:consensus:validator_participation_rate_5m < 0.90
+        for: 3m
+        labels:
+          severity: warning
+          category: consensus
+          slo_type: participation
+          slo_target: '90%'
+        annotations:
+          summary: 'Validator participation SLO breach'
+          description: 'Validator participation rate is {{ $value | humanizePercentage }} (SLO: 90%)'
+          impact: 'Reduced network security and consensus resilience'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="consensus_participation"'
+
+  # Cross-Chain Bridge SLO Alerts
+  - name: cross_chain_slo_alerts
+    rules:
+      # Bridge Transfer Success SLO: 99.0% success rate
+      - alert: BridgeTransferSuccessRateSLOBreach
+        expr: wrfcoin:cross_chain:bridge_success_rate_5m < 0.99
+        for: 5m
+        labels:
+          severity: warning
+          category: cross_chain
+          slo_type: success_rate
+          slo_target: '99.0%'
+        annotations:
+          summary: 'Bridge transfer success rate SLO breach'
+          description: 'Bridge success rate is {{ $value | humanizePercentage }} (SLO: 99.0%)'
+          impact: 'Cross-chain functionality degraded, user transfers failing'
+          trace_query: 'service.name="wrfcoin-bridge" AND operation.name="bridge_transfer" AND status="failed"'
+
+      # Bridge Processing Time SLO: 95% of transfers < 5 minutes
+      - alert: BridgeProcessingTimeSLOBreach
+        expr: wrfcoin:cross_chain:bridge_processing_time_95th_5m > 300
+        for: 10m
+        labels:
+          severity: warning
+          category: cross_chain
+          slo_type: latency
+          slo_target: '95% < 5m'
+        annotations:
+          summary: 'Bridge processing time SLO breach'
+          description: '95th percentile bridge processing time is {{ $value }}s (SLO: 300s)'
+          impact: 'Slow cross-chain transfers affecting user experience'
+          trace_query: 'service.name="wrfcoin-bridge" AND duration > 300s'
+
+  # Network Performance SLO Alerts
+  - name: network_slo_alerts
+    rules:
+      # Peer Connectivity SLO: 95% target peer connectivity
+      - alert: PeerConnectivitySLOBreach
+        expr: wrfcoin:network:peer_connectivity_rate_5m < 0.95
+        for: 5m
+        labels:
+          severity: warning
+          category: network
+          slo_type: connectivity
+          slo_target: '95%'
+        annotations:
+          summary: 'Peer connectivity SLO breach'
+          description: 'Peer connectivity rate is {{ $value | humanizePercentage }} (SLO: 95%)'
+          impact: 'Reduced network resilience and message propagation efficiency'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="peer_discovery"'
+
+      # Message Propagation SLO: 95% of messages < 1 second
+      - alert: MessagePropagationSLOBreach
+        expr: wrfcoin:network:message_latency_95th_5m > 1
+        for: 3m
+        labels:
+          severity: warning
+          category: network
+          slo_type: latency
+          slo_target: '95% < 1s'
+        annotations:
+          summary: 'Message propagation latency SLO breach'
+          description: '95th percentile message latency is {{ $value }}s (SLO: 1s)'
+          impact: 'Slow network communication affecting consensus timing'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="message_propagation" AND duration > 1s'
+
+  # Weather Data Quality SLO Alerts
+  - name: weather_data_slo_alerts
+    rules:
+      # Data Quality SLO: 95% quality score minimum
+      - alert: WeatherDataQualitySLOBreach
+        expr: wrfcoin:weather:data_quality_score_5m < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          category: weather
+          slo_type: quality
+          slo_target: '95%'
+        annotations:
+          summary: 'Weather data quality SLO breach'
+          description: 'Weather data quality score is {{ $value | humanizePercentage }} (SLO: 95%)'
+          impact: 'Degraded environmental data reliability for blockchain operations'
+          trace_query: 'service.name="wrfcoin-weather" AND operation.name="data_validation"'
+
+      # IoT Device Availability SLO: 90% devices online
+      - alert: IoTDeviceAvailabilitySLOBreach
+        expr: wrfcoin:weather:iot_device_availability_5m < 0.90
+        for: 15m
+        labels:
+          severity: warning
+          category: weather
+          slo_type: availability
+          slo_target: '90%'
+        annotations:
+          summary: 'IoT device availability SLO breach'
+          description: 'IoT device availability is {{ $value | humanizePercentage }} (SLO: 90%)'
+          impact: 'Reduced environmental monitoring coverage'
+          trace_query: 'service.name="wrfcoin-iot" AND operation.name="device_health_check"'
+
+  # Security System SLO Alerts
+  - name: security_slo_alerts
+    rules:
+      # HSM Operation Success SLO: 99.9% success rate
+      - alert: HSMOperationSuccessRateSLOBreach
+        expr: wrfcoin:security:hsm_success_rate_5m < 0.999
+        for: 1m
+        labels:
+          severity: critical
+          category: security
+          slo_type: success_rate
+          slo_target: '99.9%'
+        annotations:
+          summary: 'HSM operation success rate SLO breach'
+          description: 'HSM success rate is {{ $value | humanizePercentage }} (SLO: 99.9%)'
+          impact: 'Critical security operations failing - immediate investigation required'
+          trace_query: 'service.name="wrfcoin-security" AND operation.name="hsm_operation" AND status="failed"'
+
+      # Threat Detection Accuracy SLO: 95% accuracy minimum
+      - alert: ThreatDetectionAccuracySLOBreach
+        expr: wrfcoin:security:threat_detection_accuracy_5m < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          category: security
+          slo_type: accuracy
+          slo_target: '95%'
+        annotations:
+          summary: 'Threat detection accuracy SLO breach'
+          description: 'Threat detection accuracy is {{ $value | humanizePercentage }} (SLO: 95%)'
+          impact: 'Increased false positives in security alerting'
+          trace_query: 'service.name="wrfcoin-security" AND operation.name="threat_detection"'
+
+  # Distributed Tracing SLO Alerts
+  - name: tracing_slo_alerts
+    rules:
+      # Trace Collection Success SLO: 98% collection rate
+      - alert: TraceCollectionSuccessRateSLOBreach
+        expr: wrfcoin:tracing:collection_success_rate_5m < 0.98
+        for: 5m
+        labels:
+          severity: warning
+          category: tracing
+          slo_type: success_rate
+          slo_target: '98%'
+        annotations:
+          summary: 'Trace collection success rate SLO breach'
+          description: 'Trace collection rate is {{ $value | humanizePercentage }} (SLO: 98%)'
+          impact: 'Reduced observability and debugging capability'
+
+      # Trace Export Latency SLO: 95% of exports < 5 seconds
+      - alert: TraceExportLatencySLOBreach
+        expr: wrfcoin:tracing:export_latency_95th_5m > 5
+        for: 5m
+        labels:
+          severity: warning
+          category: tracing
+          slo_type: latency
+          slo_target: '95% < 5s'
+        annotations:
+          summary: 'Trace export latency SLO breach'
+          description: '95th percentile trace export latency is {{ $value }}s (SLO: 5s)'
+          impact: 'Delayed trace availability for debugging and monitoring'
+
+  # Overall System Health SLO Alerts
+  - name: system_health_slo_alerts
+    rules:
+      # Overall System Availability SLO: 99.9% uptime
+      - alert: SystemAvailabilitySLOBreach
+        expr: avg(up{job=~"wrfcoin-.*"}) < 0.999
+        for: 1m
+        labels:
+          severity: critical
+          category: system
+          slo_type: availability
+          slo_target: '99.9%'
+        annotations:
+          summary: 'Overall system availability SLO breach'
+          description: 'System availability is {{ $value | humanizePercentage }} (SLO: 99.9%)'
+          impact: 'Critical system components offline'
+
+      # Error Budget Burn Rate Alerts
+      - alert: ErrorBudgetBurnRateHigh
+        expr: |
+          (
+            (1 - avg(wrfcoin:blockchain:transaction_success_rate_5m / rate(wrfcoin_blockchain_transactions_received_total[5m]))) > 0.005 * 60  # 5x normal burn rate
+            and
+            (1 - avg(wrfcoin:blockchain:transaction_success_rate_5m / rate(wrfcoin_blockchain_transactions_received_total[5m]))) > 0.005
+          )
+        for: 2m
+        labels:
+          severity: critical
+          category: slo
+          slo_type: error_budget
+        annotations:
+          summary: 'High error budget burn rate detected'
+          description: 'Error budget burning at {{ $value }}x normal rate'
+          impact: 'SLO at risk of breach - immediate action required'
+
+      - alert: ErrorBudgetBurnRateMedium
+        expr: |
+          (
+            (1 - avg(wrfcoin:blockchain:transaction_success_rate_5m / rate(wrfcoin_blockchain_transactions_received_total[5m]))) > 0.005 * 6  # 6x normal burn rate
+            and
+            (1 - avg(wrfcoin:blockchain:transaction_success_rate_5m / rate(wrfcoin_blockchain_transactions_received_total[5m]))) > 0.005
+          )
+        for: 10m
+        labels:
+          severity: warning
+          category: slo
+          slo_type: error_budget
+        annotations:
+          summary: 'Medium error budget burn rate detected'
+          description: 'Error budget burning at {{ $value }}x normal rate'
+          impact: 'Monitor closely to prevent SLO breach'
+
+  # Multi-Burn-Rate Alerts for Early Warning
+  - name: multi_burn_rate_alerts
+    rules:
+      # Fast burn: 2% error budget in 1 hour
+      - alert: ErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(wrfcoin_blockchain_transactions_failed_total[1h])) / sum(rate(wrfcoin_blockchain_transactions_received_total[1h])) > 0.02
+            and
+            sum(rate(wrfcoin_blockchain_transactions_failed_total[5m])) / sum(rate(wrfcoin_blockchain_transactions_received_total[5m])) > 0.02
+          )
+        for: 2m
+        labels:
+          severity: critical
+          category: slo
+          burn_rate: fast
+        annotations:
+          summary: 'Fast error budget burn detected'
+          description: 'Consuming 2% error budget per hour'
+
+      # Slow burn: 10% error budget in 6 hours
+      - alert: ErrorBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(wrfcoin_blockchain_transactions_failed_total[6h])) / sum(rate(wrfcoin_blockchain_transactions_received_total[6h])) > 0.10
+            and
+            sum(rate(wrfcoin_blockchain_transactions_failed_total[30m])) / sum(rate(wrfcoin_blockchain_transactions_received_total[30m])) > 0.10
+          )
+        for: 15m
+        labels:
+          severity: warning
+          category: slo
+          burn_rate: slow
+        annotations:
+          summary: 'Slow error budget burn detected'
+          description: 'Consuming 10% error budget over 6 hours'

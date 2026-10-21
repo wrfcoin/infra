@@ -1,0 +1,32 @@
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ['HTTP/1.1', 'HTTP/2']
+      valid_status_codes: []
+      method: GET
+      headers:
+        Accept: application/json
+        User-Agent: WRFCoin-Blackbox-Prober/1.0
+      no_follow_redirects: false
+      fail_if_ssl: false
+      fail_if_not_ssl: false
+      tls_config:
+        insecure_skip_verify: true
+      preferred_ip_protocol: 'ip4'
+      ip_protocol_fallback: true
+  http_websocket:
+    prober: http
+    timeout: 10s
+    http:
+      valid_http_versions: ['HTTP/1.1']
+      valid_status_codes: [101]
+      method: GET
+      headers:
+        Connection: Upgrade
+        Upgrade: websocket
+        Sec-WebSocket-Key: 'dGhlIHNhbXBsZSBub25jZQ=='
+        Sec-WebSocket-Version: '13'
+      fail_if_ssl: false
+      preferred_ip_protocol: 'ip4'

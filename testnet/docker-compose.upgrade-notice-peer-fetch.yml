@@ -1,0 +1,25 @@
+# Node overlay: poll peer nodes for governance-signed upgrade notices (core4#3095 peer fetch;
+# core4#3277 S7). OPT-IN, OFF unless passed.
+#
+# Every ten minutes the node GETs <peer>/network/upgrade from each URL and passes any notice it
+# finds through the same signature check as a notice file. The transport is untrusted: a peer
+# that is down, lies or serves a tampered notice changes nothing on this node. Needs a node image
+# built with core4's `upgrade-notice-fetch` feature (infra/docker/Dockerfile.core, from the B3
+# release on); an older image ignores this with a warning.
+#
+# Set on the host, in the same .env the node's -f list reads (owner step):
+#   WRFCOIN_UPGRADE_NOTICE_PEER_URLS=<comma-separated peer node API base URLs>
+# Nodes are NOT discovered: a node knows peers as libp2p multiaddrs only. Each URL must be
+#   (a) reachable from INSIDE this node's container (every testnet node publishes its API on
+#       127.0.0.1:8556 only, so a cross-host URL needs an operator route such as a tunnel), and
+#   (b) accepted by the PEER's OriginGuard: the Host the request carries must be a loopback name or
+#       listed in that peer's WRFCOIN_API_ALLOWED_HOSTS, or the peer answers 403 HOST_NOT_ALLOWED.
+# An unreachable URL costs one debug line per poll and nothing else.
+#
+# This changes the node's container config, so adding it recreates the node. Add it only in a node
+# window, and keep it in the node's file set from then on (config_files label).
+services:
+  wrfcoin-node:
+    environment:
+      WRFCOIN_UPGRADE_NOTICE_PEER_FETCH: "1"
+      WRFCOIN_UPGRADE_NOTICE_PEER_URLS: ${WRFCOIN_UPGRADE_NOTICE_PEER_URLS:?WRFCOIN_UPGRADE_NOTICE_PEER_URLS must list the peer node API base URLs to poll}

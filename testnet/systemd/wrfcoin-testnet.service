@@ -1,0 +1,18 @@
+[Unit]
+Description=WRFCoin Testnet Stack
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=@WRFCOIN_DEPLOY_ROOT@/infra/testnet
+Environment=WRFCOIN_BOOT_HEAL_HSM_CUSTODY_CONFIG=@WRFCOIN_DEPLOY_ROOT@/infra/testnet/provisioning/ct101-hsm-init-custody.conf
+ExecStartPre=/usr/bin/bash -lc 'until /usr/bin/docker info >/dev/null 2>&1; do sleep 2; done'
+ExecStart=/usr/bin/bash @WRFCOIN_DEPLOY_ROOT@/infra/testnet/boot-heal.sh
+ExecStop=/usr/bin/bash @WRFCOIN_DEPLOY_ROOT@/infra/testnet/boot-heal.sh --stop
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

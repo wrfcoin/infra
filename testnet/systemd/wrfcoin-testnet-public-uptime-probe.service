@@ -1,0 +1,82 @@
+[Unit]
+Description=WRFCoin testnet public availability probe
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@WRFCOIN_DEPLOY_ROOT@/infra/testnet
+Environment=WRFCOIN_TESTNET_PUBLIC_HOST=
+Environment=REQUEST_TIMEOUT=6
+Environment=REQUEST_RETRIES=3
+Environment=RETRY_DELAY=1
+Environment=FAILURE_THRESHOLD=18
+Environment=STATE_DIR=/var/lib/wrfcoin-testnet-uptime
+Environment=RECEIPT_DIR=/var/lib/wrfcoin-testnet-uptime/receipts
+Environment=PUBLISH_DIR=/var/lib/wrfcoin-testnet-uptime/public
+Environment=WRFCOIN_TESTNET_NONCE_EXPECTED_ORIGIN=
+Environment=WRFCOIN_TESTNET_NONCE_EXPECTED_URI=
+Environment=WRFCOIN_TESTNET_NONCE_EXPECTED_CHAIN_ID=
+Environment=WRFCOIN_TESTNET_UPTIME_SCRIPT=@WRFCOIN_DEPLOY_ROOT@/infra/testnet/edge/probe_public_uptime.sh
+EnvironmentFile=-/etc/wrfcoin-testnet-uptime.conf
+
+ExecStartPre=/usr/bin/bash -eu -c '\
+  if [ -z "${WRFCOIN_TESTNET_PUBLIC_HOST}" ]; then \
+    echo "FAIL: WRFCOIN_TESTNET_PUBLIC_HOST is required in /etc/wrfcoin-testnet-uptime.conf" >&2; \
+    exit 1; \
+  fi; \
+  if [[ "${WRFCOIN_TESTNET_PUBLIC_HOST}" != https://* && "${WRFCOIN_TESTNET_PUBLIC_HOST}" != http://* ]]; then \
+    echo "FAIL: WRFCOIN_TESTNET_PUBLIC_HOST must include scheme: ${WRFCOIN_TESTNET_PUBLIC_HOST}" >&2; \
+    exit 1; \
+  fi; \
+  if [[ "${WRFCOIN_TESTNET_PUBLIC_HOST}" == http://* ]]; then \
+    echo "FAIL: WRFCOIN_TESTNET_PUBLIC_HOST must be HTTPS for production use" >&2; \
+    exit 1; \
+  fi; \
+  if [ ! -x "${WRFCOIN_TESTNET_UPTIME_SCRIPT}" ]; then \
+    echo "FAIL: probe script is missing or not executable: ${WRFCOIN_TESTNET_UPTIME_SCRIPT}" >&2; \
+    exit 1; \
+  fi; \
+  if ! command -v curl >/dev/null 2>&1; then \
+    echo "FAIL: required command missing: curl" >&2; \
+    exit 1; \
+  fi; \
+  if ! command -v jq >/dev/null 2>&1; then \
+    echo "FAIL: required command missing: jq" >&2; \
+    exit 1; \
+  fi; \
+  if [ -z "${WRFCOIN_TESTNET_NONCE_EXPECTED_ORIGIN}" ]; then \
+    echo "FAIL: WRFCOIN_TESTNET_NONCE_EXPECTED_ORIGIN is required in /etc/wrfcoin-testnet-uptime.conf" >&2; \
+    exit 1; \
+  fi; \
+  if [ -z "${WRFCOIN_TESTNET_NONCE_EXPECTED_URI}" ]; then \
+    echo "FAIL: WRFCOIN_TESTNET_NONCE_EXPECTED_URI is required in /etc/wrfcoin-testnet-uptime.conf" >&2; \
+    exit 1; \
+  fi; \
+  expected_chain_id="$${WRFCOIN_CHAIN_ID:-$${WRFCOIN_TESTNET_NONCE_EXPECTED_CHAIN_ID:-}}"; \
+  if ! [[ "$${expected_chain_id}" =~ ^[1-9][0-9]*$ ]]; then \
+    echo "FAIL: WRFCOIN_TESTNET_NONCE_EXPECTED_CHAIN_ID must be a positive integer: ${WRFCOIN_TESTNET_NONCE_EXPECTED_CHAIN_ID}" >&2; \
+    exit 1; \
+  fi; \
+  for name in REQUEST_TIMEOUT REQUEST_RETRIES RETRY_DELAY FAILURE_THRESHOLD; do \
+    value="$${!name}"; \
+    if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then \
+      echo "FAIL: $${name} must be a positive integer: $${value}" >&2; \
+      exit 1; \
+    fi; \
+  done'
+TimeoutStartSec=120
+
+ExecStart=/usr/bin/bash -eu -c '\
+  "${WRFCOIN_TESTNET_UPTIME_SCRIPT}" \
+    --host "${WRFCOIN_TESTNET_PUBLIC_HOST}" \
+    --state-dir "${STATE_DIR}" \
+    --receipt-dir "${RECEIPT_DIR}" \
+    --publish-dir "${PUBLISH_DIR}" \
+    --timeout "${REQUEST_TIMEOUT}" \
+    --request-retries "${REQUEST_RETRIES}" \
+    --retry-delay "${RETRY_DELAY}" \
+    --failure-threshold "${FAILURE_THRESHOLD}"'
+
+[Install]
+WantedBy=multi-user.target

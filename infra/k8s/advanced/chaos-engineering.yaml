@@ -1,0 +1,266 @@
+# Chaos Engineering Configuration for Wrfcoin
+# Implements controlled failure testing using Chaos Mesh
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: api-pod-failure
+  namespace: wrfcoin-production
+spec:
+  action: pod-failure
+  mode: fixed-percent
+  value: '10'
+  duration: '30s'
+  selector:
+    namespaces:
+      - wrfcoin-production
+    labelSelectors:
+      app: wrfcoin-api
+  scheduler:
+    cron: '@daily'
+
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-partition-test
+  namespace: wrfcoin-production
+spec:
+  action: partition
+  mode: fixed
+  value: '1'
+  duration: '60s'
+  selector:
+    namespaces:
+      - wrfcoin-production
+    labelSelectors:
+      component: cross-chain
+  direction: both
+  scheduler:
+    cron: '0 2 * * 0' # Weekly on Sunday at 2 AM
+
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: IOChaos
+metadata:
+  name: disk-pressure-test
+  namespace: wrfcoin-production
+spec:
+  action: mixed
+  mode: fixed-percent
+  value: '20'
+  duration: '5m'
+  selector:
+    namespaces:
+      - wrfcoin-production
+    labelSelectors:
+      component: storage
+  volumePath: /data
+  percent: 50
+  scheduler:
+    cron: '0 3 * * 6' # Weekly on Saturday at 3 AM
+
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: cpu-stress-test
+  namespace: wrfcoin-production
+spec:
+  mode: fixed-percent
+  value: '25'
+  duration: '10m'
+  selector:
+    namespaces:
+      - wrfcoin-production
+    labelSelectors:
+      app: wrfcoin-api
+  stressors:
+    cpu:
+      workers: 2
+      load: 80
+  scheduler:
+    cron: '0 1 * * 1' # Weekly on Monday at 1 AM
+
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: HTTPChaos
+metadata:
+  name: api-latency-injection
+  namespace: wrfcoin-production
+spec:
+  mode: fixed-percent
+  value: '5'
+  duration: '15m'
+  selector:
+    namespaces:
+      - wrfcoin-production
+    labelSelectors:
+      app: wrfcoin-api
+  target: Request
+  port: 8080
+  method: GET
+  path: '/api/*'
+  delay: '2s'
+  scheduler:
+    cron: '0 */6 * * *' # Every 6 hours
+
+---
+# Chaos Dashboard RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chaos-dashboard
+  namespace: chaos-mesh
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: chaos-dashboard
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'namespaces', 'nodes', 'services']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['chaos-mesh.org']
+    resources: ['*']
+    verbs: ['*']
+  - apiGroups: ['apps']
+    resources: ['deployments', 'statefulsets', 'replicasets']
+    verbs: ['get', 'list', 'watch']
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: chaos-dashboard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: chaos-dashboard
+subjects:
+  - kind: ServiceAccount
+    name: chaos-dashboard
+    namespace: chaos-mesh
+
+---
+# Experiment Schedule for Automated Chaos Testing
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: comprehensive-chaos-schedule
+  namespace: wrfcoin-production
+spec:
+  schedule: '0 2 * * 0' # Weekly on Sunday at 2 AM
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: fixed-percent
+    value: '5'
+    duration: '60s'
+    selector:
+      namespaces:
+        - wrfcoin-production
+      labelSelectors:
+        tier: backend
+
+---
+# GameDay Experiment Configuration
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: gameday-disaster-recovery
+  namespace: wrfcoin-production
+spec:
+  entry: disaster-simulation
+  templates:
+    - name: disaster-simulation
+      templateType: Serial
+      children:
+        - database-failure
+        - network-partition
+        - recovery-verification
+
+    - name: database-failure
+      templateType: PodChaos
+      deadline: 5m
+      podChaos:
+        action: pod-failure
+        mode: all
+        selector:
+          namespaces:
+            - wrfcoin-production
+          labelSelectors:
+            app: postgresql
+
+    - name: network-partition
+      templateType: NetworkChaos
+      deadline: 3m
+      networkChaos:
+        action: partition
+        mode: fixed
+        value: '2'
+        selector:
+          namespaces:
+            - wrfcoin-production
+          labelSelectors:
+            component: cross-chain
+
+    - name: recovery-verification
+      templateType: Task
+      deadline: 10m
+      task:
+        container:
+          name: verification
+          image: wrfcoin/test-runner:latest
+          command: ['/bin/bash']
+          args: ['-c', 'npm run test:disaster-recovery']
+
+---
+# Chaos Engineering Monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: chaos-mesh-metrics
+  namespace: monitoring
+  labels:
+    app: chaos-mesh
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chaos-mesh
+  endpoints:
+    - port: http
+      interval: 30s
+      path: /metrics
+
+---
+# Alert Rules for Chaos Experiments
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: chaos-engineering-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: chaos.rules
+      rules:
+        - alert: ChaosExperimentFailed
+          expr: chaos_mesh_experiments{status="failed"} > 0
+          for: 1m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: 'Chaos experiment failed'
+            description: 'Experiment {{ $labels.experiment }} failed'
+
+        - alert: ChaosExperimentRecoveryTooSlow
+          expr: chaos_mesh_recovery_time_seconds > 300
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: 'System recovery taking too long'
+            description: 'Recovery time: {{ $value }}s exceeds 5-minute threshold'

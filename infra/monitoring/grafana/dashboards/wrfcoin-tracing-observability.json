@@ -1,0 +1,433 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Distributed Tracing & Observability",
+    "tags": ["wrfcoin", "tracing", "observability", "jaeger"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+      "time_options": ["15m", "30m", "1h", "2h", "6h", "12h", "24h"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "service",
+          "type": "query",
+          "datasource": "Jaeger",
+          "query": "services()",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "operation",
+          "type": "query",
+          "datasource": "Jaeger",
+          "query": "operations($service)",
+          "refresh": 2,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "min_duration",
+          "type": "textbox",
+          "current": {
+            "value": "100ms"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Trace Anomalies",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "rate(wrfcoin_tracing_span_duration_seconds{quantile=\"0.99\"}[5m]) > 10"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Map",
+        "type": "nodeGraph",
+        "datasource": "Jaeger",
+        "targets": [
+          {
+            "query": "",
+            "queryType": "dependencies",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            }
+          }
+        },
+        "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Trace Volume by Service",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_spans_created_total[5m])",
+            "legendFormat": "Spans Created/sec - {{service_name}}"
+          },
+          {
+            "expr": "rate(wrfcoin_tracing_spans_exported_total[5m])",
+            "legendFormat": "Spans Exported/sec - {{service_name}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Spans/sec",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 1,
+              "pointSize": 4,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 }
+      },
+      {
+        "id": 3,
+        "title": "Trace Sampling Rate",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_tracing_sampling_rate)",
+            "legendFormat": "Sampling Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.1 },
+                { "color": "green", "value": 0.3 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 12 }
+      },
+      {
+        "id": 4,
+        "title": "Active Spans",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(wrfcoin_tracing_active_spans_count)",
+            "legendFormat": "Active Spans"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-BlPu"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 12 }
+      },
+      {
+        "id": 5,
+        "title": "Trace Search Results",
+        "type": "traces",
+        "datasource": "Jaeger",
+        "targets": [
+          {
+            "query": "service=\"$service\" AND operation=\"$operation\" AND duration>$min_duration",
+            "queryType": "",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            }
+          }
+        },
+        "gridPos": { "h": 16, "w": 24, "x": 0, "y": 20 }
+      },
+      {
+        "id": 6,
+        "title": "Span Duration Percentiles",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(wrfcoin_tracing_span_duration_seconds_bucket[5m])) by (le, service_name, operation_name))",
+            "legendFormat": "50th - {{service_name}}.{{operation_name}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_tracing_span_duration_seconds_bucket[5m])) by (le, service_name, operation_name))",
+            "legendFormat": "95th - {{service_name}}.{{operation_name}}"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(wrfcoin_tracing_span_duration_seconds_bucket[5m])) by (le, service_name, operation_name))",
+            "legendFormat": "99th - {{service_name}}.{{operation_name}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Duration",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "never"
+            },
+            "unit": "s"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 }
+      },
+      {
+        "id": 7,
+        "title": "Error Traces by Service",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_span_errors_total[5m])",
+            "legendFormat": "Error Spans/sec - {{service_name}}.{{operation_name}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Errors/sec",
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "lineWidth": 2,
+              "pointSize": 4,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 }
+      },
+      {
+        "id": 8,
+        "title": "Trace Throughput Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_spans_total[5m])",
+            "legendFormat": "Total Spans/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_tracing_spans_sampled_total[5m])",
+            "legendFormat": "Sampled Spans/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_tracing_spans_dropped_total[5m])",
+            "legendFormat": "Dropped Spans/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Spans/sec",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 }
+      },
+      {
+        "id": 9,
+        "title": "Span Context Propagation",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "sum by (propagation_method) (rate(wrfcoin_tracing_context_propagated_total[5m]))",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "short",
+            "decimals": 2
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 52 }
+      },
+      {
+        "id": 10,
+        "title": "Trace Instrumentation Coverage",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "count by (service_name, operation_name) (wrfcoin_tracing_span_duration_seconds)",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "unit": "short"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "red", "value": null },
+                      { "color": "yellow", "value": 10 },
+                      { "color": "green", "value": 100 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 52 }
+      },
+      {
+        "id": 11,
+        "title": "Recent High-Latency Traces",
+        "type": "traces",
+        "datasource": "Jaeger",
+        "targets": [
+          {
+            "query": "duration>1s",
+            "queryType": "",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            }
+          }
+        },
+        "gridPos": { "h": 12, "w": 24, "x": 0, "y": 60 }
+      },
+      {
+        "id": 12,
+        "title": "Trace Export Metrics",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_tracing_exporter_spans_exported_total[5m])",
+            "legendFormat": "Exported Spans/sec - {{exporter}}"
+          },
+          {
+            "expr": "rate(wrfcoin_tracing_exporter_spans_failed_total[5m])",
+            "legendFormat": "Failed Exports/sec - {{exporter}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Export Rate",
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "lineWidth": 1,
+              "pointSize": 3,
+              "showPoints": "auto"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 72 }
+      }
+    ]
+  }
+}

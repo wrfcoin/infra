@@ -1,0 +1,157 @@
+# WRFCoin Testnet — Prometheus Configuration
+#
+# Uses Docker service names as targets (not localhost).
+# Services communicate over the wrfcoin-testnet Docker bridge network.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    network: testnet
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+  - /etc/prometheus/alert-rules-blockchain-health.yml
+  - /etc/prometheus/alert-rules-backend-down.yml
+
+scrape_configs:
+  # WRFCoin Blockchain Node (Rust launch_api)
+  # Exposes Prometheus metrics at /metrics
+  - job_name: wrfcoin-node
+    static_configs:
+      - targets: ["wrfcoin-node:8556"]
+    metrics_path: /metrics
+    scrape_interval: 10s
+    bearer_token_file: /etc/prometheus/bearer_token
+
+  # WRFCoin Seed Node — UNCOMMENT if running with --profile seed
+  # When the seed profile is inactive, this target generates constant
+  # connection-refused errors every 10s in Prometheus logs.
+  #
+  # - job_name: wrfcoin-seed
+  #   static_configs:
+  #     - targets: ["wrfcoin-seed:8556"]
+  #   metrics_path: /metrics
+  #   scrape_interval: 10s
+  #   bearer_token_file: /etc/prometheus/bearer_token
+
+  # WRFCoin Backend API (Node.js main_api_server)
+  # prom-client metrics exposed at /metrics
+  - job_name: wrfcoin-backend
+    static_configs:
+      - targets: ["wrfcoin-backend:4001"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+    bearer_token_file: /etc/prometheus/bearer_token
+
+  # wrfcoin-governance and wrfcoin-iot have no /metrics scrape job (infra#1078).
+  # Their servers (backend server/governance_server.js and
+  # server/iot_sensor_networks_server.js) have no /metrics route, so the old jobs
+  # returned 404 forever and kept ServiceDown paging for healthy services. Their
+  # liveness is probed through /health by the wrfcoin-service-health job below
+  # (alert ServiceHealthProbeFailed). Re-add a /metrics job only in the same
+  # change that lands a real route in the backend, and add it to the ServiceDown
+  # allowlist and scripts/tests/test-prometheus-scrape-config.sh.
+
+  # WRFCoin Weather Earnings Service
+  - job_name: wrfcoin-weather-earnings
+    static_configs:
+      - targets: ["wrfcoin-weather-earnings:8001"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+    bearer_token_file: /etc/prometheus/bearer_token
+
+  # WRFCoin Faucet Service (seed profile). testnet/services/faucet/server.js
+  # serves /metrics behind FAUCET_METRICS_TOKEN, which must equal the
+  # prometheus-bearer-token file. The compose default makes it follow
+  # WRFCOIN_READER_TOKEN (the value setup-env.sh writes into that file) unless
+  # .env sets FAUCET_METRICS_TOKEN explicitly, and the faucet reads it only
+  # when its container is created. A 403 here means the two differ (infra#1078).
+  # A failed scrape of this job is therefore a metrics/auth problem, not an
+  # outage: it raises the warning FaucetMetricsScrapeFailing (log-only), and the
+  # faucet's liveness is paged from its /health probe (wrfcoin-service-health).
+  - job_name: wrfcoin-faucet
+    static_configs:
+      - targets: ["wrfcoin-faucet:8080"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+    bearer_token_file: /etc/prometheus/bearer_token
+
+  # Full-profile jobs (cross-chain, compute, ML, storage, node-discovery) are
+  # intentionally omitted from the public-testnet scrape set. Adding their
+  # targets while the `full` compose profile is inactive creates persistent
+  # false-positive ServiceDown pages.
+  #
+  # Prometheus self-scrape is also intentionally omitted because the web UI is
+  # protected by basic auth; use /-/healthy in service healthchecks instead.
+
+  # Loki metrics (no bearer token — internal)
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Node Exporter — host-level metrics (no bearer token — infra)
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Monitoring helpers for backend alerting, not application services.
+  # cAdvisor exposes container restart counters for crash-loop detection.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # postgres-exporter exposes pg_up for backend database reachability.
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # blackbox-exporter probes the backend health endpoint for probe_success.
+  - job_name: wrfcoin-backend-health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://wrfcoin-backend:4001/health"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # blackbox-exporter probes /health of the services whose liveness must not
+  # depend on a /metrics scrape (infra#1078): governance and iot have no
+  # /metrics, and the faucet's /metrics needs a token that can drift. Anonymous
+  # /health answers 200 on all three (checked read-only on CT101, 2026-09-27).
+  # Alert: ServiceHealthProbeFailed (probe_success == 0). `up` of this job is the
+  # exporter's own liveness, so it is in the ServiceDown allowlist like
+  # wrfcoin-backend-health.
+  - job_name: wrfcoin-service-health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - "http://wrfcoin-governance:8000/health"
+          - "http://wrfcoin-iot:3002/health"
+          - "http://wrfcoin-faucet:8080/health"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

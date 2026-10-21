@@ -1,0 +1,485 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Cross-Chain Bridge Monitoring",
+    "tags": ["wrfcoin", "cross-chain", "bridge"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-2h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "name": "source_chain",
+          "type": "query",
+          "query": "label_values(wrfcoin_cross_chain_bridge_transfers_total, source_chain)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "target_chain",
+          "type": "query",
+          "query": "label_values(wrfcoin_cross_chain_bridge_transfers_total, target_chain)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "validator",
+          "type": "query",
+          "query": "label_values(wrfcoin_cross_chain_validator_count, validator_id)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Bridge Failures",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_cross_chain_bridge_failures_total[5m]) > 0"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Bridge Status Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_cross_chain_bridge_status",
+            "legendFormat": "Bridge Status"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "green", "value": 1 }
+              ]
+            },
+            "unit": "short",
+            "mappings": [
+              { "type": "value", "value": "0", "text": "Offline" },
+              { "type": "value", "value": "1", "text": "Online" }
+            ]
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Active Bridges",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(wrfcoin_cross_chain_bridge_status == 1)",
+            "legendFormat": "Active Bridges"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 1 },
+                { "color": "green", "value": 3 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Total Validators",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(wrfcoin_cross_chain_validator_count)",
+            "legendFormat": "Total Validators"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 5 },
+                { "color": "green", "value": 10 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "Bridge Liquidity",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_cross_chain_bridge_liquidity_ratio)",
+            "legendFormat": "Liquidity Ratio"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.2 },
+                { "color": "green", "value": 0.5 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "Bridge Transfer Volume",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_cross_chain_bridge_transfers_completed_total[$__rate_interval])",
+            "legendFormat": "Completed Transfers/sec - {{source_chain}} to {{target_chain}}"
+          },
+          {
+            "expr": "rate(wrfcoin_cross_chain_bridge_transfers_initiated_total[$__rate_interval])",
+            "legendFormat": "Initiated Transfers/sec - {{source_chain}} to {{target_chain}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Transfers/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 6,
+        "title": "Bridge Transfer Value",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_cross_chain_bridge_volume_total[$__rate_interval])",
+            "legendFormat": "Transfer Volume/sec - {{source_chain}} to {{target_chain}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_cross_chain_bridge_transfer_value_bucket[$__rate_interval])) by (le))",
+            "legendFormat": "95th Percentile Transfer Value"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Value",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 7,
+        "title": "Bridge Processing Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(wrfcoin_cross_chain_bridge_duration_seconds_bucket[$__rate_interval])) by (le, source_chain, target_chain))",
+            "legendFormat": "50th Percentile - {{source_chain}} to {{target_chain}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_cross_chain_bridge_duration_seconds_bucket[$__rate_interval])) by (le, source_chain, target_chain))",
+            "legendFormat": "95th Percentile - {{source_chain}} to {{target_chain}}"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(wrfcoin_cross_chain_bridge_duration_seconds_bucket[$__rate_interval])) by (le, source_chain, target_chain))",
+            "legendFormat": "99th Percentile - {{source_chain}} to {{target_chain}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Duration (seconds)",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "s"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 }
+      },
+      {
+        "id": 8,
+        "title": "HTLC Contract Status",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_cross_chain_htlc_active_contracts",
+            "legendFormat": "Active HTLC Contracts"
+          },
+          {
+            "expr": "rate(wrfcoin_cross_chain_htlc_completed_total[$__rate_interval])",
+            "legendFormat": "Completed HTLCs/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_cross_chain_htlc_expired_total[$__rate_interval])",
+            "legendFormat": "Expired HTLCs/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Count/Rate",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 }
+      },
+      {
+        "id": 9,
+        "title": "Multi-Signature Validation",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_cross_chain_multisig_signatures_required_total[$__rate_interval])",
+            "legendFormat": "Signatures Required/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_cross_chain_multisig_signatures_collected_total[$__rate_interval])",
+            "legendFormat": "Signatures Collected/sec"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_cross_chain_multisig_validation_duration_seconds_bucket[$__rate_interval])) by (le))",
+            "legendFormat": "95th Percentile Validation Time"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Rate/Duration",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 }
+      },
+      {
+        "id": 10,
+        "title": "Bridge Failure Analysis",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "sum by (failure_reason) (rate(wrfcoin_cross_chain_bridge_failures_total[$__rate_interval]))",
+            "legendFormat": "{{failure_reason}}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 0.01 }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "yellow", "value": 0.001 },
+                      { "color": "red", "value": 0.01 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 }
+      },
+      {
+        "id": 11,
+        "title": "Bridge Network Topology",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "wrfcoin_cross_chain_supported_chains_count",
+            "legendFormat": "Supported Chains"
+          },
+          {
+            "expr": "wrfcoin_cross_chain_bridge_connections",
+            "legendFormat": "Active Connections - {{chain}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Count",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 }
+      },
+      {
+        "id": 12,
+        "title": "Fee Analysis",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(wrfcoin_cross_chain_bridge_fees_bucket[$__rate_interval])) by (le))",
+            "legendFormat": "Median Fee"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_cross_chain_bridge_fees_bucket[$__rate_interval])) by (le))",
+            "legendFormat": "95th Percentile Fee"
+          },
+          {
+            "expr": "rate(wrfcoin_cross_chain_bridge_fees_collected_total[$__rate_interval])",
+            "legendFormat": "Total Fees Collected/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Fee Amount",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 }
+      }
+    ]
+  }
+}

@@ -1,0 +1,218 @@
+permissions:
+  contents: read
+
+name: Environment Promotion
+
+# Manually triggered promotion of Docker images between environments.
+# Promotion path: dev -> staging -> testnet (no skipping)
+#
+# Testnet deployment note: this workflow re-tags images in GHCR for staging,
+# but testnet deployment is local-builds-only via SSH to the node host.
+# The workflow generates a deployment summary for testnet but does NOT push
+# to ghcr.io for testnet promotion (see infra/testnet/docker-compose.override.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_env:
+        description: "Source environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+        default: dev
+      to_env:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - testnet
+        default: staging
+      short_sha:
+        description: "Short commit SHA to promote (leave blank to use HEAD)"
+        required: false
+        type: string
+      skip_smoke:
+        description: "Skip source environment smoke tests"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "Dry run — show changes without modifying anything"
+        required: false
+        type: boolean
+        default: false
+      runtime_image:
+        description: "Full local image ID (sha256:<64 lowercase hex>) from docker image inspect --format '{{.Id}}'"
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/wrfcoin
+
+jobs:
+  validate:
+    name: Validate promotion path
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.resolve-sha.outputs.short_sha }}
+      promotion_allowed: ${{ steps.validate.outputs.allowed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate promotion path
+        id: validate
+        run: |
+          FROM="${{ inputs.from_env }}"
+          TO="${{ inputs.to_env }}"
+          PATH_KEY="${FROM}->${TO}"
+
+          case "$PATH_KEY" in
+            "dev->staging"|"staging->testnet")
+              echo "allowed=true" >> "$GITHUB_OUTPUT"
+              echo "Promotion path valid: ${FROM} -> ${TO}"
+              ;;
+            "dev->testnet")
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              echo "::error::Cannot skip staging. Promote dev->staging first."
+              exit 1
+              ;;
+            *)
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              echo "::error::Invalid promotion path: ${FROM} -> ${TO}"
+              exit 1
+              ;;
+          esac
+
+      - name: Validate immutable testnet runtime image
+        if: ${{ inputs.to_env == 'testnet' }}
+        env:
+          WRFCOIN_TESTNET_RUNTIME_IMAGE: ${{ inputs.runtime_image }}
+        run: bash testnet/scripts/validate-runtime-image.sh --profile public-release
+
+      - name: Resolve short SHA
+        id: resolve-sha
+        run: |
+          SHA="${{ inputs.short_sha }}"
+          if [[ -z "$SHA" ]]; then
+            SHA="$(git rev-parse --short=7 HEAD)"
+            echo "No SHA provided, using HEAD: ${SHA}"
+          fi
+          echo "short_sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+  smoke-test:
+    name: Source environment smoke tests
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ inputs.skip_smoke == false }}
+    steps:
+      - name: Smoke test source environment
+        run: |
+          echo "Smoke testing ${{ inputs.from_env }} environment..."
+          echo "Note: In CI, smoke tests are informational only — no live env access."
+          echo "Run smoke tests manually against the running ${{ inputs.from_env }} environment"
+          echo "before confirming promotion to ${{ inputs.to_env }}."
+          # When a self-hosted runner with access to the node host is available (#115),
+          # replace this with actual HTTP health checks:
+          #   curl -sf http://<staging-host>:8556/health
+          #   curl -sf http://<staging-host>:4001/health
+
+  promote-images:
+    name: Promote Docker images
+    runs-on: ubuntu-latest
+    needs: [validate, smoke-test]
+    if: |
+      always() &&
+      needs.validate.result == 'success' &&
+      (needs.smoke-test.result == 'success' || needs.smoke-test.result == 'skipped')
+    environment: ${{ inputs.to_env }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        if: ${{ inputs.dry_run == false && inputs.to_env != 'testnet' }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show environment variable diff
+        run: |
+          FROM="${{ inputs.from_env }}"
+          TO="${{ inputs.to_env }}"
+          SRC="config/${FROM}.env.example"
+          DST="config/${TO}.env.example"
+
+          echo "=== Environment variable diff: ${FROM} vs ${TO} ==="
+          if [[ -f "$SRC" && -f "$DST" ]]; then
+            diff --unified=2 \
+              <(grep -v "^#\|^$" "$SRC" | sort) \
+              <(grep -v "^#\|^$" "$DST" | sort) || true
+          else
+            echo "Config files not found for diff."
+          fi
+
+      - name: Promote images (staging)
+        if: ${{ inputs.to_env == 'staging' }}
+        env:
+          SHORT_SHA: ${{ needs.validate.outputs.short_sha }}
+          DRY_RUN_FLAG: ${{ inputs.dry_run == true && '--dry-run' || '' }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/promote-environment.sh
+          ./scripts/promote-environment.sh \
+            --from="${{ inputs.from_env }}" \
+            --to=staging \
+            --sha="${SHORT_SHA}" \
+            ${{ inputs.skip_smoke == true && '--skip-smoke' || '' }} \
+            ${{ inputs.dry_run == true && '--dry-run' || '' }}
+
+      - name: Promotion summary (testnet — local deploy required)
+        if: ${{ inputs.to_env == 'testnet' }}
+        env:
+          SHORT_SHA: ${{ needs.validate.outputs.short_sha }}
+          WRFCOIN_TESTNET_RUNTIME_IMAGE: ${{ inputs.runtime_image }}
+        run: |
+          echo "=== Testnet Promotion Summary ==="
+          echo ""
+          echo "Testnet deployment is local-builds-only via SSH to the N5 Pro."
+          echo "No images are pushed to ghcr.io for testnet."
+          echo ""
+          echo "Promoted SHA: ${SHORT_SHA}"
+          echo "Runtime image: ${WRFCOIN_TESTNET_RUNTIME_IMAGE}"
+          echo "Source env:   ${{ inputs.from_env }}"
+          echo "Target env:   testnet"
+          echo ""
+          echo "To deploy to testnet:"
+          echo "  1. SSH to N5 Pro"
+          echo "  2. cd /root/wrfcoin/infra/testnet"
+          echo "  3. git pull origin main"
+          echo "  4. cp /path/to/config/testnet.env.example .env   # update secrets"
+          echo "  5. docker compose up -d --build"
+          echo "  6. docker compose ps   # verify all (healthy)"
+          echo ""
+          echo "See infra/testnet/docker-compose.override.yml for local-build config."
+
+      - name: Generate job summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Environment Promotion: ${{ inputs.from_env }} -> ${{ inputs.to_env }}
+
+          | Field | Value |
+          |-------|-------|
+          | SHA   | ${{ needs.validate.outputs.short_sha }} |
+          | Dry run | ${{ inputs.dry_run }} |
+          | Smoke skipped | ${{ inputs.skip_smoke }} |
+          | Status | ${{ job.status }} |
+
+          ### Services
+          $(for svc in native-chain backend frontend; do
+            echo "- \`ghcr.io/wrfcoin/${svc}:${{ inputs.to_env }}-${{ needs.validate.outputs.short_sha }}\`"
+          done)
+          EOF

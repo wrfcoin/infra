@@ -1,0 +1,245 @@
+# Contract Test Alerting Rules for Prometheus
+# Monitors contract test health and triggers alerts for failures
+
+groups:
+  - name: contract_test_alerts
+    rules:
+      # High-level contract test failure rate
+      - alert: ContractTestFailureRateHigh
+        expr: |
+          (
+            sum(rate(pact_contract_test_failures_total[5m])) /
+            sum(rate(pact_contract_tests_total[5m]))
+          ) * 100 > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: contract-testing
+          category: quality_gate
+        annotations:
+          summary: 'Contract test failure rate is high'
+          description: 'Contract test failure rate is {{ $value | humanizePercentage }} over the last 5 minutes. This indicates potential API contract violations or service incompatibilities.'
+          impact: 'API consumers may experience failures due to contract mismatches'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#failure-rate-high'
+
+      # Critical contract test failure rate
+      - alert: ContractTestFailureRateCritical
+        expr: |
+          (
+            sum(rate(pact_contract_test_failures_total[5m])) /
+            sum(rate(pact_contract_tests_total[5m]))
+          ) * 100 > 25
+        for: 1m
+        labels:
+          severity: critical
+          service: contract-testing
+          category: quality_gate
+        annotations:
+          summary: 'Contract test failure rate is critically high'
+          description: 'Contract test failure rate is {{ $value | humanizePercentage }} over the last 5 minutes. This indicates severe API contract violations.'
+          impact: 'High risk of service integration failures and customer impact'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#failure-rate-critical'
+
+      # No contract tests running
+      - alert: ContractTestsNotRunning
+        expr: |
+          sum(increase(pact_contract_tests_total[30m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+          service: contract-testing
+          category: monitoring
+        annotations:
+          summary: 'No contract tests have been executed recently'
+          description: 'No contract tests have been executed in the last 30 minutes. This may indicate issues with the testing pipeline.'
+          impact: 'Reduced confidence in API contract stability'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#tests-not-running'
+
+      # Specific consumer/provider contract failure
+      - alert: ConsumerProviderContractFailure
+        expr: |
+          sum(rate(pact_contract_test_failures_total[5m])) by (consumer, provider) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: contract-testing
+          category: integration
+        annotations:
+          summary: 'Contract failures between {{ $labels.consumer }} and {{ $labels.provider }}'
+          description: 'Contract tests are failing between consumer {{ $labels.consumer }} and provider {{ $labels.provider }} at {{ $value | humanize }} failures per second.'
+          impact: 'Service integration between {{ $labels.consumer }} and {{ $labels.provider }} may be broken'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#consumer-provider-failure'
+
+      # Contract test duration is too high
+      - alert: ContractTestDurationHigh
+        expr: |
+          histogram_quantile(0.95, sum(rate(pact_contract_test_duration_seconds_bucket[5m])) by (le, consumer, provider)) > 30
+        for: 5m
+        labels:
+          severity: warning
+          service: contract-testing
+          category: performance
+        annotations:
+          summary: 'Contract test duration is high for {{ $labels.consumer }} -> {{ $labels.provider }}'
+          description: '95th percentile contract test duration is {{ $value | humanizeDuration }} for {{ $labels.consumer }} -> {{ $labels.provider }}. This may indicate performance issues.'
+          impact: 'Slow contract test execution may delay CI/CD pipeline'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#duration-high'
+
+      # Pact Broker connectivity issues
+      - alert: PactBrokerDown
+        expr: |
+          sum(increase(pact_broker_publications_total[5m])) == 0 and 
+          sum(increase(pact_contract_tests_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: pact-broker
+          category: infrastructure
+        annotations:
+          summary: 'Pact Broker appears to be down or unreachable'
+          description: 'No pact publications have been recorded in the last 5 minutes despite contract tests running. The Pact Broker may be down.'
+          impact: 'Contract verification results cannot be shared between teams'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/pact-broker#broker-down'
+
+      # Low contract coverage
+      - alert: ContractCoverageLow
+        expr: |
+          (
+            sum(pact_contract_endpoint_coverage == 1) /
+            sum(pact_contract_endpoint_coverage)
+          ) * 100 < 70
+        for: 15m
+        labels:
+          severity: warning
+          service: contract-testing
+          category: coverage
+        annotations:
+          summary: 'Contract test coverage is low'
+          description: 'Contract test endpoint coverage is {{ $value | humanizePercentage }}. This indicates gaps in API contract testing.'
+          impact: 'Uncovered API endpoints may break without detection'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#coverage-low'
+
+      # Contract test metrics collector down
+      - alert: ContractTestMetricsCollectorDown
+        expr: |
+          up{job="contract-test-metrics"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: contract-testing
+          category: monitoring
+        annotations:
+          summary: 'Contract test metrics collector is down'
+          description: 'The contract test metrics collector service is not responding. Contract test monitoring may be impacted.'
+          impact: 'Reduced visibility into contract test health and metrics'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#metrics-collector-down'
+
+      # Pact broker response time high
+      - alert: PactBrokerResponseTimeHigh
+        expr: |
+          histogram_quantile(0.95, sum(rate(pact_broker_http_request_duration_seconds_bucket[5m])) by (le)) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: pact-broker
+          category: performance
+        annotations:
+          summary: 'Pact Broker response time is high'
+          description: '95th percentile response time for Pact Broker is {{ $value | humanizeDuration }}. This may slow down contract testing operations.'
+          impact: 'Slower contract test execution and CI/CD pipeline delays'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/pact-broker#response-time-high'
+
+      # Frequent contract test errors by type
+      - alert: ContractTestErrorTypeFrequent
+        expr: |
+          sum(rate(pact_contract_test_failures_total[10m])) by (error_type) > 0.05
+        for: 5m
+        labels:
+          severity: info
+          service: contract-testing
+          category: quality
+        annotations:
+          summary: 'Frequent contract test errors of type {{ $labels.error_type }}'
+          description: "Contract tests are frequently failing with error type '{{ $labels.error_type }}' at {{ $value | humanize }} failures per second."
+          impact: 'Specific category of contract issues may indicate systematic problems'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#error-type-frequent'
+
+  - name: contract_test_slos
+    rules:
+      # Contract test success rate SLO
+      - record: contract_test_success_rate_5m
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[5m])) /
+            sum(rate(pact_contract_tests_total[5m]))
+          ) * 100
+
+      - record: contract_test_success_rate_1h
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[1h])) /
+            sum(rate(pact_contract_tests_total[1h]))
+          ) * 100
+
+      - record: contract_test_success_rate_24h
+        expr: |
+          (
+            sum(rate(pact_contract_tests_passed_total[24h])) /
+            sum(rate(pact_contract_tests_total[24h]))
+          ) * 100
+
+      # Contract test throughput
+      - record: contract_tests_per_hour
+        expr: |
+          sum(rate(pact_contract_tests_total[1h])) * 3600
+
+      # Contract coverage percentage
+      - record: contract_coverage_percentage
+        expr: |
+          (
+            sum(pact_contract_endpoint_coverage == 1) /
+            sum(pact_contract_endpoint_coverage)
+          ) * 100
+
+      # Average test duration by consumer/provider
+      - record: contract_test_duration_average_5m
+        expr: |
+          sum(rate(pact_contract_test_duration_seconds_sum[5m])) by (consumer, provider) /
+          sum(rate(pact_contract_test_duration_seconds_count[5m])) by (consumer, provider)
+
+  - name: contract_test_slo_alerts
+    rules:
+      # SLO burn rate alerts for contract test success rate
+      - alert: ContractTestSLOBurnRateFast
+        expr: |
+          (
+            contract_test_success_rate_5m < 90 and
+            contract_test_success_rate_1h < 95
+          )
+        for: 2m
+        labels:
+          severity: critical
+          service: contract-testing
+          category: slo
+        annotations:
+          summary: 'Contract test SLO burn rate is fast'
+          description: 'Contract test success rate SLO is burning at a fast rate. Current 5m success rate: {{ $value }}%'
+          impact: 'Contract testing SLO at risk of breach'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#slo-burn-rate'
+
+      - alert: ContractTestSLOBurnRateSlow
+        expr: |
+          (
+            contract_test_success_rate_1h < 95 and
+            contract_test_success_rate_24h < 98
+          )
+        for: 15m
+        labels:
+          severity: warning
+          service: contract-testing
+          category: slo
+        annotations:
+          summary: 'Contract test SLO burn rate is slow but concerning'
+          description: 'Contract test success rate SLO is burning slowly. Current 1h success rate: {{ $value }}%'
+          impact: 'Contract testing SLO may be at risk if trend continues'
+          runbook_url: 'https://docs.wrfcoin.io/runbooks/contract-testing#slo-burn-rate'

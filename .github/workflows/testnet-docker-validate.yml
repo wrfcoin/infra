@@ -1,0 +1,272 @@
+permissions:
+  contents: read
+
+name: Testnet Docker Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/docker/Dockerfile.*'
+      - 'infra/docker/hsm-service-entrypoint.sh'
+      - 'infra/docker/esbuild-backend.sh'
+      - 'testnet/Dockerfile.*'
+      - 'testnet/docker-compose.testnet.yml'
+      - 'testnet/docker-compose.override.yml'
+      - 'testnet/docker-compose.oracle-attester.yml'
+      - 'testnet/docker-compose.oracle-attester-yubikey.desktop.yml'
+      - 'testnet/docker-compose.cut*.yml'
+      - 'testnet/workspace.dockerignore'
+      - 'testnet/services/faucet/**'
+      - 'docker/docker-compose.rtl433.yml'
+      - 'docker/.env.rtl433.example'
+      - 'infra/monitoring/prometheus-values.yaml'
+      - 'infra/deployment/advanced-deployment.sh'
+      - 'scripts/advanced-deployment.sh'
+      - 'scripts/test-legacy-deploy-fencing.sh'
+      - 'scripts/test-workspace-dockerignore.py'
+      - 'scripts/test-esbuild-backend-hardening.sh'
+      - 'scripts/test-faucet-base-profile-smoke.sh'
+      - 'scripts/test-hsm-pin-render-guard.sh'
+      - 'scripts/test-join-path-operator-config.sh'
+      - 'testnet/setup-env.sh'
+      - 'testnet/join-testnet-sync-node.sh'
+      # infra#769. These are SUBJECTS of the gate above, not extras — but they
+      # divide into two kinds, and the difference matters to what a green run means:
+      #   .env.testnet.example and tests/render-testnet-compose.sh ARE read by tests
+      #     this workflow runs, so a change to either changes what the gate proves.
+      #   join.sh and cut-pins.env are covered end to end by
+      #     scripts/tests/test-join-sh-e2e.sh (infra#774): the real join.sh ->
+      #     join-testnet-sync-node.sh -> join-snapshot-restore.sh chain against the
+      #     committed pins, with mutation controls that must go red on a broken
+      #     joiner. It runs in the compose-validate job below, and again on every
+      #     PR in scripts-tests.yml (build runner, no paths filter).
+      #   join.sh              — the other documented join entry point
+      #   cut-pins.env         — the single named place holding the cut commit,
+      #                          i.e. which core4 commit every joining peer builds
+      #   .env.testnet.example — operator start point B in
+      #                          test-join-path-operator-config.sh, and the file
+      #                          whose EMPTY WRFCOIN_SEED_P2P_EXTERNAL_ADDR is what
+      #                          defeated the `:?` guard in #762
+      #   tests/render-testnet-compose.sh — the shared render helper behind three
+      #                          of the tests this workflow runs
+      - 'scripts/tests/test-join-sh-e2e.sh'
+      - 'testnet/join-snapshot-restore.sh'
+      - 'testnet/check-p2p-external-addr.sh'
+      - 'testnet/join.sh'
+      - 'testnet/cut-pins.env'
+      - 'testnet/.env.testnet.example'
+      - 'testnet/tests/render-testnet-compose.sh'
+      - '**/*[Dd]ockerfile*'
+      - 'scripts/lint-all-dockerfiles.sh'
+      - '.github/workflows/testnet-docker-validate.yml'
+  pull_request:
+    paths:
+      - 'infra/docker/Dockerfile.*'
+      - 'infra/docker/hsm-service-entrypoint.sh'
+      - 'infra/docker/esbuild-backend.sh'
+      - 'testnet/Dockerfile.*'
+      - 'testnet/docker-compose.testnet.yml'
+      - 'testnet/docker-compose.override.yml'
+      - 'testnet/docker-compose.oracle-attester.yml'
+      - 'testnet/docker-compose.oracle-attester-yubikey.desktop.yml'
+      - 'testnet/docker-compose.cut*.yml'
+      - 'testnet/workspace.dockerignore'
+      - 'testnet/services/faucet/**'
+      - 'docker/docker-compose.rtl433.yml'
+      - 'docker/.env.rtl433.example'
+      - 'infra/monitoring/prometheus-values.yaml'
+      - 'infra/deployment/advanced-deployment.sh'
+      - 'scripts/advanced-deployment.sh'
+      - 'scripts/test-legacy-deploy-fencing.sh'
+      - 'scripts/test-workspace-dockerignore.py'
+      - 'scripts/test-esbuild-backend-hardening.sh'
+      - 'scripts/test-faucet-base-profile-smoke.sh'
+      - 'scripts/test-hsm-pin-render-guard.sh'
+      - 'scripts/test-join-path-operator-config.sh'
+      - 'testnet/setup-env.sh'
+      - 'testnet/join-testnet-sync-node.sh'
+      # infra#769. These are SUBJECTS of the gate above, not extras — but they
+      # divide into two kinds, and the difference matters to what a green run means:
+      #   .env.testnet.example and tests/render-testnet-compose.sh ARE read by tests
+      #     this workflow runs, so a change to either changes what the gate proves.
+      #   join.sh and cut-pins.env are covered end to end by
+      #     scripts/tests/test-join-sh-e2e.sh (infra#774): the real join.sh ->
+      #     join-testnet-sync-node.sh -> join-snapshot-restore.sh chain against the
+      #     committed pins, with mutation controls that must go red on a broken
+      #     joiner. It runs in the compose-validate job below, and again on every
+      #     PR in scripts-tests.yml (build runner, no paths filter).
+      #   join.sh              — the other documented join entry point
+      #   cut-pins.env         — the single named place holding the cut commit,
+      #                          i.e. which core4 commit every joining peer builds
+      #   .env.testnet.example — operator start point B in
+      #                          test-join-path-operator-config.sh, and the file
+      #                          whose EMPTY WRFCOIN_SEED_P2P_EXTERNAL_ADDR is what
+      #                          defeated the `:?` guard in #762
+      #   tests/render-testnet-compose.sh — the shared render helper behind three
+      #                          of the tests this workflow runs
+      - 'scripts/tests/test-join-sh-e2e.sh'
+      - 'testnet/join-snapshot-restore.sh'
+      - 'testnet/check-p2p-external-addr.sh'
+      - 'testnet/join.sh'
+      - 'testnet/cut-pins.env'
+      - 'testnet/.env.testnet.example'
+      - 'testnet/tests/render-testnet-compose.sh'
+      - '**/*[Dd]ockerfile*'
+      - 'scripts/lint-all-dockerfiles.sh'
+      - '.github/workflows/testnet-docker-validate.yml'
+# PARKED 2026-07-31 to protect the August Actions budget (3,000 min/month, private repo).
+# Only the `schedule:` trigger is parked -- every other trigger (pull_request / push /
+# workflow_dispatch) is untouched, so PR gating is unchanged and this can still be run
+# on demand with `gh workflow run <file>`. Restore by deleting this banner and
+# uncommenting below. Same treatment as core4 #2652; restore list: reenable-workflows.sh
+  # schedule:
+  # - cron: '0 6 * * 1' # Weekly Monday 6am UTC
+
+# RUNNER (infra#1064, infra#1001): all three jobs run on the self-hosted build runner
+# infra runner. Hosted runners are billing-VOID on this account (steps=0), and
+# that VOID is what hid the attester render failure fixed below: on a real
+# runner this workflow was red on main. `[self-hosted, n5pro]` is how you target
+# build runner. `n5pro-ct102-infra` is the runner's NAME, not a label (see
+# public-exposure-edge-gate.yml). build runner has Docker for hadolint and Compose v2
+# for the renders; every step here is config-only or `docker run`. Nothing is
+# built, pushed, or started as a service.
+# Refs infra#1113: superseded PRs share a group; every other run is isolated,
+# including pending main/dispatch/schedule jobs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dockerignore-semantics:
+    name: Verify Workspace Dockerignore Semantics
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Assert required paths are included and heavy/secret paths are excluded
+        run: python3 scripts/test-workspace-dockerignore.py
+
+  hadolint:
+    name: Lint Dockerfiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Was three hadolint-action steps naming three files by hand. On #737
+      # this job reported GREEN having read 0 of the 1 file that PR changed
+      # (infra#741): a check called "Lint Dockerfiles" that linted 3 of 35.
+      #
+      # Discovery now, not a hand-written list. Not piped through tail/head —
+      # the script's exit status IS the gate, and a pipeline would report the
+      # exit status of the pager instead.
+      - name: Lint every Dockerfile in the repo (discovered, not listed)
+        run: bash scripts/lint-all-dockerfiles.sh
+
+  compose-validate:
+    name: Validate Compose Config
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate testnet compose
+        env:
+          POSTGRES_PASSWORD: ci
+          REDIS_PASSWORD: ci
+          JWT_SECRET: ci
+          GRAFANA_ADMIN_PASSWORD: ci
+          OAUTH_STATE_SECRET: ci
+          RPC_API_KEY: ci
+          ADMIN_TOKEN: ci
+          N8N_WEBHOOK_SECRET: ci
+          WRFCOIN_OPERATOR_TOKEN: ci
+          WRFCOIN_CONTRIBUTOR_TOKEN: ci-contributor
+          # CI-only render fixture: RFC 5737 documentation address. It is never
+          # a deployable/operator value; production Compose keeps this required.
+          WRFCOIN_P2P_EXTERNAL_ADDR: /ip4/198.51.100.7/tcp/9000
+          # CI-only seed-profile render fixture. Like the node fixture above,
+          # this RFC 5737 address is documentation-only; production requires
+          # an operator-verified reachable seed value.
+          WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000
+        run: |
+          bash testnet/tests/render-testnet-compose.sh -f testnet/docker-compose.testnet.yml config > /dev/null
+          bash testnet/tests/render-testnet-compose.sh --profile collector -f testnet/docker-compose.testnet.yml -f testnet/docker-compose.override.yml -f testnet/docker-compose.cut-miner.yml config > /dev/null
+          bash testnet/tests/render-testnet-compose.sh --profile seed -f testnet/docker-compose.testnet.yml -f testnet/docker-compose.override.yml -f testnet/docker-compose.cut-genesis-seed.yml config > /dev/null
+          echo "Compose config validates clean"
+
+      - name: Validate opt-in oracle attester composition (#819)
+        env:
+          POSTGRES_PASSWORD: ci
+          REDIS_PASSWORD: ci
+          JWT_SECRET: ci
+          GRAFANA_ADMIN_PASSWORD: ci
+          OAUTH_STATE_SECRET: ci
+          RPC_API_KEY: ci
+          ADMIN_TOKEN: ci
+          N8N_WEBHOOK_SECRET: ci
+          WRFCOIN_OPERATOR_TOKEN: ci
+          WRFCOIN_CONTRIBUTOR_TOKEN: ci-contributor
+          WRFCOIN_ORACLE_TOKEN: ci-oracle
+          WRFCOIN_ATTESTER_HSM_TOKEN_LABEL: oracle-ci
+          WRFCOIN_ATTESTER_HSM_KEY_LABEL: oracle-ci-key
+          WRFCOIN_ATTESTER_HSM_PUBKEY_LABEL: oracle-ci-key
+          WRFCOIN_ATTESTER_HSM_PIN: ci-pin
+          WRFCOIN_ATTESTER_HSM_SO_PIN: ci-so-pin
+          WRFCOIN_ATTESTER_FORBID_GOVERNANCE_PUBKEY: "1111111111111111111111111111111111111111111111111111111111111111"
+          WRFCOIN_ATTESTER_FORBID_SNAPSHOT_PUBKEY: "2222222222222222222222222222222222222222222222222222222222222222"
+          WRFCOIN_ATTESTER_FORBID_PRODUCER_PUBKEY: "3333333333333333333333333333333333333333333333333333333333333333"
+          # infra#1064: the attester overlay requires its reference station
+          # (`${WRFCOIN_ATTESTER_NWS_STATION:?}`, explicit since infra#986), so
+          # without this both renders below fail on main. KDLH is a
+          # validation-only value; each operator sets their own station.
+          WRFCOIN_ATTESTER_NWS_STATION: KDLH
+        run: |
+          bash testnet/tests/render-testnet-compose.sh \
+            -f testnet/docker-compose.testnet.yml \
+            -f testnet/docker-compose.oracle-attester.yml \
+            --profile attester --profile attester-softhsm config > /dev/null
+          bash testnet/tests/render-testnet-compose.sh \
+            -f testnet/docker-compose.testnet.yml \
+            -f testnet/docker-compose.oracle-attester.yml \
+            -f testnet/docker-compose.oracle-attester-yubikey.desktop.yml \
+            --profile attester config > /dev/null
+          echo "SoftHSM and desktop YubiKey compositions validate clean"
+
+      - name: Verify PIN-free renders remain runtime fail-closed
+        env:
+          # CI-only RFC 5737 documentation fixtures for every positive Compose
+          # render in this step. Production Compose keeps both values required.
+          WRFCOIN_P2P_EXTERNAL_ADDR: /ip4/198.51.100.7/tcp/9000
+          WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000
+        run: bash scripts/test-hsm-pin-render-guard.sh
+
+      - name: Test backend esbuild hardening
+        run: sh scripts/test-esbuild-backend-hardening.sh
+
+      # infra#762. DELIBERATELY NO `env:` BLOCK — this step must run with the
+      # operator's environment, not CI's. Every other compose step above injects
+      # WRFCOIN_P2P_EXTERNAL_ADDR and WRFCOIN_SEED_P2P_EXTERNAL_ADDR, which is
+      # exactly why #762 reached `main`: the documented join command was broken
+      # for every operator while all of these passed. The script refuses to run
+      # if either variable is present, so adding one here to "fix a failure"
+      # turns this red instead of hiding it.
+      - name: Join path works with the operator's own config (no injected env)
+        run: bash scripts/test-join-path-operator-config.sh
+
+      # infra#774. The joiner path end to end: the real join.sh ->
+      # join-testnet-sync-node.sh -> join-snapshot-restore.sh against the
+      # committed cut-pins.env, with docker/curl/tailscale stubbed and the P2P
+      # self-dial on loopback (no host, no network). Includes mutation controls
+      # that must turn red on a broken joiner. Like the step above, it takes no
+      # env: the script clears the advertise-address variables itself.
+      - name: Joiner path end to end (join.sh + cut-pins.env)
+        run: bash scripts/tests/test-join-sh-e2e.sh
+
+      - name: Smoke faucet base seed profile
+        run: bash scripts/test-faucet-base-profile-smoke.sh
+
+      - name: Verify legacy deploy fencing
+        run: bash scripts/test-legacy-deploy-fencing.sh

@@ -1,0 +1,35 @@
+# alpine:3.24
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+
+LABEL maintainer="WRFCoin Development Team"
+LABEL description="Reusable GFS fetcher health-check sidecar for NOAA NOMADS monitoring"
+
+RUN apk add --no-cache bash curl coreutils
+
+WORKDIR /app
+
+COPY gfs-fetch-health-check.sh /app/gfs-fetch-health-check.sh
+COPY testdata /app/testdata
+
+RUN chmod +x /app/gfs-fetch-health-check.sh \
+    && chmod -R a-w /app/testdata \
+    && mkdir -p /var/lib/node_exporter/textfile_collector /var/lib/gfs-fetch-health \
+    && addgroup -g 1001 -S gfshealth \
+    && adduser -S -D -u 1001 -G gfshealth gfshealth \
+    && chown -R gfshealth:gfshealth /app /var/lib/node_exporter/textfile_collector /var/lib/gfs-fetch-health
+
+ENV GFS_HEALTH_MODE=dry-run
+ENV GFS_HEALTH_RUN_ONCE=0
+ENV GFS_HEALTH_LOOP_INTERVAL_SECONDS=300
+ENV GFS_HEALTH_MAX_AGE_SECONDS=900
+ENV GFS_METRICS_OUTPUT_PATH=/var/lib/node_exporter/textfile_collector/gfs_fetch_health.prom
+ENV GFS_HEALTH_STATE_DIR=/var/lib/gfs-fetch-health
+
+USER gfshealth
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=90s --retries=3 \
+    CMD test -s "$GFS_HEALTH_STATE_DIR/last_success_unixtime" \
+    && test "$(cat "$GFS_HEALTH_STATE_DIR/last_success_unixtime")" -ge "$(( $(date -u +%s) - GFS_HEALTH_MAX_AGE_SECONDS ))" \
+    && grep -q '^gfs_fetch_health_up 1$' "$GFS_METRICS_OUTPUT_PATH"
+
+CMD ["/app/gfs-fetch-health-check.sh"]

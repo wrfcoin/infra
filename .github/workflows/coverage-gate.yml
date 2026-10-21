@@ -1,0 +1,408 @@
+permissions:
+  contents: read
+
+# =============================================================================
+# Coverage Gate — Test Coverage Enforcement
+# =============================================================================
+#
+# Enforces minimum test coverage thresholds across WRFCoin repositories.
+# Runs on PRs to main and can be triggered manually for audits.
+#
+# Coverage targets:
+#   - core4 (Rust workspace): cargo-tarpaulin, 60% line coverage
+#   - security-testing (Rust): cargo-tarpaulin, 50% line coverage
+#   - backend (Node.js/TS): c8/vitest, 50% line coverage
+#   - frontend (React/TS): vitest, 40% line coverage
+#   - smart-contracts (Solidity): hardhat coverage, 70% line coverage
+#
+# Issue: infra#15
+# =============================================================================
+
+name: Coverage Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: 'Comma-separated repos to check (core4,security-testing,backend,frontend,smart-contracts)'
+        required: false
+        default: 'core4,security-testing'
+      fail_on_threshold:
+        description: 'Fail the workflow if coverage is below threshold'
+        required: false
+        default: 'true'
+  workflow_call:
+    inputs:
+      repos:
+        required: false
+        type: string
+        default: 'core4,security-testing'
+      fail_on_threshold:
+        required: false
+        type: string
+        default: 'true'
+
+env:
+  # Minimum line coverage thresholds (percentage)
+  THRESHOLD_CORE4: 60
+  THRESHOLD_SECURITY_TESTING: 50
+  THRESHOLD_BACKEND: 50
+  THRESHOLD_FRONTEND: 40
+  THRESHOLD_SMART_CONTRACTS: 70
+
+jobs:
+  # ── Rust Coverage (core4) ──────────────────────────────────────────────────
+  core4-coverage:
+    name: "core4 Rust Coverage"
+    runs-on: ubuntu-latest
+    if: contains(inputs.repos || 'core4,security-testing', 'core4')
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: core4
+
+    steps:
+      - name: Checkout core4
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/core4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core4/target
+          key: ${{ runner.os }}-core4-coverage-${{ hashFiles('core4/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-core4-coverage-
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Run tests with coverage
+        run: |
+          cargo tarpaulin \
+            --workspace \
+            --out json \
+            --output-dir coverage \
+            --skip-clean \
+            --timeout 300 \
+            --exclude-files "tests/*" "benches/*" "**/generated/*" \
+            2>&1 | tee coverage/tarpaulin-output.txt
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(python3 -c "
+          import json, sys
+          with open('coverage/tarpaulin-report.json') as f:
+              data = json.load(f)
+          # tarpaulin JSON format: top-level 'coverage' field is line coverage percentage
+          cov = data.get('coverage', 0)
+          print(f'{cov:.2f}')
+          ")
+          echo "::notice::core4 line coverage: ${COVERAGE}%"
+          echo "coverage=${COVERAGE}" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.fail_on_threshold || 'true' }}" = "true" ]; then
+            python3 -c "
+          import sys
+          cov = float('${COVERAGE}')
+          threshold = float('${THRESHOLD_CORE4}')
+          if cov < threshold:
+              print(f'::error::core4 coverage {cov:.2f}% is below threshold {threshold}%')
+              sys.exit(1)
+          print(f'::notice::core4 coverage {cov:.2f}% meets threshold {threshold}%')
+          "
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: core4-coverage-report
+          path: core4/coverage/
+          retention-days: 30
+
+  # ── Rust Coverage (security-testing) ───────────────────────────────────────
+  security-testing-coverage:
+    name: "security-testing Rust Coverage"
+    runs-on: ubuntu-latest
+    if: contains(inputs.repos || 'core4,security-testing', 'security-testing')
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: security-testing
+
+    steps:
+      - name: Checkout security-testing
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/security-testing
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            security-testing/target
+          key: ${{ runner.os }}-st-coverage-${{ hashFiles('security-testing/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-st-coverage-
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Run tests with coverage
+        run: |
+          cargo tarpaulin \
+            --workspace \
+            --out json \
+            --output-dir coverage \
+            --skip-clean \
+            --timeout 300 \
+            --exclude-files "tests/*" \
+            2>&1 | tee coverage/tarpaulin-output.txt
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(python3 -c "
+          import json
+          with open('coverage/tarpaulin-report.json') as f:
+              data = json.load(f)
+          print(f'{data.get(\"coverage\", 0):.2f}')
+          ")
+          echo "::notice::security-testing line coverage: ${COVERAGE}%"
+          if [ "${{ inputs.fail_on_threshold || 'true' }}" = "true" ]; then
+            python3 -c "
+          import sys
+          cov = float('${COVERAGE}')
+          threshold = float('${THRESHOLD_SECURITY_TESTING}')
+          if cov < threshold:
+              print(f'::error::security-testing coverage {cov:.2f}% is below threshold {threshold}%')
+              sys.exit(1)
+          print(f'::notice::security-testing coverage {cov:.2f}% meets threshold {threshold}%')
+          "
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-testing-coverage-report
+          path: security-testing/coverage/
+          retention-days: 30
+
+  # ── Node.js Coverage (backend) ─────────────────────────────────────────────
+  backend-coverage:
+    name: "backend Node.js Coverage"
+    runs-on: ubuntu-latest
+    if: contains(inputs.repos || '', 'backend')
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/backend
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.reportsDirectory=coverage
+        env:
+          NODE_ENV: test
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(node -e "
+          const data = require('./coverage/coverage-summary.json');
+          const pct = data.total.lines.pct;
+          console.log(pct.toFixed(2));
+          ")
+          echo "::notice::backend line coverage: ${COVERAGE}%"
+          if [ "${{ inputs.fail_on_threshold || 'true' }}" = "true" ]; then
+            node -e "
+            const cov = parseFloat('${COVERAGE}');
+            const threshold = parseFloat('${THRESHOLD_BACKEND}');
+            if (cov < threshold) {
+              console.log('::error::backend coverage ' + cov + '% is below threshold ' + threshold + '%');
+              process.exit(1);
+            }
+            console.log('::notice::backend coverage ' + cov + '% meets threshold ' + threshold + '%');
+            "
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage-report
+          path: backend/coverage/
+          retention-days: 30
+
+  # ── React Coverage (frontend) ──────────────────────────────────────────────
+  frontend-coverage:
+    name: "frontend React Coverage"
+    runs-on: ubuntu-latest
+    if: contains(inputs.repos || '', 'frontend')
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout frontend
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/frontend
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.reportsDirectory=coverage
+        env:
+          NODE_ENV: test
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(node -e "
+          const data = require('./coverage/coverage-summary.json');
+          console.log(data.total.lines.pct.toFixed(2));
+          ")
+          echo "::notice::frontend line coverage: ${COVERAGE}%"
+          if [ "${{ inputs.fail_on_threshold || 'true' }}" = "true" ]; then
+            node -e "
+            const cov = parseFloat('${COVERAGE}');
+            const threshold = parseFloat('${THRESHOLD_FRONTEND}');
+            if (cov < threshold) {
+              console.log('::error::frontend coverage ' + cov + '% is below threshold ' + threshold + '%');
+              process.exit(1);
+            }
+            "
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage/
+          retention-days: 30
+
+  # ── Solidity Coverage (smart-contracts) ────────────────────────────────────
+  smart-contracts-coverage:
+    name: "smart-contracts Solidity Coverage"
+    runs-on: ubuntu-latest
+    if: contains(inputs.repos || '', 'smart-contracts')
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: smart-contracts
+
+    steps:
+      - name: Checkout smart-contracts
+        uses: actions/checkout@v7
+        with:
+          repository: wrfcoin/smart-contracts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: smart-contracts/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Hardhat coverage
+        run: npx hardhat coverage --solcoverjs .solcover.js
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(node -e "
+          const data = require('./coverage/coverage-summary.json');
+          console.log(data.total.lines.pct.toFixed(2));
+          ")
+          echo "::notice::smart-contracts line coverage: ${COVERAGE}%"
+          if [ "${{ inputs.fail_on_threshold || 'true' }}" = "true" ]; then
+            node -e "
+            const cov = parseFloat('${COVERAGE}');
+            const threshold = parseFloat('${THRESHOLD_SMART_CONTRACTS}');
+            if (cov < threshold) {
+              console.log('::error::smart-contracts coverage ' + cov + '% is below threshold ' + threshold + '%');
+              process.exit(1);
+            }
+            "
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smart-contracts-coverage-report
+          path: smart-contracts/coverage/
+          retention-days: 30
+
+  # ── Summary ────────────────────────────────────────────────────────────────
+  coverage-summary:
+    name: "Coverage Summary"
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - core4-coverage
+      - security-testing-coverage
+      - backend-coverage
+      - frontend-coverage
+      - smart-contracts-coverage
+    steps:
+      - name: Report results
+        run: |
+          echo "## Coverage Gate Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Repository | Threshold | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------------|-----------|--------|" >> "$GITHUB_STEP_SUMMARY"
+
+          check_job() {
+            local name="$1"
+            local threshold="$2"
+            local result="$3"
+            if [ "$result" = "success" ]; then
+              echo "| $name | ${threshold}% | :white_check_mark: Pass |" >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$result" = "skipped" ]; then
+              echo "| $name | ${threshold}% | :fast_forward: Skipped |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $name | ${threshold}% | :x: Fail |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
+          check_job "core4" "$THRESHOLD_CORE4" "${{ needs.core4-coverage.result }}"
+          check_job "security-testing" "$THRESHOLD_SECURITY_TESTING" "${{ needs.security-testing-coverage.result }}"
+          check_job "backend" "$THRESHOLD_BACKEND" "${{ needs.backend-coverage.result }}"
+          check_job "frontend" "$THRESHOLD_FRONTEND" "${{ needs.frontend-coverage.result }}"
+          check_job "smart-contracts" "$THRESHOLD_SMART_CONTRACTS" "${{ needs.smart-contracts-coverage.result }}"

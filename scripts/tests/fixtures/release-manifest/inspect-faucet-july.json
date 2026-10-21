@@ -1,0 +1,14 @@
+[
+  {
+    "Id": "sha256:6c1f0a4e2d9b8a7c3e5f1d2b4a6c8e0f1a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d",
+    "RepoTags": ["__IMAGE__"],
+    "RepoDigests": [],
+    "Created": "2026-07-02T23:38:14.201553117Z",
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Config": {
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "NODE_ENV=production"],
+      "Labels": {}
+    }
+  }
+]

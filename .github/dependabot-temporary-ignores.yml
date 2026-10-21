@@ -1,0 +1,59 @@
+# Review ledger for every Dependabot `ignore` in .github/dependabot.yml.
+# Enforced by scripts/check-dependabot-temporary-ignore.sh (run by the
+# dependabot-coverage workflow on every PR). Two classes:
+#
+# - policy_ignores: standing owner policy with no expiry. Removing the policy
+#   is a deliberate, reviewed change that edits this ledger and the guard
+#   together.
+# - temporary_ignores: time-boxed exceptions. They hard-expire; extension
+#   requires a fresh owner review that rewrites the pinned dates in the guard
+#   (auto-extension is a RED control in the guard's test suite).
+version: 2
+policy_ignores:
+  # Node LTS-only policy (#745 pinned the fleet to node:24 LTS; owner decision
+  # 2026-08-29 declined the node-25 sweep — 25 is a non-LTS line that reached
+  # EOL 2026-06). semver-major on the `node` docker image means "change release
+  # line", so majors are ignored on every docker entry; patch/minor keep
+  # flowing. A deliberate LTS-to-LTS move (e.g. 24 -> 26 after 26 enters LTS
+  # 2026-10-28) is a reviewed change that updates this ledger.
+  - issue: 745
+    package-ecosystem: docker
+    dependency-name: node
+    update-types:
+      - version-update:semver-major
+    applies-to-directories: all-docker-entries
+    reviewed-on: "2026-08-29"
+  # Ubuntu release-line freeze (#760, owner decision 2026-08-30). Ubuntu
+  # versions are YY.MM — the release line lives in the semver MINOR, so the
+  # #713-era major-only ignore was inverted (permitted the non-LTS 24.04 ->
+  # 24.10 that broke the core build in #739; blocked the 24.04 -> 26.04 LTS
+  # move). Both levels are ignored: every ubuntu tag move is a deliberate
+  # reviewed edit; digest-only refreshes keep flowing. This supersedes and
+  # retires the #713 temporary exception ahead of its 2026-09-01 expiry.
+  - issue: 760
+    package-ecosystem: docker
+    directory: /infra/docker
+    dependency-name: ubuntu
+    update-types:
+      - version-update:semver-major
+      - version-update:semver-minor
+    reviewed-on: "2026-08-30"
+  # Python release-line freeze, /infra/docker only (#873, owner decision
+  # 2026-08-30). Same shape as ubuntu: the release line lives in the semver
+  # MINOR (3.11 -> 3.14), so both levels are named. Empirical driver: #872's
+  # python:3.14 bumps were REAL-RED (no tensorflow cp314 wheel; soil-model's
+  # scipy==1.13.1 predates 3.14). The deliberate move is python:3.12-slim via
+  # #873; removing this record is part of that issue's acceptance. Digest
+  # refreshes keep flowing. /infra/monitoring is NOT frozen (runs 3.14 green).
+  - issue: 873
+    package-ecosystem: docker
+    directory: /infra/docker
+    dependency-name: python
+    update-types:
+      - version-update:semver-major
+      - version-update:semver-minor
+    reviewed-on: "2026-08-30"
+# Empty by design: the #713 ubuntu exception graduated to the #760 policy
+# above. The guard requires this list to stay empty until a new time-boxed
+# exception is deliberately added together with a guard update.
+temporary_ignores: []

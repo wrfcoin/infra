@@ -1,0 +1,23 @@
+version: "3.9"
+
+# ROCm override for the autoresearch LLM runtime.
+#
+# Apply this on the N5 Pro after iGPU passthrough has been enabled in Proxmox and
+# the Docker host can see /dev/kfd and /dev/dri. Keep the base compose file as the
+# CPU-safe default; use this file only for the hardware-accelerated path.
+
+services:
+  llm-runtime:
+    image: ${LLM_RUNTIME_ROCM_IMAGE:-ollama/ollama:rocm}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODELS: /root/.ollama
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}

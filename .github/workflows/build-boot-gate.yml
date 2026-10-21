@@ -1,0 +1,507 @@
+# build-boot-gate.yml — make infra image/config changes falsifiable (infra#741, R97)
+#
+# WHY THIS EXISTS
+# ---------------
+# Before this workflow, `wrfcoin/infra` had **zero** CI that builds or boots anything.
+# A scan of every workflow on main for `docker build` / `docker buildx build` /
+# `docker compose build|up` returned exactly one hit — an `echo` inside a runbook at
+# promote.yml:182. So every base-image bump was unfalsifiable by CI: the green checks
+# were real runs of jobs structurally incapable of seeing the defect class.
+#
+# The control set is three PRs that merged on 2026-08-02 past an all-green board:
+#   #708  inline `# comment` on a FROM line -> dockerfile parse error
+#   #701  Caddyfile `email` with an empty env expansion -> wrong argument count
+#   #707  Express 5 `app.get("*")` -> throws at ROUTE REGISTRATION time
+#
+# WHAT THIS GATE ACTUALLY CATCHES -- read this before trusting the list above.
+#   #708  CAUGHT, and proven RED->GREEN in CI on every run by step 0's self-test.
+#   #701  PARTIALLY. Step 3 catches a malformed Caddyfile, which is the defect
+#         class. It does NOT gate the empty-ACME_EMAIL path, because that path is
+#         already unreachable -- see the correction in step 3. An earlier revision
+#         of this file claimed otherwise and was wrong.
+#   #707 and #838 moved to node-probes-gate.yml (infra#881), along with the
+#         Node boot probe and existing-tests step that catch them -- see that
+#         file's own "WHAT THIS GATE CATCHES" note. This file's `gate` job
+#         never ran either check itself; splitting the workflow only changed
+#         which file schedules the job, not what it catches.
+#
+# Two defects this gate found on its first run are fixed in this same PR
+# (infra/watchdog/Dockerfile, infra/monitoring/Dockerfile.gfs-fetch-healthcheck);
+# a third (infra/docker/Dockerfile.soil-model) is fixed here too. None of the
+# three is "still live" once this lands.
+#
+# RUNNER SPLIT, 2026-08-31, WORKFLOW-FILE SPLIT 2026-08-31 (infra#838 runner
+# migration, then infra#881 remediation)
+# -------------------------------------------------------------------------
+# This workflow used to be one job on `ubuntu-latest` (hosted, billed). It
+# briefly became two JOBS in this one file (`gate` here, `node-probes`
+# self-hosted) — but a job-level split does not stop `gate` from being
+# SCHEDULED, and GitHub bills a scheduled hosted job the rounded-up minute
+# regardless of how many of its steps are `if:`-skipped. Steps 0-2 below
+# (self-test, Dockerfile discovery, hadolint) have no `if:` guard at all —
+# they are unconditional whenever `gate` runs. Measured before this file
+# split: a pre-split hosted run finished in 33s total, of which only 7s was
+# the Node-only work this migration removes. Removing 7 seconds from a job
+# that already rounds up to one billed minute removes no billed minutes.
+# infra#881 was reviewed and sent back on exactly this point: it was *sold*
+# on an "explorer/faucet-only PR costs ~0 hosted minutes" claim that the
+# job-level split did not actually deliver.
+#
+# The fix that actually delivers it is a WORKFLOW-FILE split, not a job
+# split: `node-probes` now lives in its own file, node-probes-gate.yml, with
+# its OWN `on.pull_request.paths` trigger covering only
+# testnet/explorer/**/*.js|package(-lock).json and the faucet equivalents,
+# plus its own path. A PR touching only those paths never causes GitHub to
+# evaluate THIS file's trigger at all — `gate` is not scheduled, not
+# `if:`-skipped, not billed for any amount of time, because the workflow
+# this job lives in never runs. That is the actual mechanism the "$0 hosted"
+# claim below now rests on, proven with a real run in the PR body, not
+# inferred from `if:` guards inside an already-scheduled job.
+#
+# This also means the two files no longer share a `paths:` list to keep in
+# sync by hand-maintaining a parallel regex — each file's trigger is just a
+# disjoint subset of what the single-file version had, verified by GitHub's
+# own path-filter engine at schedule time, not by a script this repo has to
+# maintain. The tradeoff, stated plainly: steps 1-2 below discover and lint
+# EVERY Dockerfile in the tree, not just changed ones (that repo-wide sweep
+# is deliberate — see #741 in the ledger above) — and previously ran
+# whenever ANYTHING in the old single trigger list changed, including an
+# explorer/faucet-only PR, giving that sweep a free ride on any qualifying
+# trigger. After this split, an explorer/faucet-only PR no longer triggers
+# that sweep at all; it now runs only when this file's own (narrower)
+# trigger fires. A Dockerfile that broke silently would surface on the next
+# PR that touches a Dockerfile/compose/edge/entrypoint path -- not
+# immediately on an unrelated explorer/faucet PR. This workflow has no
+# `push:` trigger, so there was already no separate always-on backstop that
+# would have caught it sooner (a merge to main with no following
+# Dockerfile-touching PR was already unwatched); this split does not
+# introduce that gap, only narrows how often the sweep piggybacks on an
+# unrelated trigger. This is a real, if narrow, coverage change traded for a
+# real billing fix; it is not free.
+#
+# `wrfcoin/infra` has one self-hosted runner registered, `n5pro-ct102-infra`
+# (`gh api repos/wrfcoin/infra/actions/runners`), online, on the same build runner box
+# that already hosts core4's and backend's runners. GitHub Actions runner
+# registration is PER-REPOSITORY: a job in this repo can only ever be picked
+# up by a runner registered to THIS repo, so there is no cross-repo scheduling
+# collision with core4's or backend's runner even though all three share the
+# `n5pro` label and the same physical box.
+#
+# What was actually checked before moving anything, not assumed:
+#   Docker daemon, as the runner's own OS user (`gh-runner`, uid 999) --
+#     *** CORRECTED 2026-09-25 (infra#1034 review N5): WORKS NOW. *** When
+#     this note was first written, `gh-runner` was not in the `docker` group
+#     and `docker ps` as that user failed with "permission denied". That is
+#     stale: after core4#2958, `gh-runner` is in `docker` (see the header of
+#     public-exposure-edge-gate.yml), and Node Image Ship-Feature Guard run
+#     36202173903 did a full `docker build` + `docker create/cp` on
+#     `n5pro-ct102-infra`. The same OS user serves core4's, backend's and
+#     infra's runner services, so all three can reach the socket.
+#     SECURITY NOTE: Docker-socket access is ROOT-EQUIVALENT on build runner. Any
+#     job that runs on that runner (including a PR-triggered one) can mount
+#     the host filesystem through a container. That is acceptable only
+#     because wrfcoin/infra is private and fork PR workflows are disabled
+#     (no outside contributor can make a PR run there). If either changes,
+#     revisit it before anything else.
+#   hadolint -- not installed on the runner (`which hadolint` empty). Step 2
+#     pulls it as a digest-pinned image via `docker run`; that was blocked by
+#     the same (now-fixed) socket permission.
+#   Node / npm / git / gh CLI -- present and working as `gh-runner`: node
+#     v24.20.0, npm 11.19.0, git 2.39.5, gh 2.98.0. `actions/setup-node@v7`
+#     still pins the exact same Node 22 this gate always used (see
+#     node-probes-gate.yml) -- the system Node is not what runs the probe.
+#   Network egress -- real. `curl` to registry.npmjs.org (200) and
+#     registry-1.docker.io/v2/ (401, i.e. reached and answered, not
+#     unreachable) both succeeded from the runner as `gh-runner`.
+#   Disk -- 50G free of 118G on build runner's root filesystem, from both `root` and
+#     `gh-runner`'s view.
+#   Concurrency -- build runner runs all three runner SERVICES on one box (16 CPUs,
+#     32GiB RAM), independently of which repo's job triggered them. Measured
+#     load average 5.2-7.27 (out of 16) while other lanes (core4 Rust
+#     compiles) were active -- headroom, not saturation. `node-probes`'
+#     actual cost (`npm ci` + `node --test`) measured under 5s locally; even a
+#     concurrent Rust build on core4's runner would slow it, not starve it,
+#     and it costs the owner nothing either way.
+#
+# So (as written before the correction above): steps 0-3 (Dockerfile parse,
+# hadolint, Caddy validate) all invoke `docker build`/`docker run` directly and
+# could not move then. The blocker is gone, but moving them is a separate change
+# that this correction does not make -- they stay here, on
+# `ubuntu-latest`, hosted, billed, unchanged in substance. The Node boot
+# probe and `node --test` need nothing Docker touches and live in
+# node-probes-gate.yml on `n5pro-ct102-infra`, unchanged in substance -- same
+# `if:` conditions, same commands, same exit-code contract, just a different
+# file with a different trigger.
+#
+# gh-runner's Docker access HAS since been fixed (core4#2958; see the corrected
+# note above), so steps 0-3 CAN now move to build runner. Doing so is a separate change
+# not made here: it needs its own run evidence, and it widens the set of jobs
+# holding a root-equivalent socket.
+#
+# A self-hosted job with no available runner does not fail -- it sits
+# "Queued" until GitHub's own platform-level queued-job timeout eventually
+# cancels it (documented as up to 24h), which is a VOID of a different shape
+# than the zero-step billing VOID: `gh pr checks` shows a pending/queued
+# state rather than a fast pass/fail, and `gh api .../actions/runs/<id>/jobs`
+# shows `"status": "queued", "conclusion": null` rather than
+# `"conclusion": "failure"` with 0 steps. `n5pro-ct102-infra` is confirmed
+# online right now, so this is not live, but it is the failure mode to watch
+# for if that runner ever drops offline.
+#
+# MINUTES DISCIPLINE
+# ------------------
+# GitHub bills each *scheduled hosted job* rounded up to the minute -- and
+# "scheduled" is the operative word. A job that never gets scheduled because
+# the WORKFLOW it lives in never triggered bills nothing; a job that gets
+# scheduled and then has every step `if:`-skipped still bills the rounded-up
+# minute, because the runner was allocated. That distinction is why this
+# file's `on.pull_request.paths` list, not a per-step `if:` guard, is the
+# actual cost-control surface for `gate`. This is also deliberately ONE
+# hosted job rather than a fan-out: a 4-job matrix that each ran 12s would
+# bill 4 minutes, this bills 1-2.
+#
+# Estimated hosted (billed) minutes per PR that triggers THIS file:
+#   Dockerfile-only change (the common case) ......... ~1 min   (MEASURED: 24-26s)
+#   + testnet/edge (xcaddy build, cold) .............. ~5-8 min   (rare, unchanged)
+#   + any edit to THIS FILE (forces the edge branch) . ~5-8 min hosted
+#
+# An explorer/faucet-only PR -- e.g. #838's own dependabot bump, or #880's
+# og-image.test.js -- no longer appears in the table above at all, because
+# it no longer matches ANY path in this file's trigger list, so GitHub never
+# evaluates this workflow for that PR: not scheduled, not `if:`-skipped, not
+# billed. That is the genuine $0 this PR is sold on, and unlike the job-level
+# split this replaces, it is a property of what triggers the workflow, not
+# of what runs inside it once triggered -- proven with a real run in the PR
+# body (a scratch PR touching only a faucet file), not inferred from `if:`
+# guards. node-probes-gate.yml picks that same PR up on its own, separate,
+# self-hosted trigger, at $0 regardless of what it runs, because self-hosted
+# minutes are never billed at all.
+#
+# Before infra#838's runner migration, an explorer/faucet-only PR paid the
+# full "+ a booted Node service" line on the hosted runner -- previously
+# estimated ~2-3 min. That entire cost is now $0, genuinely, not just
+# relocated inside a job that still gets billed for showing up.
+
+name: Build/Boot Gate
+
+on:
+  pull_request:
+    paths:
+      # --- image definitions -------------------------------------------------
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
+      - '**/*.dockerfile'
+      # --- compose surfaces --------------------------------------------------
+      #     NOT '**/docker-compose*.yml': that misses
+      #     `infra/homelab/monitoring-compose.yml`, which is a compose file whose
+      #     name does not start with `docker-`. Match on "contains compose"
+      #     instead, and cover .yaml as well as .yml, so a future
+      #     `foo-compose.yaml` is not silently outside the gate. (Found in
+      #     review by the owner on #744.)
+      - '**/*compose*.yml'
+      - '**/*compose*.yaml'
+      # --- edge / Caddy ------------------------------------------------------
+      #     Narrowed from `testnet/edge/**`. Step 3 validates the Caddyfile and
+      #     builds Dockerfile.caddy; a README or a script in that tree needs
+      #     neither, and this is the ~5-8 minute step. Everything step 3 reads
+      #     is listed here.
+      #
+      #     Bob's #881 re-review (2026-08-31): `testnet/edge/*.caddy` was
+      #     missing. Caddyfile:43 `import public_onboarding.caddy`, so an
+      #     edit to that snippet is exactly the kind of change step 3 exists
+      #     to catch, and it was invisible to this list -- editing it alone
+      #     never scheduled the gate that validates it. `*.caddy` covers that
+      #     file AND any future imported snippet, rather than adding one more
+      #     named exception every time Caddyfile grows a new `import`.
+      - 'testnet/edge/Caddyfile*'
+      - 'testnet/edge/*.caddy'
+      - 'testnet/edge/Dockerfile.caddy'
+      # --- entrypoints and container shell glue ------------------------------
+      - '**/entrypoint*.sh'
+      - '**/*-entrypoint.sh'
+      - 'infra/docker/*.sh'
+      # --- self ---------------------------------------------------------------
+      #     A change to the gate must exercise the WHOLE gate: see the
+      #     `gate_self` forcing in the detect step below.
+      #
+      #     testnet/explorer/** and testnet/services/faucet/** are NOT here.
+      #     They moved to node-probes-gate.yml's own trigger (infra#881) --
+      #     that is the entire fix: this file no longer matches on an
+      #     explorer/faucet-only PR, so `gate` is never scheduled for one, and
+      #     GitHub bills nothing for a workflow that never ran. See the
+      #     "WORKFLOW-FILE SPLIT" and "MINUTES DISCIPLINE" notes above.
+      - '.github/workflows/build-boot-gate.yml'
+      - '.github/gate-fixtures/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-boot-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # API access required by this job only.
+    permissions:
+      contents: read
+      pull-requests: read
+    name: Build/Boot Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # -----------------------------------------------------------------------
+      # Which surfaces did this PR actually touch? One API call, no deep fetch.
+      # -----------------------------------------------------------------------
+      - name: Detect changed surfaces
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json files --jq '.files[].path' | tee changed-files.txt
+          echo "--- changed: $(wc -l < changed-files.txt) file(s)"
+
+          has() { grep -qE "$1" changed-files.txt && echo true || echo false; }
+
+          # A change to the gate itself, or to its fixtures, forces EVERY
+          # conditional branch on. Otherwise the gate can be edited while most
+          # of it is never executed -- which is how a control rots into
+          # decoration. It also means a reviewer of a gate PR sees all three
+          # controls run, rather than one plus two claims.
+          # Cost: a gate edit pays the ~5-8 minute xcaddy build. Gate edits are
+          # rare; a silently-unexercised control is not worth saving it.
+          SELF=$(has '^\.github/(workflows/build-boot-gate\.yml|gate-fixtures/)')
+          echo "gate_self=$SELF"
+          on() { if [ "$SELF" = true ]; then echo true; else has "$1"; fi; }
+          {
+            echo "gate_self=$SELF"
+            echo "edge=$(on '^testnet/edge/(Caddyfile.*|.*\.caddy)$')"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      # =======================================================================
+      # 0. SELF-TEST — prove the parse probe can go RED before trusting its GREEN
+      # =======================================================================
+      # A gate that has never been observed failing is indistinguishable from a
+      # gate that cannot fail. `.github/gate-fixtures/` holds a matched pair —
+      # 708-red.dockerfile.fixture is the real pre-fix infra/watchdog/Dockerfile, and
+      # -green is the same file with only the inline comment removed — so the
+      # RED result is attributable to that one token and nothing else.
+      # Both fixtures are excluded from discovery in steps 1 and 2.
+      - name: Self-test the parse probe (RED control)
+        run: |
+          set -euo pipefail
+          probe() { docker build --target __r97_parse_probe__ - < "$1" 2>&1 || true; }
+
+          red=$(probe .github/gate-fixtures/708-red.dockerfile.fixture)
+          if grep -qE 'parse error|unknown instruction' <<<"$red"; then
+            echo "RED control OK — probe rejects the #708 fixture:"
+            # shellcheck disable=SC2001  # ^-anchored per-line edit; ${var//} cannot do it
+            grep -m1 -E 'parse error|unknown instruction' <<<"$red" | sed 's/^/    /'
+          else
+            echo "::error::RED control FAILED — the probe accepted a known-malformed"
+            echo "::error::Dockerfile. This gate cannot be trusted until that is fixed."
+            # shellcheck disable=SC2001  # ^-anchored per-line edit; ${var//} cannot do it
+            echo "$red" | sed 's/^/    /'
+            exit 1
+          fi
+
+          green=$(probe .github/gate-fixtures/708-green.dockerfile.fixture)
+          if grep -q 'could not be found' <<<"$green"; then
+            echo "GREEN control OK — probe accepts the corrected fixture"
+          else
+            echo "::error::GREEN control FAILED — the probe rejects a valid Dockerfile,"
+            echo "::error::so every result it produces is a false RED."
+            # shellcheck disable=SC2001  # ^-anchored per-line edit; ${var//} cannot do it
+            echo "$green" | sed 's/^/    /'
+            exit 1
+          fi
+
+      # =======================================================================
+      # 1. DOCKERFILE PARSE  — catches #708
+      # =======================================================================
+      # Every Dockerfile is DISCOVERED, never enumerated. This is the fix for
+      # infra#741: `Lint Dockerfiles` hard-codes three paths against 34 files in
+      # the tree, so new Dockerfiles are unlinted by default and that job reports
+      # green on PRs it never opened.
+      #
+      # The probe builds with a stage target that cannot exist and reads the
+      # DAEMON MESSAGE, not the exit code — both outcomes exit 1:
+      #   "dockerfile parse error ..."          -> FAIL (malformed)
+      #   'target stage "..." could not be found' -> PASS (parsed cleanly)
+      # Context is the Dockerfile itself on stdin, so nothing is uploaded, no base
+      # image is pulled, and no layer is executed. Measured ~0.3s per file.
+      #
+      # The probe runs under BUILDKIT (the runner default), deliberately. An
+      # earlier revision forced DOCKER_BUILDKIT=0 and it was WRONG: the classic
+      # builder has no heredoc support, so it rejected
+      # `infra/docker/Dockerfile.soil-model` with `unknown instruction: """Soil`
+      # for a `RUN cat > f << 'PYEOF'` block that BuildKit — the parser real
+      # builds use — accepts. Picking the wrong parser turns a valid file into a
+      # permanent false RED. Step 0 is what makes this switch safe: if BuildKit
+      # ever stopped rejecting the #708 fixture, the self-test fails loudly
+      # instead of the gate quietly passing everything.
+      - name: Discover and parse every Dockerfile
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(git ls-files \
+            | grep -Ei '(^|/)(Dockerfile[^/]*|[^/]*\.[Dd]ockerfile)$' \
+            | grep -v '^\.github/gate-fixtures/' | sort)
+
+          echo "discovered ${#FILES[@]} Dockerfile(s)"
+          printf '  %s\n' "${FILES[@]}"
+
+          # An empty discovery is the same vacuous-green failure in a new costume.
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::discovery matched 0 Dockerfiles — the glob is wrong, failing"
+            exit 1
+          fi
+
+          rc=0
+          for f in "${FILES[@]}"; do
+            out=$(docker build --target __r97_parse_probe__ - < "$f" 2>&1 || true)
+            if grep -q 'could not be found' <<<"$out"; then
+              echo "  PARSE OK   $f"
+            elif grep -qE 'parse error|unknown instruction' <<<"$out"; then
+              echo "::error file=$f::$(grep -m1 -E 'parse error|unknown instruction' <<<"$out")"
+              rc=1
+            else
+              # Unrecognised outcome is NOT a pass. Surface it loudly.
+              echo "::error file=$f::unexpected probe result:"
+              # shellcheck disable=SC2001  # ^-anchored per-line edit; ${var//} cannot do it
+              echo "$out" | sed 's/^/    /'
+              rc=1
+            fi
+          done
+          exit $rc
+
+      # =======================================================================
+      # 2. HADOLINT over DISCOVERED paths — closes infra#741's coverage gap
+      # =======================================================================
+      # HONEST SCOPE: hadolint does **NOT** catch #708. Measured against the live
+      # broken infra/watchdog/Dockerfile, `hadolint --failure-threshold error`
+      # exits 0 — it reports DL3025 (warning) and DL3066 (info) and tolerates the
+      # inline comment that Docker's parser rejects. That is exactly why step 1
+      # exists and why this step is not a substitute for it.
+      #
+      # BLOCKING SCOPE: rule findings (DL####/SC####) block. hadolint's OWN parse
+      # complaints are a warning — and the reason is structural, not a favour:
+      # this step only executes when step 1 succeeded, and step 1 fails the job
+      # on any file Docker cannot parse. So by the time this runs, Docker has
+      # already accepted every discovered file, and a hadolint parse complaint
+      # can only be a hadolint limitation.
+      #
+      # Do not weaken this into "hadolint parse errors are noise". An earlier
+      # revision asserted that carve-out while step 1 had NOT in fact accepted
+      # the file — `infra/docker/Dockerfile.soil-model` was genuinely broken
+      # (`unknown instruction: """Soil`, heredoc without a `# syntax=` directive)
+      # and the carve-out would have suppressed a true positive. The guarantee is
+      # the step ordering. If you ever make step 2 run independently of step 1,
+      # this carve-out becomes unsound and must go with it.
+      #
+      # The residual real case: hadolint 2.15.1 cannot read the heredoc in
+      # soil-model even now that the file is valid and Docker parses it.
+      #
+      # Continues past the first offender so one bad file does not mask the rest.
+      # Pinned by digest, like every other action reference in this repo.
+      - name: Lint every discovered Dockerfile
+        run: |
+          set -euo pipefail
+          HADOLINT='hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d'
+          mapfile -t FILES < <(git ls-files \
+            | grep -Ei '(^|/)(Dockerfile[^/]*|[^/]*\.[Dd]ockerfile)$' \
+            | grep -v '^\.github/gate-fixtures/' | sort)
+          [ "${#FILES[@]}" -gt 0 ] || { echo "::error::0 Dockerfiles discovered"; exit 1; }
+
+          echo "linting ${#FILES[@]} Dockerfile(s)"
+          rc=0
+          for f in "${FILES[@]}"; do
+            out=$(docker run --rm -i "$HADOLINT" \
+                    hadolint --failure-threshold error - < "$f" 2>&1) && continue
+            if grep -qE '\b(DL[0-9]{4}|SC[0-9]{4})\b' <<<"$out"; then
+              echo "::error file=$f::hadolint rule violation"
+              # shellcheck disable=SC2001  # ^-anchored per-line edit; ${var//} cannot do it
+              sed "s|^/dev/stdin|$f|" <<<"$out"
+              rc=1
+            else
+              echo "::warning file=$f::hadolint cannot parse this file; step 1 already proved Docker parses it"
+              # shellcheck disable=SC2001  # ^-anchored per-line edit; ${var//} cannot do it
+              sed "s|^/dev/stdin|$f|;s|^|  |" <<<"$out"
+            fi
+          done
+          exit $rc
+
+      # =======================================================================
+      # 3. CADDY CONFIG  — the #701 class
+      # =======================================================================
+      # Built from the repo's OWN Dockerfile.caddy, not the stock image.
+      # Measured: vanilla `caddy:2.11.4-alpine` cannot serve as the gate -- it
+      # fails permanently on `order rate_limit ... is not a registered
+      # directive` (Caddyfile:35), because the ratelimit plugin is compiled in
+      # by xcaddy.
+      #
+      # WHAT THIS CHECKS, AND A CORRECTION TO WHAT I PREVIOUSLY CLAIMED.
+      #
+      # An earlier revision ran `caddy validate` twice: once with the operator
+      # env populated, and once with ACME_EMAIL deliberately UNSET, on the
+      # grounds that an empty expansion collapses `email {$ACME_EMAIL}` to a
+      # bare `email` and reproduces #701:
+      #   parsing caddyfile tokens for 'email': wrong argument count or
+      #   unexpected line ending after 'email', at /etc/caddy/Caddyfile:29
+      # That error is real and I reproduced it. My claim that it is "live on
+      # main" was WRONG, and the unset-env leg is now removed, because
+      # `testnet/docker-compose.edge.yml:49` already carries
+      #   ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL for Let's Encrypt}
+      # added in 60f0b1d, the same commit that created the edge. Compose
+      # refuses to render with a clear message before Caddy ever starts, so an
+      # operator cannot reach the arity error through the supported path.
+      # Gating on an unreachable state is a false RED -- exactly what this
+      # workflow exists to stop.
+      #
+      # So the two things worth gating are below: the config must be VALID as
+      # deployed, and the guard that makes the unset case unreachable must
+      # still be there.
+      - name: Validate edge Caddy config
+        if: steps.changed.outputs.edge == 'true'
+        run: |
+          set -euo pipefail
+
+          # The `:?` guard is what makes an empty ACME_EMAIL unreachable. If it
+          # is ever deleted, the #701 arity error becomes reachable again and
+          # this gate must fail rather than quietly lose the property.
+          echo "::group::compose fail-fast guard on ACME_EMAIL"
+          if grep -qE '\$\{ACME_EMAIL:\?' testnet/docker-compose.edge.yml; then
+            echo "OK — testnet/docker-compose.edge.yml still fails fast on an unset ACME_EMAIL"
+          else
+            echo "::error file=testnet/docker-compose.edge.yml::the \${ACME_EMAIL:?...} guard is gone."
+            echo "::error file=testnet/docker-compose.edge.yml::Without it an empty expansion makes Caddyfile:29 a bare \`email\`, which is infra#701."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          docker build -f testnet/edge/Dockerfile.caddy -t r97-caddy-gate testnet/edge
+
+          # The real check: the Caddyfile must adapt cleanly as deployed. This
+          # is what catches a malformed directive -- wrong arity, unknown
+          # option, a plugin directive without the plugin.
+          #
+          # Bob's #881 re-review (2026-08-31): mounting only Caddyfile left
+          # its own `import public_onboarding.caddy` (Caddyfile:43) unresolvable
+          # -- `caddy validate` reads imports relative to the Caddyfile's own
+          # directory, which a single-file bind mount never populates. A
+          # second named single-file mount would have "fixed" today's import
+          # and rotted the same way the next time Caddyfile imports a new
+          # snippet, so mount the whole directory instead: every current and
+          # future import in testnet/edge/ resolves without another edit here.
+          echo "::group::caddy validate — operator env populated"
+          docker run --rm \
+            -v "$PWD/testnet/edge:/etc/caddy:ro" \
+            -e WRFCOIN_PUBLIC_DOMAIN=testnet.example.org \
+            -e ACME_EMAIL=ops@example.org \
+            r97-caddy-gate caddy validate --config /etc/caddy/Caddyfile
+          echo "::endgroup::"

@@ -1,0 +1,71 @@
+# WRFCoin Testnet — AlertManager configuration template
+#
+# This file is rendered by `render-alertmanager-config.sh` into
+# `alertmanager.rendered.yml` so operators can keep the notification channel
+# env-driven without committing secrets. Do not mount this template directly
+# in docker compose.
+#
+# DELIVERY MODEL (infra#627): the critical path pages a human via the
+# `critical-notifications` webhook, which posts to the alert-receiver service
+# (testnet/alertmanager-webhook-receiver.py, deployed by
+# docker-compose.alert-receiver.yml). That receiver forwards a compact summary
+# to a REAL deliverable channel — ntfy or Telegram — set through ALERT_FORWARD_URL
+# in .env (see .env.testnet.example). Email/SMTP was removed: CT 101 has no MTA,
+# so `smtp_smarthost: localhost:25` delivered nowhere and silently dropped every
+# critical page. Do not re-add an email receiver unless a reachable smarthost is
+# actually provisioned.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'log-only'
+  group_by: ['alertname', 'severity', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # TODO: route backend recovery alerts to a real paging channel once the
+    # testnet notification path is wired up for operations.
+    - match:
+        service: backend
+      receiver: 'log-only'
+      continue: true
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 1h
+
+    - match:
+        severity: critical
+      receiver: 'critical-notifications'
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 1h
+
+    - match:
+        severity: warning
+      receiver: 'log-only'
+      group_wait: 30s
+      group_interval: 10m
+      repeat_interval: 6h
+
+receivers:
+  - name: 'critical-notifications'
+    # The webhook is the ONLY critical delivery channel. It posts to the
+    # alert-receiver service (container DNS name on the wrfcoin-testnet network),
+    # which forwards to the operator's ntfy/Telegram channel (ALERT_FORWARD_URL).
+    # Default is the container DNS name so the standard 3-file bring-up
+    # (docker-compose.testnet.yml + override + alert-receiver) works out of the
+    # box; override via ALERTMANAGER_WEBHOOK_URL for a host-run receiver.
+    webhook_configs:
+      - url: 'http://wrfcoin-alert-receiver:19093/alerts'
+        send_resolved: true
+
+  - name: 'log-only'
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname', 'service']

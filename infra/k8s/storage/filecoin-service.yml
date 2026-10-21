@@ -1,0 +1,19 @@
+---
+# Filecoin Lotus API Service (internal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: filecoin-api
+  namespace: storage
+  labels:
+    app: filecoin-lotus
+    component: storage
+spec:
+  type: ClusterIP
+  selector:
+    app: filecoin-lotus
+  ports:
+    - name: api
+      port: 1234
+      targetPort: 1234
+      protocol: TCP

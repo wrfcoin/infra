@@ -1,0 +1,186 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: terraform
+    directory: /infra/terraform
+    schedule: { interval: weekly }
+    groups:
+      terraform-providers:
+        patterns: ["*"]
+
+  # Dependabot `directory:` is not recursive — nested terraform roots are their
+  # own surfaces (infra#474 review finding: these provider pins were unscanned).
+  - package-ecosystem: terraform
+    directory: /infra/terraform/autoresearch
+    schedule: { interval: weekly }
+    groups: { terraform-providers: { patterns: ["*"] } }
+  - package-ecosystem: terraform
+    directory: /infra/terraform/compute-agent
+    schedule: { interval: weekly }
+    groups: { terraform-providers: { patterns: ["*"] } }
+  - package-ecosystem: terraform
+    directory: /infra/monitoring
+    schedule: { interval: weekly }
+    groups: { terraform-providers: { patterns: ["*"] } }
+  - package-ecosystem: pip
+    directory: /infra/monitoring
+    schedule: { interval: weekly }
+    groups: { python-tooling: { patterns: ["*"] } }
+
+  - package-ecosystem: pip
+    directory: /infra/tools
+    schedule: { interval: weekly }
+    groups:
+      python-tooling:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /testnet/scripts
+    schedule: { interval: weekly }
+    groups: { python-tooling: { patterns: ["*"] } }
+
+  - package-ecosystem: npm
+    directory: /infra/compute-agent
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /infra/monitoring
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /infra/watchdog
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /testnet/explorer
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /testnet/services/faucet
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /testnet/services/synthetic-collector
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
+
+  # NODE LTS POLICY IGNORE (infra#745, owner decision 2026-08-04).
+  #
+  # #745 pinned the Node fleet to 24 LTS. Dependabot then regenerated #733-#737
+  # as node:24 -> node:26, which undoes that pin; Node 26 is not LTS until
+  # 2026-10-28. Those five were closed as a POLICY REJECTION, and they return on
+  # every sweep until the config says otherwise.
+  #
+  # Scoped to `node` and to semver-MAJOR only, on every docker entry. Patch and
+  # minor keep flowing untouched -- the weekly batching rule depends on them, and
+  # suppressing minors would silently stop security-relevant updates, which is a
+  # worse failure than the one this closes. This is an `ignore`, not a removed
+  # ecosystem entry and not a group-level exclusion: each directory is still
+  # scanned exactly as before.
+  #
+  # This does NOT block a deliberate 24 -> 26 move after 2026-10-28. It blocks
+  # the automated fragments proposing it now; a considered upgrade is a separate,
+  # reviewed change that removes these three lines.
+  - package-ecosystem: docker
+    directory: /infra/docker
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    # UBUNTU RELEASE-LINE FREEZE (infra#760, owner decision 2026-08-30).
+    #
+    # Ubuntu versions are YY.MM: the year is the semver MAJOR and the month the
+    # MINOR, so release lines live in the minor component. The #713-era ignore
+    # named only semver-major — exactly inverted: it permitted 24.04 -> 24.10
+    # (non-LTS, broke the core build, infra#739) while blocking 24.04 -> 26.04
+    # (the LTS move). Both levels are ignored now: every ubuntu TAG move is a
+    # deliberate reviewed edit. Digest-only refreshes carry no semver delta and
+    # keep flowing (falsifiable per #760: if the next weekly sweep brings no
+    # digest-only ubuntu PR, this shape silently freezes security patches and
+    # must be replaced by the codename-tag approach, #760 option b).
+    ignore:
+      - dependency-name: "ubuntu"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+      # PYTHON RELEASE-LINE FREEZE, /infra/docker only (infra#873, owner
+      # decision 2026-08-30). Python's release line also lives in the semver
+      # MINOR (3.11 -> 3.14), so both levels are named — the ubuntu lesson
+      # (#760). Empirical driver: #872's 3.14 bumps were REAL-RED (tensorflow
+      # has no cp314 wheel; soil-model's scipy==1.13.1 predates 3.14). The
+      # deliberate move is 3.12 via #873; digest refreshes keep flowing.
+      # /infra/monitoring is NOT frozen — it already runs 3.14 successfully.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+  - package-ecosystem: docker
+    directory: /infra/monitoring
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /infra/watchdog
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /testnet
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  # /testnet/edge (caddy) and /testnet/services/alert-receiver (python) carry no
+  # node image today. The ignore is inert there and is applied anyway so the
+  # policy is uniform across every docker entry -- a node stage added later is
+  # covered without anyone remembering to come back here.
+  - package-ecosystem: docker
+    directory: /testnet/edge
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /testnet/services/alert-receiver
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /testnet/services/container-health-watch
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /testnet/services/faucet
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /testnet/services/sdr-ingest
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directory: /testnet/services/defi
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

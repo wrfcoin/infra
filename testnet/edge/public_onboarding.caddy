@@ -1,0 +1,718 @@
+# =============================================================================
+# Shared public-boundary snippets (infra#658 / infra#679 / infra#657)
+# =============================================================================
+# Imported by BOTH public edges so the allowlist cannot drift between them:
+#   - Caddyfile         (direct 443 edge, Let's Encrypt — infra#636/#640)
+#   - Caddyfile.funnel  (loopback :8444 behind Tailscale Funnel — infra#657)
+# Change the boundary HERE, never in a per-edge copy.
+#
+# Rate-limit keys use {client_ip}: identical to {remote_host} on the direct
+# edge (no trusted proxies), and the real client behind the funnel edge, whose
+# global options trust the local funnel hop and honor X-Forwarded-For.
+# =============================================================================
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+(sane_limits) {
+	# reject absurd request bodies before they reach an app
+	request_body {
+		max_size 2MB
+	}
+}
+
+# Public website API policy (infra#658). The backend is a mixed-trust
+# application, so public traffic is admitted by exact method + path, never by
+# a growing denylist. Import inside a route {} on EVERY public host: the
+# frontend nginx has broad internal /api and /ws backend proxies that would
+# otherwise bypass this boundary.
+(public_onboarding_api) {
+	# infra#1051 — NON-CANONICAL REQUEST PATHS FAIL CLOSED, BEFORE ANY ROUTE.
+	#
+	# Caddy's `path`/`path_regexp` matchers evaluate a CLEANED, unescaped path
+	# (`..`/`.` collapsed, %2e/%2f decoded), but `reverse_proxy` forwards the
+	# RAW request URI, and the backend (Express 4.22.2) resolves neither dot
+	# segments nor encoded separators. Measured locally on main 410228b:
+	#   GET /api/node-control/x/../../weather/coverage-zones
+	# matched @weather_coverage_zones here and was dispatched by Express into
+	# the router mounted at /api/node-control — i.e. every unauthenticated
+	# backend GET route was reachable past the exact-path allowlist.
+	#
+	# The edge and the backend must agree on the path, so any request whose RAW
+	# path (orig_uri up to `?`) is not already canonical is refused with 400:
+	#   - not origin-form (absolute-form `http://h/…`, `*`, anything not `/`-led)
+	#   - a literal `#` ANYWHERE before `?`. Clients never send fragments, but a
+	#     raw target may carry one: Go keeps it as an ordinary PATH character, the
+	#     path matchers clean `x#/../..` as usual, and reverse_proxy forwards it
+	#     as `%23` with the dot segments raw (review of #1052 at 9084b02). So the
+	#     scan must NOT stop at `#`; stopping there was itself a bypass.
+	#   - a `.` or `..` path segment
+	#   - an encoded dot, slash, backslash, percent or NUL (%2e %2f %5c %25 %00,
+	#     any case) — %25 also covers every double-encoding (%252e, %25252f, …)
+	#   - a literal backslash
+	#   - an empty segment (`//`)
+	# The query string is not inspected. Accepted side effect: a frontend SPA
+	# route whose segment carries an encoded `%25` or `%2F` also gets 400 (none
+	# exists today; review of #1052). This handler MUST stay first in the
+	# snippet: it guards the allowlist below AND the frontend fallback after it.
+	# verify_public_exposure_boundary.py pins the matcher text and its position.
+	@noncanonical_uri {
+		vars_regexp {http.request.orig_uri} `^(?:[^/]|[^?]*(?:#|/\.\.?(?:[/?]|$)|(?i:%(?:2e|2f|5c|25|00))|\\|//))`
+	}
+	handle @noncanonical_uri {
+		respond "Bad request" 400
+	}
+
+	@wallet_nonce {
+		method GET
+		path_regexp ^/api/auth/nonce/0x[0-9A-Fa-f]{40}$
+	}
+	handle @wallet_nonce {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@wallet_login {
+		method POST
+		path /api/auth/wallet-login
+	}
+	handle @wallet_login {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@wallet_refresh {
+		method POST
+		path /api/auth/refresh
+	}
+	handle @wallet_refresh {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@faucet_challenge {
+		method POST
+		path /api/onboarding/faucet/challenge
+	}
+	handle @faucet_challenge {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@faucet_claim {
+		method POST
+		path /api/onboarding/faucet/claim
+	}
+	handle @faucet_claim {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@station_verify {
+		method POST
+		path /api/weather/stations/verify-key
+	}
+	handle @station_verify {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@station_register {
+		method POST
+		path /api/weather/stations
+	}
+	handle @station_register {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Station theft protection (core4#3345/#3347, infra#1095; backend POST
+	# /api/stations/:alias/owner-actions). A phone relays ONE caller-signed owner tx
+	# (transfer, owner action, recovery cancel/execute); the backend never signs or
+	# alters it. UNGATED like station registration (the matcher is exact, the backend
+	# authenticates per kind, and the node ignores every owner tx until the owner
+	# schedules the features). POST only, EXACT path with the public station ALIAS
+	# (st_ + 12 lowercase hex; raw station ids never reach it), NO query string, and
+	# a body cap of 8 KiB at the edge (the backend caps again). Counted by its own
+	# tight `station_owner_actions` rate zone below AND public_read (/api/stations/*).
+	@station_owner_actions {
+		method POST
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/owner-actions$
+		expression `{query} == ""`
+	}
+	handle @station_owner_actions {
+		request_body {
+			max_size 8KiB
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@station_reward_progress {
+		method GET
+		path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/reward-progress$
+	}
+	handle @station_reward_progress {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# The signed-in wallet's OWN phone-station status (owner ruling 2026-10-02,
+	# frontend#463, W28). weather-routes.js GET /stations/mobile calls
+	# getMobileStationStatus(req.user.address): 401 without a wallet session,
+	# 404 NOT_REGISTERED, else only the caller's own row. Exact path, GET only,
+	# no query string. POST /stations/mobile (phone registration) and
+	# /stations/mobile/challenge stay off. The `onboarding` rate zone below
+	# already counts it (/api/weather/stations*).
+	@station_mobile_status {
+		method GET
+		path /api/weather/stations/mobile
+		expression `{query} == ""`
+	}
+	handle @station_mobile_status {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Read-only public viewer surface (infra#916 / sonnet-r1). GET-only, no
+	# per-address financial or PII data — see docs/plans/2026-09-09-public-viewer-route-ledger.md
+	# for the full audit. backend#1113 removed owner/reward fields from anonymous
+	# station responses, but GET /api/weather/stations still returns exact home
+	# coordinates. It stays OFF the deployed edge until a backend projection
+	# rounds coordinates to 0.1 degrees before serialization (backend#1222);
+	# client-side rounding is not a privacy boundary. Its Stage 1.5 matcher
+	# below is therefore GATED OFF (@public_readonly_* — PUBLIC_READONLY_API).
+	# GET /api/v1/stations/status also remains excluded.
+	#
+	# Also explicitly NOT admitted: GET /api/blockchain/blocks/{height} (a
+	# single-block detail read). Unlike the list route below, the backend
+	# handler (blockchain-routes.js:166-236) passes through the block's raw
+	# `transactions` array and full `metadata` unfiltered. Core4's block
+	# metadata embeds `reward_entries` (proof_of_publishing.rs) — address,
+	# amount, station_id, provenance_class — for any reward-bearing block, so
+	# this route would leak the exact #1841/#1113 class of per-address
+	# financial data through a "chain explorer" name. Cross-provider review
+	# (Luna, Codex) caught this before merge; do not re-add without a
+	# safe-projection fix in the backend handler AND an explicit owner
+	# decision, revising this comment and the route ledger together.
+	@chain_status {
+		method GET
+		path /api/blockchain/status
+	}
+	handle @chain_status {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@chain_blocks {
+		method GET
+		path /api/blockchain/blocks
+	}
+	handle @chain_blocks {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Mounted by enhanced_unified_api_optimized.ts:1626 and implemented at
+	# blockchain-routes.js:249-289. These reads currently answer honest 501s;
+	# admitting them lets the public UI receive that explicit unavailable state
+	# without widening to block detail, validator detail, or mempool paths.
+	@chain_transactions {
+		method GET
+		path /api/blockchain/transactions
+	}
+	handle @chain_transactions {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@chain_transaction_detail {
+		method GET
+		path_regexp ^/api/blockchain/transactions/(0x)?[0-9A-Fa-f]{64}$
+	}
+	handle @chain_transaction_detail {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@chain_validators {
+		method GET
+		path /api/blockchain/validators
+	}
+	handle @chain_validators {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@chain_stats {
+		method GET
+		path /api/blockchain/stats
+	}
+	handle @chain_stats {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@weather_coverage_zones {
+		method GET
+		path /api/weather/coverage-zones
+	}
+	handle @weather_coverage_zones {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Stage 1.5 read-only station reads (infra#983, frontend#349/#360), built
+	# and LIVE on the deployed edge (PUBLIC_READONLY_API=on). Each matcher
+	# also requires the edge container's environment to carry PUBLIC_READONLY_API=on EXACTLY; unset (the compose default is
+	# `off`), `ON`, `true`, `1` or anything else leaves them unmatched, so the
+	# request falls through to the /api/* 404 below — today's behavior.
+	# It was held off until the backend's anonymous 0.1-degree coordinate
+	# projection (backend#1222; device registry backend#1220) is DEPLOYED and
+	# re-audited: these handlers proxy the backend response unchanged, so the
+	# edge adds no coarsening of its own. Turning it on is an owner call in a
+	# deploy window, not a merge side effect.
+	#   GET /api/weather/stations -> weather-routes.js (the station list the
+	#       public map reads, frontend publicReadonlyApi.stations)
+	#   GET /api/stations/<id>/{observations,quality,submissions} ->
+	#       station-detail-routes.ts, mounted at
+	#       enhanced_unified_api_optimized.ts:262 (app.use('/api', ...)); the
+	#       station detail page's reads (frontend weatherService.ts). Only
+	#       these three leaves; every other sibling stays 404. (`earnings`,
+	#       backend#1232, is NOT a fourth leaf: it has its own gated matcher
+	#       below because it admits no query string at all.)
+	# The station id charset/length matches @station_reward_progress. The
+	# #1051 guard above still runs first, so no raw dot segment or encoded
+	# separator reaches these.
+	# QUERY LOCK (stage15 readiness): each read admits only the exact query
+	# the Stage 1.5 build sends. The station list takes NONE: with `lat`/`lng`
+	# (or `lat[]`, which Express also reads as present) weather-routes.js
+	# switches to getNearbyStations, two outbound NOAA calls per anonymous
+	# request with caller-chosen radius/limit, and `limit`/`after` page the
+	# table. The detail reads take none, or exactly `limit=1` (the station
+	# page's observations poll); `?limit=100` on /submissions would fan out
+	# to 100 core4 status reads per request. Anything else falls through to
+	# the /api/* 404 below.
+	@public_readonly_stations {
+		method GET
+		path /api/weather/stations
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_stations {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_station_detail {
+		method GET
+		path_regexp ^/api/stations/[A-Za-z0-9_-]{1,64}/(observations|quality|submissions)$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == "" || {query} == "limit=1"`
+	}
+	handle @public_readonly_station_detail {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# backend#1232 (backend#1453, frontend#534): the per-station earnings read. Its own
+	# matcher, not a fourth leaf of the detail regex above, because it admits NO query
+	# string at all: the frontend calls it bare, and `?limit=` sizes the per-commit core4
+	# reward-evidence fan-out. Same gate as its siblings (OFF unless the edge env has
+	# PUBLIC_READONLY_API=on exactly), GET only. Anonymous callers get lifetime and rate
+	# without the shared-address station count (backend#1453).
+	@public_readonly_station_earnings {
+		method GET
+		path_regexp ^/api/stations/[A-Za-z0-9_-]{1,64}/earnings$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_station_earnings {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Owner ruling 2026-10-06 (backend#1456, frontend#535): the public weather
+	# leaderboard (earnings tab) is read-only public. Same gate as the station
+	# reads (OFF unless the edge env has PUBLIC_READONLY_API=on exactly), GET
+	# only, counted in the public_read limiter. EXACT path, and the query is
+	# locked to the one grammar frontend main sends (useWeatherLeaderboard +
+	# GlobalLeaderboard), in this order:
+	#   metric=<earnings|submissions|quality_score|streak>&period=<7d|30d|all>&limit=<1..30>
+	# Refused (404 at the edge): no query, any other order, any extra or
+	# repeated param, limit 0 / >30 / leading zeros / non-digits, and EVERY geo
+	# param (country, region, near, radius_km) on EVERY metric: backend#1457
+	# answers 400 for earnings+geo, and free-form geo is not admitted anonymously.
+	@public_readonly_weather_leaderboard {
+		method GET
+		path_regexp ^/api/weather/leaderboard$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query}.matches('^metric=(earnings|submissions|quality_score|streak)&period=(7d|30d|all)&limit=([1-9]|[12][0-9]|30)$')`
+	}
+	handle @public_readonly_weather_leaderboard {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Owner-approved PUBLIC role totals (backend#1481, merged 920b2f81):
+	# exact ordered role/period/limit grammar from earnings-routes.ts. Same
+	# default-OFF gate and public_read bucket as the weather leaderboard.
+	# No geo, extras, duplicates, reordered/encoded params or other methods.
+	@public_readonly_earnings_leaderboard {
+		method GET
+		path_regexp ^/api/earnings/leaderboard$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query}.matches('^role=(contribution|attester|producer|node|forecast)&period=(all|7d|30d)&limit=([1-9]|[12][0-9]|30)$')`
+	}
+	handle @public_readonly_earnings_leaderboard {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Public profile links use backend contributor-alias.ts opaque keys only:
+	# c_ + 24 lowercase hex. No raw-address lookup, identity inventory,
+	# og-meta/card sibling or query is admitted. Backend#1481 projects public
+	# role totals and shortened anonymous addresses; legacy totals stay private.
+	@public_readonly_operator_profile {
+		method GET
+		path_regexp ^/api/operators/c_[0-9a-f]{24}/profile$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_operator_profile {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Station ownership state (backend GET /api/stations/:alias/ownership): owner nonce,
+	# frozen / deactivated, pending recovery with its notice window. Same gate as the other
+	# station reads (OFF unless PUBLIC_READONLY_API=on exactly), GET only, EXACT alias path
+	# (raw ids 404 at the backend for anonymous callers, and never match here), NO query.
+	# The backend returns an explicit allowlisted projection: aliases and short addresses
+	# for non-owners, no coordinates (backend#1361/#1397). Counted in public_read via
+	# /api/stations/*.
+	@public_readonly_station_ownership {
+		method GET
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/ownership$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_station_ownership {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# S9: signed transparent transfer relay; backend binds JWT sub to signed from.
+	@public_wallet_send {
+		method POST
+		path /api/wallet/send
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_wallet_send {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_wallet_send_nonce {
+		method GET
+		path_regexp ^/api/wallet/0x[0-9a-f]{40}/nonce$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_wallet_send_nonce {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Website parity reads (S1 + S2, owner goal: public site matches the mobile app
+	# before GO). All five groups below share the PUBLIC_READONLY_API=on gate (OFF
+	# unless the edge env carries it exactly), GET only, EXACT paths, and a locked
+	# query grammar; everything else under /api/wallet, /api/governance and
+	# /api/weather still falls through to the /api/* 404. The #1051 guard above
+	# runs first for all of them.
+	#
+	# S1 own-wallet reads. These are NOT public data: wallet-routes.js
+	# applies router.use(requireAuth) (l.29), GET /:address (l.243) and GET
+	# /:address/transactions (l.415, requireOwnAddress: JWT sub must equal the URL
+	# address) answer only the caller's own address. The edge additionally requires
+	# an `Authorization: Bearer ` header (authMiddleware.js:40 only accepts that
+	# prefix) so anonymous probes never reach the backend. send, send-private,
+	# estimate-gas, mnemonic/*, nonce, nfts, data and POST /:address/transactions
+	# stay 404. The transactions query is locked to the mobile shape
+	# (api_constants.dart walletTransactions): limit=<1..50>&offset=<digits>, in that
+	# order; the backend clamps limit to 1..100 (wallet-routes.js:426-427) and also
+	# reads creditLimit/creditAfter, which are refused here.
+	@public_readonly_wallet_info {
+		method GET
+		path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_readonly_wallet_info {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_wallet_transactions {
+		method GET
+		path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}/transactions$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query}.matches('^limit=([1-9]|[1-4][0-9]|50)&offset=[0-9]{1,6}$')`
+		header Authorization "Bearer *"
+	}
+	handle @public_readonly_wallet_transactions {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# S2a governance reads (governance-routes.ts, mounted at
+	# enhanced_unified_api_optimized.ts:1571). Proposals list/detail (l.231/l.275)
+	# and the treasury summary (l.564) are chain/DB aggregates with no per-address
+	# data. The list takes no query, or limit=<1..100>&offset=<digits> (backend
+	# parseListPagination clamps to 500; `page` is refused here). The detail id is
+	# the backend PROPOSAL_ID_RE (l.273) charset. Votes, delegations, delegate,
+	# analytics, treasury/transactions and all writes stay 404.
+	@public_readonly_governance_proposals {
+		method GET
+		path /api/governance/proposals
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == "" || {query}.matches('^limit=([1-9]|[1-9][0-9]|100)&offset=[0-9]{1,6}$')`
+	}
+	handle @public_readonly_governance_proposals {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_governance_proposal {
+		method GET
+		path_regexp ^/api/governance/proposals/[A-Za-z0-9_-]{1,128}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_governance_proposal {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_governance_treasury {
+		method GET
+		path /api/governance/treasury
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_governance_treasury {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# S2b weather reads at the app's 0.1-degree cell (weather-routes.js:188/193;
+	# mobile CoarseLocation.pathSegment is `lat,lon` with exactly one decimal). Each
+	# call fans out to NOAA/NWS from the backend and the backend has NO response
+	# cache (noaa-nws-api-service.js), so these sit in their own tight
+	# `weather_noaa` rate zone. current takes no query (lat/lng query params are
+	# refused); forecast takes exactly the mobile shapes `type=hourly&days=1` or
+	# `days=14`. /api/weather/data/*, /historical/*, /providers etc. stay 404.
+	@public_readonly_weather_current {
+		method GET
+		path_regexp ^/api/weather/current/-?[0-9]{1,2}\.[0-9],-?[0-9]{1,3}\.[0-9]$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_weather_current {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_weather_forecast {
+		method GET
+		path_regexp ^/api/weather/forecast/-?[0-9]{1,2}\.[0-9],-?[0-9]{1,3}\.[0-9]$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == "type=hourly&days=1" || {query} == "days=14"`
+	}
+	handle @public_readonly_weather_forecast {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Public build-freshness probe (infra#968 / infra#992). EXACT paths, GET
+	# only, no prefix: /api/builds, /api/build/x and every other method fall
+	# through to the /api/* 404 below. Backend capabilities-routes.ts audited
+	# before admission: /api/build serves only the OCI build stamp (git
+	# revision + creation time) and /api/capabilities the static feature
+	# inventory; neither serializes a token, env value, hostname or IP. The
+	# full audit is on the EXPECTED entries in verify_public_exposure_boundary.py.
+	@public_build {
+		method GET
+		path /api/build
+	}
+	handle @public_build {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_capabilities {
+		method GET
+		path /api/capabilities
+	}
+	handle @public_capabilities {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Join snapshot artifacts (infra#587 / core4#2806): a brand-new node cannot
+	# full-sync this chain, so the snapshot download is part of the public
+	# onboarding surface. Static files only, exact paths, read-only — written
+	# by testnet/publish-join-snapshot.sh into the volume the funnel edge
+	# mounts at /srv/join (docker-compose.funnel-edge.yml). On an edge without
+	# that mount (the direct-443 edge today) these paths 404, which is the
+	# correct fail-closed default.
+	@join_artifacts {
+		method GET
+		path /join/manifest.json /join/snapshot.tar.gz
+	}
+	handle @join_artifacts {
+		root * /srv/join
+		uri strip_prefix /join
+		file_server
+	}
+
+	# Redacted output from probe_public_uptime.sh. Exact GET only; the sibling
+	# catch-all below prevents the frontend SPA from making POST or subpaths
+	# look successful.
+	@public_status {
+		method GET
+		path /status.json
+	}
+	handle @public_status {
+		root * /srv/status
+		file_server
+	}
+	handle /status.json* {
+		respond "Not found" 404
+	}
+
+	# Direct submission, trusted operator families, and all future API routes
+	# fail closed before frontend nginx can proxy them to the backend.
+	handle /api/* {
+		respond "Not found" 404
+	}
+
+	# The frontend also has a dedicated /ws backend proxy.
+	handle /ws* {
+		respond "Not found" 404
+	}
+}
+
+# Emergency block of the wallet-secret entry routes (security audit
+# 2026-08-17). The deployed frontend bundle at /earn, /connect-station and
+# /onboarding asked visitors to paste an EXISTING recovery phrase or private
+# key into the page (ConnectStationPage.tsx, OnboardingPage.tsx).
+#
+# The EXACT path /onboarding is open again (owner ruling 2026-10-01: web
+# onboarding opens; frontend#437). frontend#440 made that page key-free in the
+# public build: it sends visitors to the phone app for the wallet and holds no
+# key entry.
+#
+# The EXACT paths /earn and /connect-station are open too
+# (owner ruling 2026-10-02 #14, FULL WEB JOIN PATH; frontend W28). Both render
+# ConnectStationPage, which only creates a NEW wallet with a forced backup:
+# the paste-an-existing-secret flow was removed, and frontend's
+# no-wallet-secret-entry.test.ts guards that at the source level. The frontend
+# public build still decides whether either page is shown; until its public
+# set lists them they stay hidden there.
+#
+# Everything else stays blocked: /onboarding/*, /earn/* and /connect-station/*,
+# including the trailing-slash forms (/onboarding/, /earn/, /connect-station/),
+# which the frontend does not admit either: its public sets are exact paths.
+# Caddy's path matcher is case-insensitive and matches the unescaped path, so
+# case and percent-encoded variants of the blocked paths stay blocked
+# (scripts/tests/test-edge-onboarding-block.sh checks them against the real edge). No
+# legitimate site should train that behavior; one future XSS or compromised
+# build turns it into wallet theft. Until the frontend ships browser-wallet
+# signing (frontend PR), this fail-closes the deep-link/shared-URL path to
+# those routes at the public edge and 302s them to the read-only dashboard.
+#
+# LIMITATION, stated so a green deploy is not over-read: this is an SPA, so a
+# visitor already on the site can still reach the client-side route via in-app
+# navigation without a new HTTP request. This reduces reachability (direct
+# links, bookmarks, indexed URLs); it does NOT remove the code. Complete
+# removal is the frontend build. Do not invite testers or publish these URLs
+# until that lands. Import both this snippet AND the API allowlist on every
+# public edge.
+(disabled_wallet_secret_routes) {
+	@wallet_secret_entry path /earn/* /connect-station/* /onboarding/*
+	handle @wallet_secret_entry {
+		# NOT `redir / 302`: Caddy parses a bare leading-slash first arg as a
+		# PATH MATCHER, not the destination, so `redir / 302` silently means
+		# "redirect requests whose path is `/` to the URL `302`" and never
+		# fires for /connect-station (verified against `caddy adapt`). Set a
+		# RELATIVE Location instead — the browser resolves it against the
+		# current https origin, so it works behind the funnel without leaking
+		# the edge-internal http scheme.
+		header Location /
+		respond 302
+	}
+}
+
+(public_onboarding_limits) {
+	# Five submissions per minute per client IP, in addition to public_read.
+
+	rate_limit {
+		zone wallet_send {
+			match {
+				method POST
+				path /api/wallet/send
+			}
+			key {client_ip}
+			events 5
+			window 1m
+		}
+
+		zone onboarding {
+			match {
+				path /api/auth/* /api/onboarding/* /api/weather/stations*
+			}
+			key {client_ip}
+			events 30
+			window 1m
+		}
+		zone faucet_claim {
+			match {
+				path /api/onboarding/faucet/claim
+			}
+			key {client_ip}
+			events 5
+			window 1m
+		}
+		# Read-only public viewer surface (infra#916 / sonnet-r1): same 30/min/IP
+		# shape as onboarding, for chain-status/explorer/coverage-zone reads and
+		# the build-freshness probe's two exact paths (infra#968), and the gated
+		# Stage 1.5 station-detail reads (infra#983; GET /api/weather/stations
+		# is already counted by the onboarding zone above).
+		zone public_read {
+			match {
+				path /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/*
+			}
+			key {client_ip}
+			events 30
+			window 1m
+		}
+		# S2b weather reads fan out to NOAA/NWS with no backend cache, so they get their
+		# own tight per-client zone (and are not in public_read).
+		zone weather_noaa {
+			match {
+				path /api/weather/current/* /api/weather/forecast/*
+			}
+			key {client_ip}
+			events 10
+			window 1m
+		}
+		# Station owner-action relay (infra#1095): a write, so its own tight zone, per
+		# client IP, on top of public_read's /api/stations/* count. A legitimate owner
+		# files a handful of actions in a lifetime.
+		# KNOWN LIMIT: the key is the full client address. Caddy has no placeholder or matcher that
+		# masks an IPv6 address to its /64 (a regex `map` cannot derive the prefix from compressed
+		# spellings without a combinatorial rule set), so a client holding a whole /64 can rotate
+		# addresses past THIS zone. The backend limiter (station-owner-routes.ts) keys IPv6 on the
+		# /64 and IPv4-mapped IPv6 as IPv4, and is the enforcement point; this zone is the coarse
+		# outer layer. The same applies to every other zone in this snippet.
+		zone station_owner_actions {
+			match {
+				method POST
+				path_regexp ^/api/stations/st_[0-9a-f]{12}/owner-actions$
+			}
+			key {client_ip}
+			events 10
+			window 10m
+		}
+		# The snapshot archive is the one large object on this edge; a joiner
+		# needs it once. Manifest polls are cheap but bounded anyway.
+		zone join_snapshot {
+			match {
+				path /join/*
+			}
+			key {client_ip}
+			events 10
+			window 1m
+		}
+	}
+}

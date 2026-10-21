@@ -1,0 +1,8 @@
+torch>=2.14.1
+tensorflow>=2.21.0
+scikit-learn>=1.9.1
+numpy>=2.4.6
+pandas>=3.0.6
+fastapi>=0.142.4
+uvicorn>=0.54.0
+pydantic>=2.13.5

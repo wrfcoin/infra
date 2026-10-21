@@ -1,0 +1,50 @@
+services:
+  compute-agent:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.compute-agent
+    ports:
+      - '127.0.0.1:3333:3333'
+    group_add:
+      - docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - agent-keys:/keys
+      - agent-work:/work
+    environment:
+      - TASK_API_URL=http://backend:4001
+      - STORAGE_API_URL=http://backend:7000
+      - WALLET_KEY_PATH=/keys/wallet.json
+      - CAPABILITIES=wrf-arw
+      - NODE_ID=compute-agent-1
+      - POLL_INTERVAL_MS=10000
+      - HEARTBEAT_INTERVAL_MS=30000
+      - HEALTH_PORT=3333
+      - WORK_DIR=/work
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3333/health').then(r=>r.ok||process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Note: The agent pulls WRF/WPS images dynamically at runtime via Docker API.
+    # No wps/wrf compose services are needed here. The Dockerfiles for those images
+    # are provided by infra#11 (Dockerfile.wps, Dockerfile.wrf) and should be built
+    # and pushed to the registry separately.
+
+volumes:
+  agent-keys:
+  agent-work:

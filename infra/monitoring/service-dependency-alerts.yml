@@ -1,0 +1,249 @@
+groups:
+  - name: service-dependency-alerts
+    rules:
+      # Critical Core Service Dependencies
+      - alert: CoreBlockchainServiceDown
+        expr: up{job="wrfcoin-core"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service_tier: core
+          dependency_level: '1'
+        annotations:
+          summary: 'Critical: WRFCoin Core Blockchain service is down'
+          description: 'The core blockchain service ({{ $labels.instance }}) has been down for more than 30 seconds. This affects all dependent services.'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/core-service-down'
+
+      - alert: DatabaseConnectionDown
+        expr: up{job="postgresql"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service_tier: database
+          dependency_level: '1'
+        annotations:
+          summary: 'Critical: PostgreSQL database is unreachable'
+          description: 'The main PostgreSQL database ({{ $labels.instance }}) is down, affecting all services that require persistent storage.'
+
+      - alert: CacheServiceDown
+        expr: up{job="redis-cache"} == 0
+        for: 2m
+        labels:
+          severity: high
+          service_tier: cache
+          dependency_level: '1'
+        annotations:
+          summary: 'High: Redis cache service is down'
+          description: 'Redis cache service ({{ $labels.instance }}) is down. Performance degradation expected across all services.'
+
+      # API Layer Dependencies
+      - alert: MainAPIServiceDown
+        expr: up{job="wrfcoin-main-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service_tier: api
+          dependency_level: '2'
+        annotations:
+          summary: 'Critical: Main API service is down'
+          description: 'The main API service ({{ $labels.instance }}) is down. Frontend and microservices will be affected.'
+
+      - alert: APIGatewayDown
+        expr: up{job="api-gateway"} == 0
+        for: 1m
+        labels:
+          severity: high
+          service_tier: gateway
+          dependency_level: '3'
+        annotations:
+          summary: 'High: API Gateway is down'
+          description: 'API Gateway ({{ $labels.instance }}) is down. External API access is compromised.'
+
+      # Cross-Chain and Bridge Dependencies
+      - alert: CrossChainProtocolDown
+        expr: up{job="cross-chain-protocol"} == 0
+        for: 2m
+        labels:
+          severity: high
+          service_tier: bridge
+          dependency_level: '2'
+        annotations:
+          summary: 'High: Cross-chain protocol service is down'
+          description: 'Cross-chain protocol service ({{ $labels.instance }}) is down. Bridge operations are unavailable.'
+
+      # Compute and ML Dependencies
+      - alert: ComputeNetworkDown
+        expr: up{job="compute-networks"} == 0
+        for: 3m
+        labels:
+          severity: medium
+          service_tier: network
+          dependency_level: '2'
+        annotations:
+          summary: 'Medium: Compute networks service is down'
+          description: 'Compute networks service ({{ $labels.instance }}) is down. Distributed computing capabilities are affected.'
+
+      - alert: MLInferenceDown
+        expr: up{job="ml-inference"} == 0
+        for: 3m
+        labels:
+          severity: medium
+          service_tier: compute
+          dependency_level: '3'
+        annotations:
+          summary: 'Medium: ML inference service is down'
+          description: 'ML inference service ({{ $labels.instance }}) is down. AI/ML capabilities are unavailable.'
+
+      # Storage Dependencies
+      - alert: StorageNetworkDown
+        expr: up{job="storage-networks"} == 0
+        for: 5m
+        labels:
+          severity: medium
+          service_tier: storage
+          dependency_level: '2'
+        annotations:
+          summary: 'Medium: Storage networks service is down'
+          description: 'Storage networks service ({{ $labels.instance }}) is down. Distributed storage capabilities are affected.'
+
+      # Microservice Dependencies
+      - alert: NFTServiceDown
+        expr: up{job="nft-service"} == 0
+        for: 5m
+        labels:
+          severity: medium
+          service_tier: microservice
+          dependency_level: '4'
+        annotations:
+          summary: 'Medium: NFT marketplace service is down'
+          description: 'NFT marketplace service ({{ $labels.instance }}) is down. NFT functionality is unavailable.'
+
+      - alert: UserServiceDown
+        expr: up{job="user-service"} == 0
+        for: 5m
+        labels:
+          severity: high
+          service_tier: microservice
+          dependency_level: '4'
+        annotations:
+          summary: 'High: User management service is down'
+          description: 'User management service ({{ $labels.instance }}) is down. User authentication and management are affected.'
+
+      # Cascading Dependency Failures
+      - alert: MultipleCriticalServicesDown
+        expr: count(up{dependency_level="1"} == 0) >= 2
+        for: 1m
+        labels:
+          severity: critical
+          cascade: 'true'
+        annotations:
+          summary: 'CRITICAL: Multiple core services are down - Cascade failure detected'
+          description: '{{ $value }} critical level-1 services are down simultaneously. Immediate attention required.'
+
+      - alert: ServiceTierOutage
+        expr: count by (service_tier) (up{service_tier!=""} == 0) >= 2
+        for: 2m
+        labels:
+          severity: high
+          cascade: 'true'
+        annotations:
+          summary: 'High: Multiple services down in {{ $labels.service_tier }} tier'
+          description: '{{ $value }} services are down in the {{ $labels.service_tier }} tier. Tier-wide issue suspected.'
+
+      # Dependency Chain Alerts
+      - alert: DependencyChainBroken
+        expr: |
+          (up{dependency_level="1"} == 0) and 
+          (up{dependency_level="2"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+          dependency_chain: 'broken'
+        annotations:
+          summary: 'Warning: Dependency chain inconsistency detected'
+          description: 'Level-1 services are down but level-2 services are still reporting as up. Chain validation needed.'
+
+      # Performance-based Dependency Alerts
+      - alert: DependencyHighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket{job=~".*"}[5m])
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          performance: 'degraded'
+        annotations:
+          summary: 'Warning: High latency detected in {{ $labels.job }}'
+          description: '95th percentile response time for {{ $labels.job }} is {{ $value }}s, indicating potential dependency issues.'
+
+      - alert: DependencyHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (job) /
+          sum(rate(http_requests_total[5m])) by (job) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+          error_rate: 'high'
+        annotations:
+          summary: 'Warning: High error rate in {{ $labels.job }}'
+          description: 'Error rate for {{ $labels.job }} is {{ $value | humanizePercentage }}, suggesting dependency problems.'
+
+      # IoT and Weather Dependencies
+      - alert: WeatherServiceDown
+        expr: up{job="weather-service"} == 0
+        for: 5m
+        labels:
+          severity: medium
+          service_tier: data
+          dependency_level: '2'
+        annotations:
+          summary: 'Medium: Weather service is down'
+          description: 'Weather data collection service ({{ $labels.instance }}) is down. Climate data collection is affected.'
+
+      - alert: IoTSensorNetworkDown
+        expr: up{job="iot-sensor-networks"} == 0
+        for: 10m
+        labels:
+          severity: medium
+          service_tier: iot
+          dependency_level: '1'
+        annotations:
+          summary: 'Medium: IoT sensor network is down'
+          description: 'IoT sensor network service ({{ $labels.instance }}) is down. Environmental data collection is affected.'
+
+      # Security Dependencies
+      - alert: AntivirusServiceDown
+        expr: up{job="clamav-antivirus"} == 0
+        for: 10m
+        labels:
+          severity: low
+          service_tier: security
+          dependency_level: '1'
+        annotations:
+          summary: 'Low: Antivirus service is down'
+          description: 'ClamAV antivirus service ({{ $labels.instance }}) is down. Security scanning capabilities are reduced.'
+
+      # Governance Dependencies
+      - alert: GovernanceServiceDown
+        expr: up{job="governance-server"} == 0
+        for: 10m
+        labels:
+          severity: medium
+          service_tier: governance
+          dependency_level: '3'
+        annotations:
+          summary: 'Medium: Governance service is down'
+          description: 'Governance service ({{ $labels.instance }}) is down. DAO operations and voting are unavailable.'
+
+      # Service Discovery Dependencies
+      - alert: NodeDiscoveryDown
+        expr: up{job="node-discovery"} == 0
+        for: 5m
+        labels:
+          severity: medium
+          service_tier: discovery
+          dependency_level: '1'
+        annotations:
+          summary: 'Medium: Node discovery service is down'
+          description: 'Node discovery service ({{ $labels.instance }}) is down. Network peer discovery is affected.'

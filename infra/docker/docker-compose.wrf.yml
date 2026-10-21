@@ -1,0 +1,84 @@
+# docker-compose.wrf.yml — WPS + WRF pipeline
+#
+# Usage:
+#   # Build both images:
+#   docker compose -f docker-compose.wrf.yml build
+#
+#   # Run WPS preprocessing:
+#   docker compose -f docker-compose.wrf.yml run wps
+#
+#   # Run WRF simulation:
+#   docker compose -f docker-compose.wrf.yml run wrf
+#
+#   # Full pipeline (WPS then WRF):
+#   docker compose -f docker-compose.wrf.yml run wps ./geogrid.exe
+#   docker compose -f docker-compose.wrf.yml run wps ./ungrib.exe
+#   docker compose -f docker-compose.wrf.yml run wps ./metgrid.exe
+#   docker compose -f docker-compose.wrf.yml run wrf bash -c "cd /wrf/run && ln -sf /data/input/met_em* . && ./real.exe && mpirun -np 4 ./wrf.exe"
+
+services:
+  wps:
+    build:
+      context: .
+      dockerfile: Dockerfile.wps
+      args:
+        WPS_VERSION: "4.5"
+    image: wrfcoin/wps:4.5
+    container_name: wrfcoin-wps
+    restart: "no"
+    volumes:
+      - geog-data:/data/geog
+      - wps-output:/data/output
+    networks:
+      - wrf-net
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+        reservations:
+          memory: 2G
+          cpus: '1'
+
+  wrf:
+    build:
+      context: .
+      dockerfile: Dockerfile.wrf
+      args:
+        WRF_VERSION: "4.5.2"
+    image: wrfcoin/wrf:4.5.2
+    container_name: wrfcoin-wrf
+    restart: "no"
+    volumes:
+      - wps-output:/data/input:ro
+      - wrf-output:/data/output
+    networks:
+      - wrf-net
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '4'
+        reservations:
+          memory: 2G
+          cpus: '2'
+    # NOTE: depends_on only ensures the wps container starts, NOT that it
+    # completes. Users must run WPS to completion before starting WRF.
+    depends_on:
+      - wps
+
+networks:
+  wrf-net:
+    driver: bridge
+
+volumes:
+  geog-data:
+    driver: local
+  wps-output:
+    driver: local
+  wrf-output:
+    driver: local

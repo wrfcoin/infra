@@ -1,0 +1,41 @@
+# =============================================================================
+# Reference-shadow overlay (infra#972), OPT-IN, OFF unless this file is passed
+# =============================================================================
+# Turns on ADVISORY shadow scoring: after each reveal has been accepted by core4
+# and finalized locally, wrfcoin-backend asks the oracle-reference sidecar for
+# a reference score and stores it in `reference_scores`. The scoring is
+# fail-open and never changes a reward, the reveal, or consensus. Enforcement
+# (core4#2053) stays human-gated and is NOT enabled here.
+#
+# NOT AT CONSENSUS PARITY YET. The scorer's tiering lacks bands v2 and the
+# second-worst fold (oracle-reference#9, backend#1169, both open). Until both
+# land, the scores collected here are NOT comparable to consensus. Treat them
+# as a plumbing smoke test, not as parity data. check-health.sh WARNs about this
+# while the overlay is active.
+#
+# The overlay requires the sidecar's profile, because oracle-reference is
+# profile-gated (see its comment in docker-compose.testnet.yml; 2026-08-06
+# cold-boot outage):
+#
+#   docker compose -f testnet/docker-compose.testnet.yml <host overlays...> \
+#     -f testnet/docker-compose.reference-shadow.yml \
+#     --profile oracle-reference up -d --no-deps oracle-reference wrfcoin-backend
+#
+# Without --profile oracle-reference, compose refuses to render at all
+# ('service "wrfcoin-backend" depends on undefined service "oracle-reference"'),
+# so shadow can never be on without its sidecar. This is pinned by
+# scripts/tests/test-shadow-reconciler-overlays.sh. Deliberately NOT in testnet/lib/compose-inputs.sh:
+# boot-heal must never start it implicitly.
+#
+# Cost: the sidecar keeps a 10 GB model cache (reference-cache volume). Each
+# reveal awaits the score for up to ORACLE_REFERENCE_TIMEOUT_MS (5 s) before
+# failing open, so that is the most latency it can add to a reveal.
+# =============================================================================
+
+services:
+  wrfcoin-backend:
+    environment:
+      REFERENCE_SHADOW: "1"
+    depends_on:
+      oracle-reference:
+        condition: service_healthy

@@ -1,0 +1,113 @@
+# Grafana Dashboard Provisioning Configuration
+# Automatically provisions dashboards from JSON files
+
+apiVersion: 1
+
+providers:
+  # Core Wrfcoin dashboards
+  - name: 'wrfcoin-core'
+    orgId: 1
+    folder: 'Wrfcoin Core'
+    folderUid: 'wrfcoin-core'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/core
+
+  # Real-time monitoring dashboards
+  - name: 'real-time-monitoring'
+    orgId: 1
+    folder: 'Real-Time Monitoring'
+    folderUid: 'real-time'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/real-time
+
+  # Security monitoring dashboards
+  - name: 'security-monitoring'
+    orgId: 1
+    folder: 'Security & Compliance'
+    folderUid: 'security'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/security
+
+  # Infrastructure monitoring dashboards
+  - name: 'infrastructure-monitoring'
+    orgId: 1
+    folder: 'Infrastructure'
+    folderUid: 'infrastructure'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/infrastructure
+
+  # Cross-chain monitoring dashboards
+  - name: 'cross-chain-monitoring'
+    orgId: 1
+    folder: 'Cross-Chain'
+    folderUid: 'cross-chain'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/cross-chain
+
+  # Weather and IoT monitoring dashboards
+  - name: 'weather-iot-monitoring'
+    orgId: 1
+    folder: 'Weather & IoT'
+    folderUid: 'weather-iot'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/weather-iot
+
+  # Distributed tracing dashboards
+  - name: 'tracing-monitoring'
+    orgId: 1
+    folder: 'Distributed Tracing'
+    folderUid: 'tracing'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/tracing
+
+  # SLO/SLI Compliance dashboards
+  - name: 'slo-compliance'
+    orgId: 1
+    folder: 'SLO Compliance'
+    folderUid: 'slo-compliance'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/slo
+
+  # Performance optimization dashboards
+  - name: 'performance'
+    orgId: 1
+    folder: 'Performance'
+    folderUid: 'performance'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/performance

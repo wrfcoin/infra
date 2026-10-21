@@ -1,0 +1,258 @@
+# Advanced Canary Deployment Configuration for Wrfcoin
+# Implements progressive traffic shifting with automated rollback
+
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: wrfcoin-api-rollout
+  namespace: wrfcoin-production
+  labels:
+    app: wrfcoin-api
+    tier: backend
+spec:
+  replicas: 6
+  strategy:
+    canary:
+      # Canary strategy configuration
+      canaryService: wrfcoin-api-canary
+      stableService: wrfcoin-api-stable
+      trafficRouting:
+        nginx:
+          stableIngress: wrfcoin-api-stable-ingress
+          annotationPrefix: nginx.ingress.kubernetes.io
+          additionalIngressAnnotations:
+            canary-by-header: 'X-Canary'
+            canary-by-header-value: 'always'
+
+      # Progressive traffic shifting steps
+      steps:
+        - setWeight: 5
+        - pause:
+            duration: 2m
+        - setWeight: 10
+        - pause:
+            duration: 5m
+        - setWeight: 25
+        - pause:
+            duration: 10m
+        - setWeight: 50
+        - pause:
+            duration: 15m
+        - setWeight: 75
+        - pause:
+            duration: 10m
+
+      # Automated analysis for rollback decision
+      analysis:
+        templates:
+          - templateName: success-rate
+          - templateName: latency-check
+          - templateName: error-rate-check
+        startingStep: 2
+        args:
+          - name: service-name
+            value: wrfcoin-api-canary
+          - name: prometheus-server
+            value: prometheus-server.monitoring.svc.cluster.local:9090
+
+      # Anti-affinity for better distribution
+      antiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                    - wrfcoin-api
+            topologyKey: kubernetes.io/hostname
+
+  selector:
+    matchLabels:
+      app: wrfcoin-api
+
+  template:
+    metadata:
+      labels:
+        app: wrfcoin-api
+        version: '{{.Values.image.tag}}'
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8080'
+        prometheus.io/path: '/metrics'
+    spec:
+      containers:
+        - name: wrfcoin-api
+          image: wrfcoin/api:{{.Values.image.tag}}
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: metrics
+          env:
+            - name: NODE_ENV
+              value: 'production'
+            - name: DEPLOYMENT_TYPE
+              value: 'canary'
+            - name: VERSION
+              value: '{{.Values.image.tag}}'
+
+          # Enhanced resource configuration
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '500m'
+            limits:
+              memory: '1Gi'
+              cpu: '1000m'
+
+          # Comprehensive health checks
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+
+      # Service account for RBAC
+      serviceAccountName: wrfcoin-api-sa
+
+---
+# Canary Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-api-canary
+  namespace: wrfcoin-production
+  labels:
+    app: wrfcoin-api
+    tier: canary
+spec:
+  selector:
+    app: wrfcoin-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+    - name: metrics
+      port: 8081
+      targetPort: 8081
+      protocol: TCP
+
+---
+# Stable Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrfcoin-api-stable
+  namespace: wrfcoin-production
+  labels:
+    app: wrfcoin-api
+    tier: stable
+spec:
+  selector:
+    app: wrfcoin-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+    - name: metrics
+      port: 8081
+      targetPort: 8081
+      protocol: TCP
+
+---
+# Analysis Templates for Automated Rollback
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: wrfcoin-production
+spec:
+  args:
+    - name: service-name
+    - name: prometheus-server
+  metrics:
+    - name: success-rate
+      interval: 2m
+      count: 5
+      successCondition: result[0] >= 0.95
+      provider:
+        prometheus:
+          address: 'http://{{args.prometheus-server}}'
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}",code!~"5.."}[2m])) /
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: latency-check
+  namespace: wrfcoin-production
+spec:
+  args:
+    - name: service-name
+    - name: prometheus-server
+  metrics:
+    - name: latency-p95
+      interval: 2m
+      count: 5
+      successCondition: result[0] < 0.5
+      provider:
+        prometheus:
+          address: 'http://{{args.prometheus-server}}'
+          query: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{service="{{args.service-name}}"}[2m]))
+              by (le)
+            )
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: error-rate-check
+  namespace: wrfcoin-production
+spec:
+  args:
+    - name: service-name
+    - name: prometheus-server
+  metrics:
+    - name: error-rate
+      interval: 2m
+      count: 5
+      successCondition: result[0] < 0.05
+      provider:
+        prometheus:
+          address: 'http://{{args.prometheus-server}}'
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}",code=~"5.."}[2m])) /
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))

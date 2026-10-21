@@ -1,0 +1,206 @@
+version: '3.8'
+
+# Storage provider stack, IPFS-only testnet profile (storage-providers#65/#69,
+# infra#944). Owner ruling 2026-10-01: zero budget, IPFS only, no paid pinning.
+#
+#   ipfs              self-hosted kubo (no remote pinning service)
+#   storage-provider  the REAL storage-node daemon from wrfcoin/storage-providers,
+#                     built by infra/docker/Dockerfile.storage from the workspace
+#                     root (it used to package backend's mocked storage server)
+#
+# Filecoin and Arweave are NOT in the testnet: storage-node reports them as
+# `not_in_testnet` and answers 501. Their daemons stay below behind the
+# `paid-providers` profile, so a default `up` never starts them.
+#
+# This stack is NOT part of the CT101 testnet boot set. Adding it there is a
+# later deploy decision (r19+). Usage (local, from this directory):
+#   docker compose -f docker-compose.storage.yml up -d
+
+services:
+  ipfs:
+    image: ipfs/kubo:v0.24.0
+    container_name: wrfcoin-ipfs
+    # The kubo API (5001) is an admin surface and is never published, not
+    # even on loopback (infra#1159 review): storage-node reaches it as
+    # http://ipfs:5001 on storage-network.
+    ports:
+      - '127.0.0.1:8080:8080' # Gateway (localhost only)
+    expose:
+      - '4001' # Swarm (internal only)
+      - '5001' # API (internal only)
+    volumes:
+      - ipfs-data:/data/ipfs
+      - ipfs-staging:/export
+    environment:
+      - IPFS_PROFILE=server
+    restart: unless-stopped
+    healthcheck:
+      # Probe the local RPC API, not `ipfs id`: healthchecks exec as root, and
+      # with cap_drop ALL root cannot read the daemon-owned 0600 repo config
+      # (same fix as infra#1280).
+      test: ['CMD-SHELL', "wget -q -O /dev/null --post-data='' http://127.0.0.1:5001/api/v0/id || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    networks:
+      - storage-network
+
+  filecoin-lite:
+    profiles: ['paid-providers'] # not in the testnet (IPFS-only profile)
+    image: filecoin/lotus:v1.25.0
+    container_name: wrfcoin-filecoin
+    command: ['lotus', 'daemon', '--lite']
+    ports:
+      - '127.0.0.1:1234:1234' # API (localhost only)
+    volumes:
+      - filecoin-data:/var/lib/lotus
+    environment:
+      - LOTUS_PATH=/var/lib/lotus
+      - LOTUS_API_LISTENADDRESS=/ip4/0.0.0.0/tcp/1234/http
+      - FULLNODE_API_INFO=${FILECOIN_FULLNODE_API:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'lotus net id || exit 1']
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    networks:
+      - storage-network
+
+  arweave-gateway:
+    profiles: ['paid-providers'] # not in the testnet (IPFS-only profile)
+    # Pinned (infra#1159 review): node:20-alpine as of 2026-10-01.
+    image: node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+    container_name: wrfcoin-arweave-gw
+    working_dir: /app
+    command: ['node', 'gateway.js']
+    ports:
+      - '127.0.0.1:1984:1984' # Gateway (localhost only)
+    volumes:
+      - arweave-data:/app/data
+    environment:
+      - ARWEAVE_HOST=${ARWEAVE_HOST:-arweave.net}
+      - ARWEAVE_PORT=${ARWEAVE_PORT:-443}
+      - ARWEAVE_PROTOCOL=${ARWEAVE_PROTOCOL:-https}
+      - GATEWAY_PORT=1984
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:1984/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    user: '1000:1000'
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+    networks:
+      - storage-network
+
+  storage-provider:
+    build:
+      # Workspace root (the directory holding the infra and storage-providers
+      # checkouts), the same context infra/docker/docker-compose.yml uses.
+      context: ../../..
+      dockerfile: infra/infra/docker/Dockerfile.storage
+    container_name: wrfcoin-storage-provider
+    ports:
+      - '127.0.0.1:7100:7001'
+    environment:
+      - STORAGE_NODE_PROFILE=testnet
+      # config/testnet.toml already names http://ipfs:5001; kept explicit.
+      - IPFS_API_URL=http://ipfs:5001
+    depends_on:
+      ipfs:
+        condition: service_healthy
+    restart: unless-stopped
+    # The image is distroless (no shell, no curl), so there is no container
+    # healthcheck. GET /health answers 503 while kubo is unreachable.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    networks:
+      - storage-network
+
+volumes:
+  ipfs-data:
+    driver: local
+  ipfs-staging:
+    driver: local
+  filecoin-data:
+    driver: local
+  arweave-data:
+    driver: local
+
+networks:
+  storage-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-wrfcoin-storage
+      com.docker.network.bridge.enable_icc: 'true'
+      com.docker.network.bridge.enable_ip_masquerade: 'true'

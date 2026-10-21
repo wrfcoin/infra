@@ -1,0 +1,198 @@
+# =============================================================================
+# Route ledger (infra#598) — the single authority on service exposure
+# =============================================================================
+# Every service in testnet/docker-compose.testnet.yml appears here, by name.
+# scripts/tests/test-route-ledger.sh renders the compose config and FAILS when:
+#   - a compose service is missing from this ledger (adding a service forces an
+#     exposure decision — silence is not a decision);
+#   - a service whose ledger exposure is not `public-edge` binds a host port on
+#     anything other than 127.0.0.1 or the tailnet bind vars;
+#   - a `never` service acquires any host port at all.
+#
+# exposure classes:
+#   public-edge      reachable from the internet, ONLY via the #640 Caddy edge
+#                    allowlist (#679). No service gets a public host port itself.
+#   tailnet-gateway  path-routed on the INTERNAL gateway (Caddyfile.internal),
+#                    which binds the tailnet address only. Not public. Runs on
+#                    the #594 workload host when deployed — never a second
+#                    public edge, never on CT101 (owner comment 2026-07-29).
+#   tailnet-direct   keeps its own loopback/tailnet bind; not proxied anywhere.
+#                    (faucet: its 8080 tailscale serve is the #604-approved
+#                    surface and MUST NOT be widened or re-proxied — #658.)
+#   never            no host port, no proxy route, no exceptions.
+#   decided-by-599   monitoring exposure is issue #599's decision; the ledger
+#                    pins today's state (loopback only) until that lands.
+#
+# auth roles reference the tokens in docs/operator/testnet-env-setup.md.
+# rate limits are per client IP at the proxy that fronts the route.
+
+services:
+  # --- data stores & one-shots: never exposed -------------------------------
+  postgres:            { exposure: never }
+  redis:               { exposure: never }
+  ipfs-kubo:           { exposure: never }   # ipfs-storage: private administrative API
+  storage-node:        { exposure: never }   # ipfs-storage: internal app client only
+  softhsm-init:        { exposure: never }
+  softhsm-seed-init:   { exposure: never }   # seed profile: RETIRED on CT101 2026-09-27 (infra#1057 Q4), kept for rollback
+  db-migrate:          { exposure: never }
+  weather-collector:   { exposure: never }
+  # Outbound only: reads Ambient + NWS over HTTPS, posts to the node on the
+  # internal network. Holds contributor API keys and an operator token, so a
+  # host port would expose credentials, not just a service.
+  weather-collector-multi: { exposure: never }
+  sdr-ingest:          { exposure: never }
+  oracle-reference:    { exposure: never }   # internal 8010, no host port (#603)
+  loki:                { exposure: never }
+  promtail:            { exposure: never }
+
+  # --- chain surfaces -------------------------------------------------------
+  wrfcoin-node:
+    exposure: tailnet-direct        # 8556 is chain-control (#658): NEVER proxied.
+    ports: { api: "127.0.0.1:8556", p2p: "0.0.0.0:9000" }   # P2P public by design (#587)
+    auth: WRFCOIN_OPERATOR_TOKEN (API)
+  # RETIRED on CT101 2026-09-27 (owner ruling, infra#1057 Q4): the "seed"
+  # profile is not in the deploy's COMPOSE_PROFILES. The service stays defined
+  # (and so stays in this ledger, which must mirror compose) as the rollback
+  # path. Joiners bootstrap from wrfcoin-node (WRFCOIN_CUT_BOOTSTRAP is the
+  # producer's peer id), and the join snapshot comes from a ZFS snapshot (#1085).
+  wrfcoin-seed:
+    exposure: tailnet-direct
+    ports: { api: "127.0.0.1:8557", p2p: "0.0.0.0:9001" }
+    auth: WRFCOIN_OPERATOR_TOKEN (API)
+
+  # --- public onboarding (already decided by #658/#679) ---------------------
+  wrfcoin-backend:
+    exposure: public-edge
+    upstream: wrfcoin-testnet-backend:4001
+    # Folded block scalar (infra#1086): as a plain scalar, the ": " inside
+    # this prose made the file invalid YAML. The text itself is unchanged.
+    routes: >-
+      exact allowlist in testnet/edge/public_onboarding.caddy (#679) —
+      auth/nonce, wallet-login, refresh, faucet challenge/claim, station
+      register/verify, reward-progress, join snapshot artifacts (#886), and
+      (sonnet-r1) a GET-only read-only viewer surface: chain status,
+      block list (summaries only), transaction list/detail, validator list,
+      blockchain stats, and weather coverage-zones. The four added blockchain
+      reads are mounted at enhanced_unified_api_optimized.ts:1626 and currently
+      return explicit 501 unavailable responses from blockchain-routes.js:249-289.
+      S9 adds POST /api/wallet/send with Bearer + application/json, no query,
+      4KiB body cap, 5 submissions/minute/client IP, and GET /api/wallet/<0x40>/nonce
+      with Bearer and no query. Both require PUBLIC_READONLY_API=on exactly;
+      default OFF remains unchanged. Backend binds JWT sub to signed from and
+      relays signed authorizations to core4 with its Contributor credential.
+      Admission source tests do not establish deployment or settlement.
+      Everything else 404s at the edge. GET /api/weather/stations stays OFF:
+      backend#1113 strips owner/reward fields, but the anonymous response still
+      serializes exact latitude/longitude; client-side 0.01-degree rounding is
+      not an edge privacy control. (infra#983, Stage 1.5) Its read-only
+      matcher, GET /api/stations/<id>/{observations,quality,submissions}
+      (station-detail-routes.ts, mounted at enhanced_unified_api_optimized.ts:262),
+      and GET /api/stations/<id>/earnings (backend#1232; its own matcher, admits
+      NO query string), are built but GATED: they match only while the edge container carries
+      PUBLIC_READONLY_API=on exactly, and both edge overlays default it to
+      off, so the deployed edge keeps 404ing them. The toggle stays off until
+      the backend's anonymous 0.1-degree coordinate projection (backend#1222)
+      is deployed; turning it on is an owner deploy-window call. Station-detail
+      reads count in the public-read limiter; the station list in onboarding.
+      Query lock (stage15 readiness): even with the gate on, the station list
+      admits no query string (`?lat=&lng=` would switch weather-routes.js to
+      the outbound NOAA nearby-station lookup) and the detail reads admit
+      none or exactly `limit=1`, and earnings admits none (`?limit=` would size a
+      per-commit core4 reward-evidence fan-out); anything else 404s at the edge.
+      (backend#1456, owner ruling 2026-10-06) GET /api/weather/leaderboard is admitted
+      read-only behind the same PUBLIC_READONLY_API gate and public-read limiter, with
+      the query locked to exactly
+      `metric=<earnings|submissions|quality_score|streak>&period=<7d|30d|all>&limit=<1..30>`
+      in that order: no geo params on any metric (backend#1457 400s earnings+geo), no
+      extra/reordered params, no other method.
+      (backend#1481, merged 920b2f81, owner-approved PUBLIC role totals)
+      GET /api/earnings/leaderboard admits only
+      `role=<contribution|attester|producer|node|forecast>&period=<all|7d|30d>&limit=<1..30>`
+      in that exact order. GET /api/operators/c_<24 lowercase hex>/profile
+      admits no query and only opaque contributor aliases, never raw wallet addresses
+      or profile siblings/inventory. Both reads use the default-OFF PUBLIC_READONLY_API
+      gate and existing public-read limiter (30 per minute per client IP).
+      Raw block metadata, chain identities and identity inventories remain excluded;
+      backend owns the privacy projection. Source admission is not deployment evidence.
+      (infra#1095, station theft protection, core4#3345/#3347) station owner-action relay:
+      POST /api/stations/<alias>/owner-actions relays ONE caller-signed owner tx
+      (transfer, owner action, recovery cancel/execute) to the node; the backend never signs
+      or alters it. EXACT path with the public station alias (st_ + 12 lowercase hex; raw ids
+      never match), POST only, NO query string, 8 KiB body cap at the edge (backend caps
+      again), and its own tight rate zone (10 per 10 min per client IP) on top of the
+      public-read count (keyed on the full client address: Caddy cannot mask an IPv6 /64, so the
+      backend limiter, which keys IPv6 on the /64, is the enforcement point). UNGATED (a write; the backend authenticates per kind, and the
+      node ignores owner txs until the owner schedules the features). Recovery FILE is a
+      governance artifact the backend refuses. GET /api/stations/<alias>/ownership (nonce,
+      frozen, deactivated, pending recovery) is admitted read-only behind the same
+      PUBLIC_READONLY_API gate, alias path only, NO query, public-read limiter.
+      GET /api/v1/stations/status also stays OFF.
+      (S1 + S2, website parity with the mobile app) seven more reads, ALL behind the same
+      default-OFF PUBLIC_READONLY_API gate, GET only, exact paths, locked query. Own wallet
+      (wallet-routes.js requireAuth l.29 + requireOwnAddress): GET /api/wallet/0x<40 hex>
+      (no query) and GET /api/wallet/0x<40 hex>/transactions
+      (`limit=<1..50>&offset=<digits>` in that order), proxied only when the request
+      carries an `Authorization: Bearer ` header; send, mnemonic, nonce, nfts, data and
+      other wallet subpaths and methods stay 404 except the S9 signed Send and nonce routes above. Governance (governance-routes.ts
+      l.231/l.275/l.564): GET /api/governance/proposals (no query, or
+      `limit=<1..100>&offset=<digits>`), GET /api/governance/proposals/<id>
+      (id charset [A-Za-z0-9_-]{1,128}, no query) and GET /api/governance/treasury
+      (no query); votes, delegations, analytics, treasury/transactions and writes stay
+      404. Weather (weather-routes.js l.188/l.193): GET /api/weather/current/<lat>,<lon>
+      (no query) and GET /api/weather/forecast/<lat>,<lon> (query exactly
+      `type=hourly&days=1` or `days=14`), coordinates at exactly one decimal; /data/*
+      and /historical/* stay 404. Wallet and governance reads count in the public-read
+      limiter; weather has its own tight weather_noaa zone (10 per minute per client IP)
+      because each call fans out to NOAA/NWS and the backend keeps no response cache.
+      GET /api/blockchain/blocks/{height} (single-block detail) also stays
+      OFF this list: unlike the list route, it passes through raw block
+      transactions/metadata, which embeds per-address reward_entries for
+      reward-bearing blocks — same hazard class, caught by cross-provider
+      review before merge.
+      GET /status.json is a static redacted uptime document served directly
+      by the edge; POST and sibling paths remain fail-closed 404s.
+      (infra#968) GET-only build stamp and capability inventory for the
+      public build-freshness probe: exactly /api/build (git revision +
+      creation time) and /api/capabilities (static feature inventory, no
+      env values, hosts or tokens). Exact paths; /api/builds, /api/build/x
+      and non-GET methods stay 404. Counted in the public-read limiter.
+    auth: wallet JWT; onboarding limiter 30/min/IP; public-read limiter
+      30/min/IP
+    # mobile#44 (owner ruling 2026-09-26, "mobile option C"): the FULL /api for
+    # tailnet devices only. It is a tailscale serve route on CT101, not a
+    # compose port, and goes through the same frontend-nginx -> backend hop as
+    # the dashboard. Managed and verified by testnet/edge/tailnet-api-serve.sh;
+    # the runbook is TAILNET_API_ROUTE-mobile44.md. Tailnet-only rests on four
+    # things: no Funnel is ever written, the Serve config is verified, the ACL
+    # scopes :9444 to the owner's Tailscale login (required), and
+    # probe_public_exposure_external.sh grades 9444 closed from outside.
+    tailnet_serve: ":9444/api -> 127.0.0.1:5000/api (frontend nginx -> backend:4001); tailnet only, never funnel"
+  wrfcoin-frontend:
+    exposure: public-edge
+    upstream: wrfcoin-testnet-frontend:5000
+    auth: none (static assets); 60/min/IP
+  wrfcoin-faucet:
+    exposure: tailnet-direct        # THE 8080 HAZARD (#604/#658): stays as-is.
+    ports: { http: "tailnet:8080" }
+    auth: captcha + per-address limits (service-internal)
+
+  # --- internal microservices: tailnet gateway routes -----------------------
+  # path prefix → upstream, stripped at the gateway. auth enforced by each
+  # service's own token middleware; the gateway adds rate limiting + one bind.
+  wrfcoin-governance:       { exposure: tailnet-gateway, path: /svc/governance/, upstream: "wrfcoin-testnet-governance:8000",      auth: WRFCOIN_OPERATOR_TOKEN,    rate: 120/min }
+  wrfcoin-iot:              { exposure: tailnet-gateway, path: /svc/iot/,       upstream: "wrfcoin-testnet-iot:3002",              auth: WRFCOIN_CONTRIBUTOR_TOKEN, rate: 240/min }
+  wrfcoin-weather-earnings: { exposure: tailnet-gateway, path: /svc/earnings/,  upstream: "wrfcoin-testnet-weather-earnings:8001", auth: WRFCOIN_READER_TOKEN,      rate: 240/min }
+  wrfcoin-cross-chain:      { exposure: tailnet-gateway, path: /svc/crosschain/, upstream: "wrfcoin-testnet-cross-chain:3000",     auth: WRFCOIN_OPERATOR_TOKEN,    rate: 60/min }
+  wrfcoin-compute:          { exposure: tailnet-gateway, path: /svc/compute/,   upstream: "wrfcoin-testnet-compute:6000",          auth: WRFCOIN_CONTRIBUTOR_TOKEN, rate: 120/min }
+  wrfcoin-ml:               { exposure: tailnet-gateway, path: /svc/ml/,        upstream: "wrfcoin-testnet-ml:6001",               auth: WRFCOIN_READER_TOKEN,      rate: 60/min }
+  wrfcoin-node-discovery:   { exposure: tailnet-gateway, path: /svc/discovery/, upstream: "wrfcoin-testnet-node-discovery:9001",   auth: WRFCOIN_READER_TOKEN,      rate: 240/min }
+  wrfcoin-explorer:         { exposure: tailnet-gateway, path: /svc/explorer/,  upstream: "wrfcoin-testnet-explorer:8081",         auth: none (read-only UI),       rate: 240/min }
+
+  # --- monitoring: pinned to loopback until #599 decides --------------------
+  prometheus:          { exposure: decided-by-599 }
+  grafana:             { exposure: decided-by-599 }
+  alertmanager:        { exposure: decided-by-599 }
+  node-exporter:       { exposure: decided-by-599 }
+  cadvisor:            { exposure: decided-by-599 }
+  postgres-exporter:   { exposure: decided-by-599 }
+  blackbox-exporter:   { exposure: decided-by-599 }

@@ -1,0 +1,16 @@
+{
+  "license": "MIT OR Apache-2.0",
+  "name": "wrfcoin-explorer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight testnet block explorer for WRFCoin",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@vercel/og": "^1.0.3",
+    "express": "^5.2.1"
+  }
+}

@@ -1,0 +1,48 @@
+# WRFCoin Testnet — desktop YubiKey overlay
+#
+# Opt-in only. Use from the desktop/WSL2 host after usbipd-win attaches the
+# physical YubiKey into WSL2. The container runs pcscd against /dev/bus/usb.
+
+services:
+  wrfcoin-node:
+    # The HSM entrypoint starts pcscd as root, then uses gosu to drop to the
+    # wrfcoin user. Reset the base no-new-privileges guard and add only the
+    # uid/gid transition caps needed for that handoff.
+    # If base wrfcoin-node later adds non-NNP security_opt entries such as
+    # seccomp or apparmor profiles, mirror them here so this reset only removes
+    # the no-new-privileges constraint that blocks gosu.
+    security_opt: !reset []
+    cap_add:
+      - SETUID
+      - SETGID
+    environment:
+      WRFCOIN_HSM_MODE: yubikey
+      WRFCOIN_HSM_MODULE_PATH: /usr/lib/x86_64-linux-gnu/libykcs11.so
+      WRFCOIN_HSM_TOKEN_LABEL: ${WRFCOIN_HSM_TOKEN_LABEL:?WRFCOIN_HSM_TOKEN_LABEL must be set for YubiKey mode}
+      # Snapshot signer — PIV slot 9C.
+      WRFCOIN_HSM_KEY_LABEL: ${WRFCOIN_HSM_KEY_LABEL:-Private key for Digital Signature}
+      WRFCOIN_HSM_PUBKEY_LABEL: ${WRFCOIN_HSM_PUBKEY_LABEL:-Public key for Digital Signature}
+      # Block-producer signer — PIV slot 9A. BOTH halves are required.
+      #
+      # Same defect and same reasoning as the N5 overlay: without these,
+      # SignerEnv::producer() inherits the 9C labels above via
+      # SharedKeyFallback::Allowed, the self-consistent pair defeats the #2405
+      # keypair-consistency check, and the node signs with a key that is not a
+      # member of the genesis producer set.
+      #
+      # This overlay needs them because the desktop is where the STANDBY producer
+      # token lives (serial 35278471, `producer-standby`) — its proof-of-possession
+      # was run on this host with only that token attached. The desktop is the
+      # applier in the two-host topology, but producer-auth activation is
+      # chain-driven once genesis seeds a set
+      # (`producer_auth_active = chain_has_producer_set || override`), so it
+      # applies to every node: one that cannot resolve a producer signer refuses
+      # to start, whether or not it produces.
+      WRFCOIN_HSM_PRODUCER_KEY_LABEL: ${WRFCOIN_HSM_PRODUCER_KEY_LABEL:-Private key for PIV Authentication}
+      WRFCOIN_HSM_PRODUCER_PUBKEY_LABEL: ${WRFCOIN_HSM_PRODUCER_PUBKEY_LABEL:-Public key for PIV Authentication}
+      WRFCOIN_HSM_PIN_ENV: WRFCOIN_HSM_PIN
+      WRFCOIN_HSM_PIN: ${WRFCOIN_HSM_PIN:?WRFCOIN_HSM_PIN must be set for YubiKey mode}
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    tmpfs:
+      - /run/pcscd

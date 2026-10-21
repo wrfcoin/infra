@@ -1,0 +1,49 @@
+# Refs infra#1235. Existing node/faucet metrics; owner enables only after ACTIVATION_OK.
+# N=20 net blocks over a 30-minute observation window. Claims can consume new funding.
+groups:
+  - name: post33000
+    rules:
+      - alert: FaucetNetFundingStalled
+        expr: |
+          (delta(wrfcoin_faucet_wallet_balance{job="post33000-faucet"}[30m]) <= 0)
+          and on() (count(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"}) == 3)
+          and on() (min(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"} offset 30m) > 33000)
+          and on() (min(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"}
+            - wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"} offset 30m) >= 20)
+          and on() (count(up{job=~"post33000-(ws|mango|n5|faucet)"} == 1) == 4)
+          and on() (min(min_over_time(up{job=~"post33000-(ws|mango|n5|faucet)"}[30m])) == 1)
+          and on() (min_over_time(wrfcoin_faucet_wallet_balance_scrape_success{job="post33000-faucet"}[30m]) == 1)
+          and on() (count(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"} offset 30m) == 3)
+        for: 0m
+        labels:
+          severity: warning
+          component: faucet-funding
+        annotations:
+          summary: "Faucet net balance did not increase while all three tips advanced at least20 blocks"
+          description: "After owner-verified E0f, inspect funding versus claim outflow; this is net balance, not minted emissions."
+      - alert: ThreeNodeTipsDiverged
+        expr: |
+          (max(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"})
+            - min(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"}) > 20)
+          and on() (count(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"}) == 3)
+          and on() (count(up{job=~"post33000-(ws|mango|n5)"} == 1) == 3)
+        for: 0m
+        labels:
+          severity: critical
+          component: chain-readiness
+        annotations:
+          summary: "Three-node tip spread exceeds20 blocks"
+          description: "Compare ws, mango and n5 canonical state with the reviewed owner checks; missing data is not convergence."
+      - alert: Post33000ObservationUnavailable
+        expr: |
+          ((count(up{job=~"post33000-(ws|mango|n5|faucet)"} == 1) or vector(0)) != 4)
+          or ((count(wrfcoin_blockchain_block_height{job=~"post33000-(ws|mango|n5)"}) or vector(0)) != 3)
+          or ((count(wrfcoin_faucet_wallet_balance{job="post33000-faucet"}) or vector(0)) != 1)
+          or ((count(wrfcoin_faucet_wallet_balance_scrape_success{job="post33000-faucet"} == 1) or vector(0)) != 1)
+        for: 2m
+        labels:
+          severity: warning
+          component: chain-readiness
+        annotations:
+          summary: "Post33000 observation is unavailable"
+          description: "Restore reviewed metric access before interpreting an absent funding/divergence alert."

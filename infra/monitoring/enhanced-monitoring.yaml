@@ -1,0 +1,408 @@
+# Enhanced Monitoring Configuration for Wrfcoin
+# Advanced observability with custom metrics and alerting
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-custom-rules
+  namespace: monitoring
+data:
+  wrfcoin-rules.yml: |
+    groups:
+    - name: wrfcoin.blockchain.rules
+      interval: 30s
+      rules:
+      - alert: BlockchainSyncLag
+        expr: wrfcoin_blockchain_block_height - wrfcoin_blockchain_latest_block > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: blockchain
+        annotations:
+          summary: "Blockchain sync lag detected"
+          description: "Blockchain is {{ $value }} blocks behind"
+          runbook_url: "https://docs.wrfcoin.com/runbooks/blockchain-sync"
+
+      - alert: TransactionPoolOverload
+        expr: wrfcoin_transaction_pool_size > 10000
+        for: 2m
+        labels:
+          severity: critical
+          service: blockchain
+        annotations:
+          summary: "Transaction pool overloaded"
+          description: "Transaction pool has {{ $value }} pending transactions"
+
+      - alert: MiningHashrateDropped
+        expr: wrfcoin_mining_hashrate < 1000000
+        for: 10m
+        labels:
+          severity: warning
+          service: mining
+        annotations:
+          summary: "Mining hashrate dropped significantly"
+          description: "Current hashrate: {{ $value }} H/s"
+
+    - name: wrfcoin.weather.rules
+      interval: 60s
+      rules:
+      - alert: WeatherDataStale
+        expr: time() - wrfcoin_weather_last_update > 3600
+        for: 5m
+        labels:
+          severity: warning
+          service: weather
+        annotations:
+          summary: "Weather data is stale"
+          description: "No weather updates for {{ $value }} seconds"
+
+      - alert: WeatherValidationFailures
+        expr: rate(wrfcoin_weather_validation_failures_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: critical
+          service: weather
+        annotations:
+          summary: "High weather validation failure rate"
+          description: "{{ $value }} validation failures per second"
+
+    - name: wrfcoin.cross_chain.rules
+      interval: 30s
+      rules:
+      - alert: BridgeTransactionStuck
+        expr: wrfcoin_bridge_pending_transactions > 100
+        for: 15m
+        labels:
+          severity: warning
+          service: bridge
+        annotations:
+          summary: "Bridge transactions stuck"
+          description: "{{ $value }} transactions pending for over 15 minutes"
+
+      - alert: CrossChainOracleDown
+        expr: up{job="cross-chain-oracle"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: oracle
+        annotations:
+          summary: "Cross-chain oracle is down"
+          description: "Oracle service unavailable"
+
+    - name: wrfcoin.governance.rules
+      interval: 60s
+      rules:
+      - alert: GovernanceParticipationLow
+        expr: wrfcoin_governance_participation_rate < 0.3
+        for: 30m
+        labels:
+          severity: warning
+          service: governance
+        annotations:
+          summary: "Low governance participation"
+          description: "Participation rate: {{ $value | humanizePercentage }}"
+
+      - alert: ProposalVotingAnomalies
+        expr: rate(wrfcoin_governance_invalid_votes_total[10m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: governance
+        annotations:
+          summary: "Unusual voting patterns detected"
+          description: "{{ $value }} invalid votes per second"
+
+    - name: wrfcoin.security.rules
+      interval: 15s
+      rules:
+      - alert: SuspiciousAPIActivity
+        expr: rate(wrfcoin_api_requests_total{code="429"}[1m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: security
+        annotations:
+          summary: "High rate of rate-limited requests"
+          description: "{{ $value }} rate-limited requests per second"
+
+      - alert: AuthenticationFailures
+        expr: rate(wrfcoin_auth_failures_total[5m]) > 5
+        for: 3m
+        labels:
+          severity: critical
+          service: security
+        annotations:
+          summary: "High authentication failure rate"
+          description: "{{ $value }} auth failures per second"
+
+      - alert: HSMConnectivityIssue
+        expr: wrfcoin_hsm_connection_status == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: security
+        annotations:
+          summary: "HSM connectivity lost"
+          description: "Hardware Security Module is unreachable"
+
+---
+# Custom ServiceMonitor for Wrfcoin services
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wrfcoin-services
+  namespace: monitoring
+  labels:
+    app: wrfcoin
+spec:
+  selector:
+    matchLabels:
+      prometheus-monitor: 'true'
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      scrapeTimeout: 10s
+    - port: http
+      interval: 60s
+      path: /health/metrics
+      scrapeTimeout: 15s
+  namespaceSelector:
+    matchNames:
+      - wrfcoin-production
+      - wrfcoin-staging
+
+---
+# Grafana Dashboard ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wrfcoin-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: '1'
+data:
+  wrfcoin-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Wrfcoin Platform Overview",
+        "tags": ["wrfcoin", "blockchain", "weather"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Blockchain Metrics",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "wrfcoin_blockchain_block_height",
+                "legendFormat": "Block Height"
+              },
+              {
+                "expr": "rate(wrfcoin_transactions_total[5m])",
+                "legendFormat": "TPS"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Weather Data Quality",
+            "type": "gauge",
+            "targets": [
+              {
+                "expr": "wrfcoin_weather_data_quality_score",
+                "legendFormat": "Quality Score"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 70},
+                    {"color": "green", "value": 90}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Cross-Chain Bridge Status",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "wrfcoin_bridge_status",
+                "legendFormat": "{{ chain }}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "API Performance",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(wrfcoin_api_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "95th percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.50, rate(wrfcoin_api_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "50th percentile"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Response Time (seconds)",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 5,
+            "title": "Error Rates",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(wrfcoin_api_requests_total{code=~\"5..\"}[5m])",
+                "legendFormat": "5xx errors"
+              },
+              {
+                "expr": "rate(wrfcoin_api_requests_total{code=~\"4..\"}[5m])",
+                "legendFormat": "4xx errors"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Errors per second",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "30s"
+      }
+    }
+
+---
+# AlertManager Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'alerts@wrfcoin.com'
+      slack_api_url: '{{ .Values.slackWebhookUrl }}'
+
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 12h
+      receiver: 'default'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        group_wait: 10s
+        repeat_interval: 5m
+      - match:
+          service: security
+        receiver: 'security-team'
+        group_wait: 5s
+        repeat_interval: 1m
+      - match:
+          service: blockchain
+        receiver: 'blockchain-team'
+
+    receivers:
+    - name: 'default'
+      slack_configs:
+      - channel: '#alerts'
+        title: 'Wrfcoin Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}{{ end }}'
+
+    - name: 'critical-alerts'
+      slack_configs:
+      - channel: '#critical'
+        title: 'CRITICAL: Wrfcoin Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}{{ end }}'
+      email_configs:
+      - to: 'oncall@wrfcoin.com'
+        subject: 'CRITICAL: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+
+    - name: 'security-team'
+      slack_configs:
+      - channel: '#security'
+        title: 'Security Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}{{ end }}'
+      email_configs:
+      - to: 'security@wrfcoin.com'
+        subject: 'Security Alert: {{ .GroupLabels.alertname }}'
+
+    - name: 'blockchain-team'
+      slack_configs:
+      - channel: '#blockchain-ops'
+        title: 'Blockchain Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}{{ end }}'
+
+    inhibit_rules:
+    - source_match:
+        severity: 'critical'
+      target_match:
+        severity: 'warning'
+      equal: ['alertname', 'cluster', 'service']
+
+---
+# Jaeger Tracing Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: monitoring
+data:
+  jaeger.yml: |
+    jaeger:
+      service_name: wrfcoin-platform
+      sampler:
+        type: probabilistic
+        param: 0.1
+      reporter:
+        log_spans: true
+        buffer_flush_interval: 1s
+        queue_size: 100
+      headers:
+        trace_context_header_name: "x-trace-id"
+        baggage_header_prefix: "x-baggage-"
+      baggage_restrictions:
+        deny_baggage_on_initialization_failure: false
+        host_port: "jaeger-agent:5778"

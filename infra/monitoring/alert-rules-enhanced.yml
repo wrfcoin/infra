@@ -1,0 +1,511 @@
+# Enhanced Alert Rules for Wrfcoin Blockchain Monitoring with Distributed Tracing
+# Integrates metrics and traces for comprehensive alerting
+
+groups:
+  # Blockchain Core Alerts with Tracing Integration
+  - name: blockchain_core_alerts
+    rules:
+      # Block Production Issues
+      - alert: BlockProductionStalled
+        expr: increase(wrfcoin_blockchain_blocks_produced_total[5m]) == 0
+        for: 3m
+        labels:
+          severity: critical
+          category: blockchain_core
+          trace_category: blockchain_core
+          playbook_severity: SEV1
+        annotations:
+          summary: 'Block production has stalled'
+          description: 'No new blocks produced in the last 5 minutes'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/block-production'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="block_processing"'
+          webhook_url: 'http://localhost:4001/api/incident-automation/webhook/alertmanager'
+          auto_remediate: 'true'
+
+      # High Block Processing Time with Trace Correlation
+      - alert: HighBlockProcessingTime
+        expr: histogram_quantile(0.95, sum(rate(wrfcoin_blockchain_block_processing_duration_seconds_bucket[5m])) by (le)) > 10
+        for: 2m
+        labels:
+          severity: warning
+          category: blockchain_core
+          trace_category: blockchain_core
+        annotations:
+          summary: 'High block processing time detected'
+          description: '95th percentile block processing time is {{ $value }}s (threshold: 10s)'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="block_processing" AND duration > 10s'
+
+      # Transaction Pool Overflow
+      - alert: TransactionPoolOverflow
+        expr: wrfcoin_blockchain_mempool_size > wrfcoin_blockchain_mempool_max_size * 0.9
+        for: 1m
+        labels:
+          severity: warning
+          category: blockchain_core
+          trace_category: transaction
+        annotations:
+          summary: 'Transaction pool approaching capacity'
+          description: 'Mempool size is {{ $value }} (90% of max capacity)'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="transaction_validation"'
+
+      # High Transaction Failure Rate (core4#667)
+      - alert: HighTransactionFailureRate
+        expr: rate(wrfcoin_blockchain_transactions_failed_total[5m]) > 2
+        for: 3m
+        labels:
+          severity: warning
+          category: blockchain_core
+          trace_category: transaction
+        annotations:
+          summary: 'Sustained high transaction failure rate'
+          description: 'Transaction failure rate is {{ $value }}/sec (threshold: 2/sec for 3m)'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="transaction_validation" AND status="failed"'
+
+  # Consensus Alerts with Validator Tracing
+  - name: consensus_alerts
+    rules:
+      # Consensus Round Timeout
+      - alert: ConsensusRoundTimeout
+        expr: histogram_quantile(0.95, sum(rate(wrfcoin_consensus_round_duration_seconds_bucket[5m])) by (le, validator_id)) > 30
+        for: 2m
+        labels:
+          severity: critical
+          category: consensus
+          trace_category: consensus
+          playbook_severity: SEV1
+        annotations:
+          summary: 'Consensus round timeout detected'
+          description: 'Consensus round taking too long for validator {{ $labels.validator_id }}: {{ $value }}s'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="consensus_round" AND validator_id="{{ $labels.validator_id }}"'
+          webhook_url: 'http://localhost:4001/api/incident-automation/webhook/alertmanager'
+          auto_remediate: 'true'
+
+      # Validator Participation Drop
+      - alert: ValidatorParticipationDrop
+        expr: wrfcoin_consensus_validator_participation_rate < 0.8
+        for: 5m
+        labels:
+          severity: warning
+          category: consensus
+          trace_category: consensus
+        annotations:
+          summary: 'Low validator participation rate'
+          description: 'Validator participation rate is {{ $value }} (threshold: 0.8)'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="consensus_round"'
+
+      # Slashing Event (catch-all)
+      # Uses wrfcoin_blockchain_slashing_events_total — the only real slashing
+      # counter in core4/shared-protocol/src/monitoring/mod.rs.
+      # NOTE: wrfcoin_consensus_validator_slashed_total was a phantom metric
+      # that never existed in the Rust codebase; it has been removed.
+      - alert: SlashingEventDetected
+        expr: increase(wrfcoin_blockchain_slashing_events_total[5m]) > 0
+        for: 0s
+        labels:
+          severity: warning
+          category: consensus
+          trace_category: consensus
+          playbook_severity: SEV3
+        annotations:
+          summary: 'Slashing event detected'
+          description: '{{ $value }} slashing event(s) in the last 5 minutes'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="validator_slashing"'
+          webhook_url: 'http://localhost:4001/api/incident-automation/webhook/alertmanager'
+          auto_remediate: 'true'
+          metric_note: >-
+            Per-reason breakdown (DataQualityViolation, OracleAttestationFraud,
+            InvalidZKProof) requires adding a "reason" label to this counter in
+            core4 shared-protocol. See core4 follow-up issue.
+
+      # === Per-reason slashing alerts (FUTURE) ===
+      # Uncomment when wrfcoin_blockchain_slashing_events_total gains a
+      # "reason" label (core4: IntCounter → IntCounterVec).
+      #
+      # - alert: SlashingDataQualityViolation
+      #   expr: increase(wrfcoin_blockchain_slashing_events_total{reason="DataQualityViolation"}[5m]) > 0
+      #   for: 0s
+      #   labels:
+      #     severity: warning
+      #     category: consensus
+      #   annotations:
+      #     summary: 'Data quality slashing event'
+      #     description: 'Physical range violation detected — routine quality issue'
+      #
+      # - alert: SlashingOracleAttestationFraud
+      #   expr: increase(wrfcoin_blockchain_slashing_events_total{reason="OracleAttestationFraud"}[5m]) > 0
+      #   for: 0s
+      #   labels:
+      #     severity: critical
+      #     category: consensus
+      #     playbook_severity: SEV1
+      #   annotations:
+      #     summary: 'Oracle attestation fraud detected'
+      #     description: 'Active attack — oracle submitting fraudulent attestations'
+      #
+      # - alert: SlashingInvalidZKProof
+      #   expr: increase(wrfcoin_blockchain_slashing_events_total{reason="InvalidZKProof"}[5m]) > 0
+      #   for: 0s
+      #   labels:
+      #     severity: critical
+      #     category: consensus
+      #     playbook_severity: SEV1
+      #   annotations:
+      #     summary: 'Invalid ZK proof slashing event'
+      #     description: 'Proof system compromise — ZK proof verification failed'
+
+  # Cross-Chain Bridge Alerts with Context Propagation
+  - name: cross_chain_alerts
+    rules:
+      # Bridge Transfer Failure
+      - alert: CrossChainBridgeFailure
+        expr: increase(wrfcoin_cross_chain_bridge_failures_total[5m]) > 3
+        for: 1m
+        labels:
+          severity: critical
+          category: cross_chain
+          trace_category: cross_chain
+          playbook_severity: SEV1
+        annotations:
+          summary: 'Multiple cross-chain bridge failures'
+          description: '{{ $value }} bridge transfer failures in the last 5 minutes'
+          trace_query: 'service.name="wrfcoin-bridge" AND operation.name="bridge_transfer" AND status="error"'
+          webhook_url: 'http://localhost:4001/api/incident-automation/webhook/alertmanager'
+          auto_remediate: 'true'
+
+      # High Bridge Processing Time
+      - alert: HighBridgeProcessingTime
+        expr: histogram_quantile(0.95, sum(rate(wrfcoin_cross_chain_bridge_duration_seconds_bucket[5m])) by (le, source_chain, target_chain)) > 300
+        for: 3m
+        labels:
+          severity: warning
+          category: cross_chain
+          trace_category: cross_chain
+        annotations:
+          summary: 'High bridge processing time'
+          description: 'Bridge transfer from {{ $labels.source_chain }} to {{ $labels.target_chain }} taking {{ $value }}s'
+          trace_query: 'service.name="wrfcoin-bridge" AND source_chain="{{ $labels.source_chain }}" AND target_chain="{{ $labels.target_chain }}"'
+
+      # Bridge Liquidity Low
+      - alert: BridgeLiquidityLow
+        expr: wrfcoin_cross_chain_bridge_liquidity_ratio < 0.1
+        for: 2m
+        labels:
+          severity: warning
+          category: cross_chain
+          trace_category: cross_chain
+        annotations:
+          summary: 'Low bridge liquidity detected'
+          description: 'Bridge liquidity ratio is {{ $value }} (threshold: 0.1)'
+          trace_query: 'service.name="wrfcoin-bridge" AND operation.name="liquidity_check"'
+
+  # Network and P2P Alerts
+  - name: network_alerts
+    rules:
+      # Low Peer Count
+      - alert: LowPeerCount
+        expr: wrfcoin_network_peer_count < 10
+        for: 3m
+        labels:
+          severity: warning
+          category: network
+          trace_category: network
+        annotations:
+          summary: 'Low peer count detected'
+          description: 'Peer count is {{ $value }} (threshold: 10)'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="peer_discovery"'
+
+      # High Network Latency
+      - alert: HighNetworkLatency
+        expr: histogram_quantile(0.95, sum(rate(wrfcoin_network_message_latency_seconds_bucket[5m])) by (le)) > 1
+        for: 2m
+        labels:
+          severity: warning
+          category: network
+          trace_category: network
+        annotations:
+          summary: 'High network message latency'
+          description: '95th percentile network latency is {{ $value }}s (threshold: 1s)'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="message_propagation"'
+
+      # Network Partition Detection
+      - alert: NetworkPartition
+        expr: wrfcoin_network_partition_detected == 1
+        for: 1m
+        labels:
+          severity: critical
+          category: network
+          trace_category: network
+        annotations:
+          summary: 'Network partition detected'
+          description: 'Network partition detected, node may be isolated'
+          trace_query: 'service.name="wrfcoin-blockchain" AND operation.name="network_health_check"'
+
+  # Weather Data and IoT Alerts
+  - name: weather_data_alerts
+    rules:
+      # Weather Data Quality Issues
+      - alert: WeatherDataQualityDegraded
+        expr: wrfcoin_weather_data_quality_score < 0.8
+        for: 5m
+        labels:
+          severity: warning
+          category: weather
+          trace_category: weather
+        annotations:
+          summary: 'Weather data quality degraded'
+          description: 'Weather data quality score is {{ $value }} (threshold: 0.8)'
+          trace_query: 'service.name="wrfcoin-weather" AND operation.name="data_validation"'
+
+      # IoT Device Disconnection
+      - alert: IoTDeviceDisconnected
+        expr: increase(wrfcoin_iot_device_disconnections_total[10m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          category: weather
+          trace_category: weather
+        annotations:
+          summary: 'Multiple IoT device disconnections'
+          description: '{{ $value }} IoT devices disconnected in the last 10 minutes'
+          trace_query: 'service.name="wrfcoin-iot" AND operation.name="device_connection"'
+
+      # Weather Data Staleness
+      - alert: WeatherDataStale
+        expr: (time() - wrfcoin_weather_last_update_timestamp) > 3600
+        for: 5m
+        labels:
+          severity: warning
+          category: weather
+          trace_category: weather
+        annotations:
+          summary: 'Weather data is stale'
+          description: "Weather data hasn't been updated for {{ $value }} seconds"
+          trace_query: 'service.name="wrfcoin-weather" AND operation.name="data_collection"'
+
+  # Security and HSM Alerts
+  - name: security_alerts
+    rules:
+      # HSM Operation Failure
+      - alert: HSMOperationFailure
+        expr: increase(wrfcoin_security_hsm_operation_failures_total[5m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+          category: security
+          trace_category: security
+        annotations:
+          summary: 'HSM operation failure detected'
+          description: '{{ $value }} HSM operation failures in the last 5 minutes'
+          trace_query: 'service.name="wrfcoin-security" AND operation.name="hsm_operation" AND status="error"'
+
+      # Suspicious Activity Detection
+      - alert: SuspiciousActivityDetected
+        expr: wrfcoin_security_suspicious_activity_score > 0.8
+        for: 1m
+        labels:
+          severity: critical
+          category: security
+          trace_category: security
+        annotations:
+          summary: 'Suspicious activity detected'
+          description: 'Suspicious activity score is {{ $value }} (threshold: 0.8)'
+          trace_query: 'service.name="wrfcoin-security" AND operation.name="threat_detection"'
+
+      # Key Rotation Overdue
+      - alert: KeyRotationOverdue
+        expr: (time() - wrfcoin_security_last_key_rotation_timestamp) > 86400 * 30
+        for: 1h
+        labels:
+          severity: warning
+          category: security
+          trace_category: security
+        annotations:
+          summary: 'Key rotation overdue'
+          description: "Keys haven't been rotated for {{ $value }} seconds (threshold: 30 days)"
+          trace_query: 'service.name="wrfcoin-security" AND operation.name="key_rotation"'
+
+  # Performance and Resource Alerts
+  - name: performance_alerts
+    rules:
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: wrfcoin_system_cpu_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: 'High CPU usage detected'
+          description: 'CPU usage is {{ $value }}% (threshold: 85%)'
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: wrfcoin_system_memory_usage_percent > 90
+        for: 3m
+        labels:
+          severity: critical
+          category: performance
+        annotations:
+          summary: 'High memory usage detected'
+          description: 'Memory usage is {{ $value }}% (threshold: 90%)'
+
+      # Disk Space Low
+      - alert: DiskSpaceLow
+        expr: wrfcoin_system_disk_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: 'Low disk space detected'
+          description: 'Disk usage is {{ $value }}% (threshold: 85%)'
+
+  # Tracing System Health Alerts
+  - name: tracing_system_alerts
+    rules:
+      # High Trace Drop Rate
+      - alert: HighTraceDropRate
+        expr: rate(wrfcoin_tracing_dropped_spans_total[5m]) / rate(wrfcoin_tracing_total_spans_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          category: tracing
+        annotations:
+          summary: 'High trace drop rate detected'
+          description: 'Trace drop rate is {{ $value }} (threshold: 0.1)'
+
+      # Tracing Backend Unreachable
+      - alert: TracingBackendUnreachable
+        expr: wrfcoin_tracing_backend_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: tracing
+        annotations:
+          summary: 'Tracing backend unreachable'
+          description: 'Cannot connect to tracing backend (Jaeger/Tempo)'
+
+      # High Tracing Latency
+      - alert: HighTracingLatency
+        expr: histogram_quantile(0.95, sum(rate(wrfcoin_tracing_export_duration_seconds_bucket[5m])) by (le)) > 5
+        for: 3m
+        labels:
+          severity: warning
+          category: tracing
+        annotations:
+          summary: 'High tracing export latency'
+          description: '95th percentile trace export latency is {{ $value }}s (threshold: 5s)'
+
+  # API and Service Health Alerts
+  - name: api_alerts
+    rules:
+      # API Rate Limit Exceeded
+      - alert: APIRateLimitExceeded
+        expr: increase(wrfcoin_api_rate_limit_exceeded_total[5m]) > 100
+        for: 2m
+        labels:
+          severity: warning
+          category: api
+          trace_category: api
+        annotations:
+          summary: 'API rate limit frequently exceeded'
+          description: 'Rate limit exceeded {{ $value }} times in the last 5 minutes'
+          trace_query: 'service.name="wrfcoin-api" AND operation.name="rate_limit_check"'
+
+      # High API Error Rate
+      - alert: HighAPIErrorRate
+        expr: rate(wrfcoin_api_errors_total[5m]) / rate(wrfcoin_api_requests_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          category: api
+          trace_category: api
+        annotations:
+          summary: 'High API error rate'
+          description: 'API error rate is {{ $value }} (threshold: 0.05)'
+          trace_query: 'service.name="wrfcoin-api" AND status="error"'
+
+      # Service Response Time SLA Breach
+      - alert: ServiceResponseTimeSLABreach
+        expr: histogram_quantile(0.99, sum(rate(wrfcoin_api_request_duration_seconds_bucket[5m])) by (le, service)) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: api
+          trace_category: api
+        annotations:
+          summary: 'Service response time SLA breach'
+          description: '99th percentile response time for {{ $labels.service }} is {{ $value }}s (SLA: 2s)'
+          trace_query: 'service.name="{{ $labels.service }}" AND duration > 2s'
+  # Trust-Weight Governance Alerts
+  - name: trust_weight_governance_alerts
+    rules:
+      # Trust Weight Ordering Invariant Violation
+      - alert: TrustWeightOrderingViolation
+        expr: >
+          wrfcoin_current_trust_weights_trusted_provider_weight < wrfcoin_current_trust_weights_verified_station_weight
+          or wrfcoin_current_trust_weights_verified_station_weight < wrfcoin_current_trust_weights_unverified_weight
+        for: 1m
+        labels:
+          severity: critical
+          category: governance
+          trace_category: trust_governance
+        annotations:
+          summary: 'Trust weight ordering invariant violated'
+          description: 'Expected trusted_provider >= verified_station >= unverified, but current weights violate this ordering'
+          runbook_url: 'https://docs.wrfcoin.com/runbooks/trust-weight-governance'
+
+      # Trust Weighted Multiplier Dropped Below Threshold
+      - alert: TrustMultiplierDegraded
+        expr: wrfcoin_trust_weighted_multiplier_estimate < 0.3
+        for: 5m
+        labels:
+          severity: warning
+          category: governance
+          trace_category: trust_governance
+        annotations:
+          summary: 'Trust weighted multiplier is degraded'
+          description: 'Trust multiplier estimate is {{ $value }} (threshold: 0.3) — most contributors may be unverified'
+
+      # Effective Multiplier Critically Low
+      - alert: EffectiveMultiplierCriticallyLow
+        expr: wrfcoin_effective_weighted_multiplier_estimate < 0.15
+        for: 5m
+        labels:
+          severity: critical
+          category: governance
+          trace_category: trust_governance
+        annotations:
+          summary: 'Effective reward multiplier critically low'
+          description: 'Combined trust × quality multiplier is {{ $value }} — rewards are severely suppressed'
+
+      # No Trust Impact Blocks Observed (stale data)
+      - alert: TrustImpactDataStale
+        expr: increase(wrfcoin_trust_impact_blocks_observed[15m]) == 0 and wrfcoin_trust_impact_blocks_observed > 0
+        for: 10m
+        labels:
+          severity: warning
+          category: governance
+          trace_category: trust_governance
+        annotations:
+          summary: 'Trust impact block data is stale'
+          description: 'No new trust impact blocks observed in the last 15 minutes'
+
+      # Trust Class Distribution Skew — Almost All Unverified
+      - alert: TrustClassDistributionSkewed
+        expr: >
+          wrfcoin_trust_class_distribution_total_unverified
+          / (wrfcoin_trust_class_distribution_total_unverified + wrfcoin_trust_class_distribution_total_verified_station + wrfcoin_trust_class_distribution_total_trusted_provider + 1)
+          > 0.95
+        for: 15m
+        labels:
+          severity: warning
+          category: governance
+          trace_category: trust_governance
+        annotations:
+          summary: 'Trust class distribution heavily skewed to unverified'
+          description: '{{ $value | humanizePercentage }} of contributors are unverified — consider trust onboarding outreach'
+
+# Alert routing and notification configuration
+# This section defines how alerts are routed to different notification channels
+# based on their severity, category, and other labels

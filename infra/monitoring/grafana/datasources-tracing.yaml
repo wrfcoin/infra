@@ -1,0 +1,152 @@
+# Grafana Datasources Configuration for Wrfcoin Monitoring with Tracing
+apiVersion: 1
+
+datasources:
+  # Prometheus for metrics
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    version: 1
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: '30s'
+      queryTimeout: '300s'
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: '2.40.0'
+      cacheLevel: High
+      incrementalQuerying: true
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger
+          urlDisplayLabel: 'View Trace'
+
+  # Jaeger for distributed tracing
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    version: 1
+    editable: true
+    jsonData:
+      tracesToLogs:
+        datasourceUid: loki
+        tags: ['job', 'instance', 'pod', 'namespace']
+        mappedTags: [{ key: 'service.name', value: 'service' }]
+        mapTagNamesEnabled: false
+        spanStartTimeShift: '1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: false
+        filterBySpanID: false
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags: [{ key: 'service.name', value: 'service' }, { key: 'job' }]
+        queries:
+          - name: 'Sample query'
+            query: 'sum(rate(traces_spanmetrics_latency_bucket{$__tags}[5m]))'
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+      spanBar:
+        type: 'Tag'
+        tag: 'http.path'
+
+  # Tempo (alternative tracing backend)
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    version: 1
+    editable: true
+    jsonData:
+      tracesToLogs:
+        datasourceUid: loki
+        tags: ['job', 'instance']
+        mappedTags: [{ key: 'service.name', value: 'service' }]
+        mapTagNamesEnabled: false
+        spanStartTimeShift: '1h'
+        spanEndTimeShift: '1h'
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags: [{ key: 'service.name', value: 'service' }, { key: 'job' }]
+        queries:
+          - name: 'Sample query'
+            query: 'sum(rate(traces_spanmetrics_latency_bucket{$__tags}[5m]))'
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+      lokiSearch:
+        datasourceUid: loki
+
+  # Loki for logs (correlates with traces)
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    version: 1
+    editable: true
+    jsonData:
+      derivedFields:
+        - datasourceUid: jaeger
+          matcherRegex: "trace_id=(\\w+)"
+          name: TraceID
+          url: '$${__value.raw}'
+          urlDisplayLabel: 'View Trace'
+        - datasourceUid: tempo
+          matcherRegex: "trace_id=(\\w+)"
+          name: TraceID
+          url: '$${__value.raw}'
+          urlDisplayLabel: 'View in Tempo'
+      maxLines: 1000
+
+  # OpenTelemetry Collector metrics
+  - name: OTel Collector
+    type: prometheus
+    access: proxy
+    url: http://otel-collector:8888
+    version: 1
+    editable: true
+    jsonData:
+      httpMethod: GET
+      timeInterval: '15s'
+      queryTimeout: '60s'
+
+  # Wrfcoin JSON API for custom metrics
+  - name: Wrfcoin Metrics API
+    type: infinity
+    access: proxy
+    url: http://host.docker.internal:9101
+    version: 1
+    editable: true
+    jsonData:
+      url: 'http://host.docker.internal:9101'
+      timeout: 30000
+      headers:
+        - name: 'Content-Type'
+          value: 'application/json'
+      auth_type: 'none'
+      tls_skip_verify: true
+      custom_headers: {}
+
+# Optional: Configure alerting datasources
+alerting:
+  - name: Prometheus Alerting
+    type: prometheus
+    uid: prometheus-alerting
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Prometheus

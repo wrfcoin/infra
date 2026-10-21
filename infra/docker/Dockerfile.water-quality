@@ -1,0 +1,77 @@
+# Dockerfile.water-quality — EPANET-based water quality and hydraulic analysis
+# Multi-stage build: compile EPANET from source, slim runtime image.
+#
+# Final image size: ~150MB
+#
+# Usage:
+#   docker build -f Dockerfile.water-quality -t wrfcoin/water-quality:latest .
+#   docker run -v ./input:/data/input -v ./output:/data/output wrfcoin/water-quality:latest
+
+ARG BASE_IMAGE=ubuntu:22.04
+
+# =============================================================================
+# Stage 1: Builder — compile EPANET from source
+# =============================================================================
+FROM ${BASE_IMAGE} AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    gcc \
+    g++ \
+    make \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Clone and build EPANET from official OpenWaterAnalytics source
+RUN git clone --depth 1 --branch v2.2 https://github.com/OpenWaterAnalytics/EPANET.git /build/EPANET
+
+WORKDIR /build/EPANET
+
+RUN mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release \
+    && make -j$(nproc) \
+    && ls -la bin/ lib/
+
+# =============================================================================
+# Stage 2: Runtime — minimal image with EPANET binary + Python
+# =============================================================================
+FROM ${BASE_IMAGE} AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy EPANET binaries and libraries from builder
+COPY --from=builder /build/EPANET/build/bin/* /usr/local/bin/
+COPY --from=builder /build/EPANET/build/lib/* /usr/local/lib/
+
+# Update library cache
+RUN ldconfig
+
+# Create a wrapper so "epanet3" resolves to the built binary
+RUN ln -sf /usr/local/bin/runepanet /usr/local/bin/epanet3 2>/dev/null || true
+
+# Create data directories
+RUN mkdir -p /data/input /data/output
+
+WORKDIR /data
+
+# Run as non-root user
+RUN useradd -m -s /bin/bash epanetuser && chown -R epanetuser:epanetuser /data
+USER epanetuser
+
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
+    CMD epanet3 --version || exit 1
+
+CMD ["epanet3", "/data/input/network.inp", "/data/output/results.rpt"]

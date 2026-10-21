@@ -1,0 +1,41 @@
+# Storage provider image: the REAL storage-node daemon from wrfcoin/storage-providers
+# (storage-providers#65, infra#944). It replaces the backend's mocked
+# backend/server/storage_networks_server.js, which this file used to package.
+#
+# Build context: the WORKSPACE ROOT that holds sibling checkouts (the same context
+# infra/docker/docker-compose.yml already uses for this file), so the source is
+# `storage-providers/`. Local builds only; never push this image.
+#
+# The recipe mirrors storage-providers/Dockerfile (the repo's own image). Keep the
+# cargo package, base images and runtime config in step with it.
+#
+# Testnet profile (storage-providers#69/#76): IPFS only, against a self-hosted kubo
+# (the compose `ipfs` service, see config/testnet.toml). Filecoin and Arweave
+# report `not_in_testnet` and requests for them answer 501. No paid pinning.
+# rust:1.88-bookworm (multi-arch index digest, resolved 2026-10-01)
+FROM rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS builder
+WORKDIR /src
+COPY storage-providers/Cargo.toml storage-providers/Cargo.lock ./
+COPY storage-providers/crates ./crates
+RUN cargo build --release --locked -p wrfcoin-storage-node
+RUN mkdir /runtime-libs && cp /usr/lib/$(gcc -dumpmachine)/libssl.so.3 /usr/lib/$(gcc -dumpmachine)/libcrypto.so.3 /runtime-libs/
+
+# gcr.io/distroless/cc-debian12:nonroot (multi-arch index digest, resolved 2026-10-01)
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+WORKDIR /app
+COPY --from=builder /runtime-libs/ /usr/lib/
+COPY --from=builder /src/target/release/storage-node /app/storage-node
+COPY storage-providers/config/testnet.toml /app/config/testnet.toml
+ENV STORAGE_NODE_PROFILE=testnet STORAGE_NODE_CONFIG=/app/config/testnet.toml
+# Provenance (infra#1242): stamped by the revision-label overlay (testnet/scripts/image-revisions.py), which
+# pins the storage-providers source. No build-time guard: a build without the args still succeeds and its
+# empty labels classify UNAVAILABLE in the release gate.
+ARG WRFCOIN_BUILD_REVISION
+ARG WRFCOIN_BUILD_CREATED
+LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
+      org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
+USER nonroot:nonroot
+EXPOSE 7001
+# distroless: no shell and no curl, so the image has no HEALTHCHECK. Probe
+# GET /health from outside (it answers 503 while kubo is unreachable).
+ENTRYPOINT ["/app/storage-node"]

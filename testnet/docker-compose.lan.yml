@@ -1,0 +1,22 @@
+# WRFCoin Testnet — Explorer-Only LAN Access Override
+#
+# Rebinds only the block explorer from 127.0.0.1 (localhost only) to
+# 0.0.0.0 (all interfaces) so the explorer is reachable from the home LAN.
+#
+# Do not use broad LAN publishing for tailnet launch. Node API (:8556),
+# backend (:4001), dashboards, and exporters stay loopback-bound (#557).
+#
+# Requires Docker Compose v2.24.0+ (!override merge tag).
+#
+# Usage:
+#   docker compose -f docker-compose.testnet.yml -f docker-compose.lan.yml up -d
+#
+# With local builds:
+#   docker compose -f docker-compose.testnet.yml \
+#     -f docker-compose.override.yml -f docker-compose.lan.yml up -d --build
+
+services:
+
+  wrfcoin-explorer:
+    ports: !override
+      - "0.0.0.0:8081:8081"   # Block explorer (was 127.0.0.1)

@@ -1,0 +1,388 @@
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wrfcoin-frontend
+  labels:
+    app: wrfcoin-frontend
+    component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wrfcoin-frontend
+  template:
+    metadata:
+      labels:
+        app: wrfcoin-frontend
+        component: frontend
+    spec:
+      # SECURITY: Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wrfcoin-frontend
+          # SECURITY: Pin to specific version (git SHA)
+          image: wrfcoin/frontend:78ba22962
+          # SECURITY: Container-level security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 5000
+          env:
+            - name: NODE_ENV
+              value: 'production'
+          resources:
+            requests:
+              memory: '256Mi'
+              cpu: '250m'
+            limits:
+              memory: '512Mi'
+              cpu: '500m'
+          # SECURITY: Volume mounts for writable paths
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+
+---
+# API Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wrfcoin-api
+  labels:
+    app: wrfcoin-api
+    component: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: wrfcoin-api
+  template:
+    metadata:
+      labels:
+        app: wrfcoin-api
+        component: backend
+    spec:
+      # SECURITY: Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wrfcoin-api
+          # SECURITY: Pin to specific version (git SHA)
+          image: wrfcoin/backend:78ba22962
+          # SECURITY: Container-level security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command: ['node', 'dist/server/enhanced_unified_api_optimized.js']
+          ports:
+            - containerPort: 4001
+          env:
+            - name: NODE_ENV
+              value: 'production'
+            - name: PORT
+              value: '4001'
+            - name: BLOCKCHAIN_NODE_URL
+              value: 'http://wrfcoin-blockchain-service:8556'
+            - name: CORE4_API_URL
+              value: 'http://wrfcoin-blockchain-service:8556'
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wrfcoin-secrets
+                  key: database-url
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '500m'
+            limits:
+              memory: '1Gi'
+              cpu: '1000m'
+          # SECURITY: Volume mounts for writable paths
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+# IoT Sensor Networks Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wrfcoin-iot
+  labels:
+    app: wrfcoin-iot
+    component: iot-networks
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wrfcoin-iot
+  template:
+    metadata:
+      labels:
+        app: wrfcoin-iot
+        component: iot-networks
+    spec:
+      # SECURITY: Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wrfcoin-iot
+          # SECURITY: Pin to specific version (git SHA)
+          image: wrfcoin/backend:78ba22962
+          # SECURITY: Container-level security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command: ['node', 'backend/server/iot_sensor_networks_server.js']
+          ports:
+            - containerPort: 3002
+          env:
+            - name: NODE_ENV
+              value: 'production'
+            - name: PORT
+              value: '3002'
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wrfcoin-secrets
+                  key: database-url
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '500m'
+            limits:
+              memory: '1Gi'
+              cpu: '1000m'
+          # SECURITY: Volume mounts for writable paths
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+# Compute Networks Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wrfcoin-compute
+  labels:
+    app: wrfcoin-compute
+    component: compute-networks
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wrfcoin-compute
+  template:
+    metadata:
+      labels:
+        app: wrfcoin-compute
+        component: compute-networks
+    spec:
+      # SECURITY: Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wrfcoin-compute
+          # SECURITY: Pin to specific version (git SHA)
+          image: wrfcoin/backend:78ba22962
+          # SECURITY: Container-level security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command: ['npx', 'tsx', 'backend/server/compute_networks_server.ts']
+          ports:
+            - containerPort: 6000
+          env:
+            - name: NODE_ENV
+              value: 'production'
+            - name: PORT
+              value: '6000'
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wrfcoin-secrets
+                  key: database-url
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '500m'
+            limits:
+              memory: '1Gi'
+              cpu: '1000m'
+          # SECURITY: Volume mounts for writable paths
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+# Blockchain Node Deployment (Rust native-chain)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wrfcoin-blockchain
+  labels:
+    app: wrfcoin-blockchain
+    component: blockchain-node
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wrfcoin-blockchain
+  template:
+    metadata:
+      labels:
+        app: wrfcoin-blockchain
+        component: blockchain-node
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wrfcoin-blockchain
+          # SECURITY: Pin to specific version (git SHA)
+          image: wrfcoin/core4:78ba22962
+          securityContext:
+            allowPrivilegeEscalation: false
+            # readOnlyRootFilesystem omitted: Rust node writes chain data to /data PVC
+            capabilities:
+              drop:
+                - ALL
+          # No command override — uses Dockerfile ENTRYPOINT (/usr/local/bin/wrfcoin-node)
+          ports:
+            - containerPort: 8556
+          env:
+            - name: WRFCOIN_API_HOST
+              value: '0.0.0.0'
+            - name: WRFCOIN_API_PORT
+              value: '8556'
+            - name: RUST_LOG
+              value: 'info'
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '500m'
+            limits:
+              memory: '2Gi'
+              cpu: '2000m'
+          volumeMounts:
+            - name: chain-data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8556
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8556
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: chain-data
+          persistentVolumeClaim:
+            claimName: wrfcoin-chain-data
+        - name: tmp
+          emptyDir: {}
+
+---
+# PersistentVolumeClaim for blockchain node chain data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wrfcoin-chain-data
+  labels:
+    app: wrfcoin-blockchain
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

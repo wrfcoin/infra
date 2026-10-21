@@ -1,0 +1,232 @@
+# WRFCoin Core Blockchain Node (Rust)
+# Multi-stage build producing the launch_api binary.
+#
+# Build context must be the workspace root (wrfcoin/) so that
+# COPY core4/ captures the full Cargo workspace.
+
+# =============================================================================
+# Stage 1: Builder
+# =============================================================================
+# rust:1.97-slim-bookworm (Debian 12, glibc 2.36). The Debian suffix is explicit on
+# purpose: plain `rust:1.97-slim` resolves to trixie (Debian 13, glibc 2.41), which is
+# NEWER than the ubuntu:24.04 runtime's glibc 2.39, and a binary built against a newer
+# glibc links fine and then fails only at container start (infra#1021 review). Keep the
+# builder's glibc <= the runtime's; scripts/tests/test-dockerfile-core-glibc-ceiling.sh
+# enforces that, and the runtime stages below re-check the real binaries with ldd.
+# core4's rust-toolchain.toml still selects the compiler; this tag chooses rustup, the
+# Debian base and the system libraries the binaries link against.
+FROM rust:1.97-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS builder-base
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    git \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the core4 Cargo workspace
+COPY core4/ .
+
+# Build each role in its own target-specific stage. A default node build never
+# traverses the attester builder or inherits its HTTP-client feature tree.
+#
+# `upgrade-notice-fetch` (core4#3095, shipped from the B3 release on, core4#3277
+# S7): compiles the node's optional peer poll for governance-signed upgrade
+# notices. It is inert unless WRFCOIN_UPGRADE_NOTICE_PEER_FETCH=1, which only
+# testnet/docker-compose.upgrade-notice-peer-fetch.yml sets. Without the feature
+# that env var is ignored with a warning, so a later release's notice could
+# reach a node only as a file. Every core4 pin since #3140 (70d55b776) has it.
+FROM builder-base AS node-builder
+RUN cargo build --release -p wrfcoin-native-chain \
+      --bin launch_api \
+      --features "full-mining,p2p,hsm,upgrade-notice-fetch"
+
+FROM builder-base AS attester-builder
+RUN cargo build --release -p wrfcoin-native-chain \
+      --bin oracle_attester \
+      --features "hsm,attester"
+
+# =============================================================================
+# Stage 2: Runtime dependencies
+# =============================================================================
+# Pinned 2026-07-09. Next CVE review: 2026-08-08 (see infra#336).
+FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 AS runtime-deps
+
+ARG YUBICO_PIV_VERSION=2.7.3~ppa1~noble1
+
+# The Yubico PPA signing key is checked in (infra#1016) instead of being looked
+# up at build time. `add-apt-repository` resolves a PPA's key through the
+# Launchpad REST API (api.launchpad.net), which is unreachable from this
+# network and from CT102, so every build of this file died at that step. The
+# package host (ppa.launchpadcontent.net) is reachable; only the key lookup
+# was not.
+#
+# Key: "Launchpad PPA for Yubico", RSA 4096, created 2024-05-03,
+# fingerprint 990B D85D 1C4F 411A BC0E  CE8D FA4E C8F2 EE58 CE0B.
+# Provenance and verification are in infra/docker/apt-keys/README.md, and
+# scripts/tests/test-dockerfile-core-yubico-key-pin.sh re-checks the
+# fingerprint and this checksum on every CI run.
+ARG YUBICO_PPA_KEY_SHA256=05e109492dfdef1245211c060a955e3db7fbe392c3377b6df984040281f16ce3
+ARG PCSC_LITE_VERSION=2.3.3-1
+
+# pcsc-lite is fetched as a raw .deb, so both the URL and the checksum are
+# architecture-specific. The architecture is derived from
+# `dpkg --print-architecture` inside this stage rather than from buildx's
+# TARGETARCH: it reports the architecture of the image actually being built, so
+# it is correct under BuildKit, the legacy builder, and emulation alike, and it
+# cannot disagree with the base image the way a build arg can. Every other
+# dependency here resolves per-architecture through apt already.
+#
+# An architecture with no checksum below fails the build. That is deliberate —
+# a wrong-architecture package that installs is worse than one that refuses to.
+ARG LIBPCSCLITE1_SHA256_AMD64=a8bc4725549060d1e696d358e32a3699d947d5381871553a290389830bebccbd
+ARG PCSCD_SHA256_AMD64=55e0aeebcf8fe484da2860a372a7ba6932369269d70f2e2031d8a95bc5266486
+ARG LIBPCSCLITE1_SHA256_ARM64=e406cfd8f918cbe868c14a9d0dfbc0967f98861e679bcb0f30df6a49d80936f1
+ARG PCSCD_SHA256_ARM64=250319bd5dc6866aab464ca0e46ac4d43f5ad94060007a28b4c94e0c42c12165
+
+WORKDIR /app
+
+COPY infra/infra/docker/apt-keys/yubico-stable-ppa.asc /usr/share/keyrings/yubico-stable-ppa.asc
+
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    echo "${YUBICO_PPA_KEY_SHA256}  /usr/share/keyrings/yubico-stable-ppa.asc" | sha256sum -c -; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      gosu \
+      libccid \
+      libssl3t64 \
+      opensc \
+      pcscd \
+      softhsm2 \
+      wget; \
+    . /etc/os-release; \
+    echo "deb [signed-by=/usr/share/keyrings/yubico-stable-ppa.asc] https://ppa.launchpadcontent.net/yubico/stable/ubuntu ${VERSION_CODENAME} main" \
+      > /etc/apt/sources.list.d/yubico-stable-ppa.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      "ykcs11=${YUBICO_PIV_VERSION}" \
+      "yubico-piv-tool=${YUBICO_PIV_VERSION}"; \
+    debArch="$(dpkg --print-architecture)"; \
+    case "${debArch}" in \
+      amd64) libpcsclite1Sha256="${LIBPCSCLITE1_SHA256_AMD64}"; pcscdSha256="${PCSCD_SHA256_AMD64}" ;; \
+      arm64) libpcsclite1Sha256="${LIBPCSCLITE1_SHA256_ARM64}"; pcscdSha256="${PCSCD_SHA256_ARM64}" ;; \
+      *) echo "Dockerfile.core: no pcsc-lite ${PCSC_LITE_VERSION} checksum pinned for architecture '${debArch}'" >&2; exit 1 ;; \
+    esac; \
+    wget -q "https://deb.debian.org/debian/pool/main/p/pcsc-lite/libpcsclite1_${PCSC_LITE_VERSION}_${debArch}.deb"; \
+    wget -q "https://deb.debian.org/debian/pool/main/p/pcsc-lite/pcscd_${PCSC_LITE_VERSION}_${debArch}.deb"; \
+    echo "${libpcsclite1Sha256}  libpcsclite1_${PCSC_LITE_VERSION}_${debArch}.deb" | sha256sum -c -; \
+    echo "${pcscdSha256}  pcscd_${PCSC_LITE_VERSION}_${debArch}.deb" | sha256sum -c -; \
+    apt-get install -y --no-install-recommends \
+      "./libpcsclite1_${PCSC_LITE_VERSION}_${debArch}.deb" \
+      "./pcscd_${PCSC_LITE_VERSION}_${debArch}.deb"; \
+    apt-mark hold libpcsclite1 pcscd; \
+    rm -f "libpcsclite1_${PCSC_LITE_VERSION}_${debArch}.deb" "pcscd_${PCSC_LITE_VERSION}_${debArch}.deb"; \
+    rm -rf /var/lib/apt/lists/*
+
+# =============================================================================
+# Stage 3a: Oracle attester runtime image (explicit build target only)
+# =============================================================================
+FROM runtime-deps AS oracle-attester-runtime
+
+# Release provenance (infra#991): source testnet/scripts/export-build-provenance.sh
+# before a release build. Unset args leave empty labels, which
+# render-release-manifest.sh classifies UNAVAILABLE (never FRESH). No build-time
+# guard: joiner, attester and CI builds pass no args and must keep building.
+ARG WRFCOIN_BUILD_REVISION
+ARG WRFCOIN_BUILD_CREATED
+LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
+      org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
+
+WORKDIR /app
+
+COPY --from=attester-builder /build/target/release/oracle_attester /usr/local/bin/oracle_attester
+COPY infra/infra/docker/hsm-service-entrypoint.sh /usr/local/bin/hsm-service-entrypoint.sh
+
+# Linkage guard (infra#1021): every library and GLIBC_ symbol version the binary
+# needs must resolve in THIS runtime image. `ldd` exits 0 even when a version is
+# missing, so the check matches its "not found" text instead of trusting the exit code.
+RUN out="$(ldd /usr/local/bin/oracle_attester 2>&1)"; printf '%s\n' "$out"; \
+    if printf '%s\n' "$out" | grep -q 'not found'; then \
+      echo "Dockerfile.core: oracle_attester does not link against this runtime image (library or glibc version floor exceeded; infra#1021)" >&2; \
+      exit 1; \
+    fi
+
+RUN chmod +x /usr/local/bin/hsm-service-entrypoint.sh && \
+    mkdir -p /app/data /app/logs /app/config && \
+    groupadd -g 1001 wrfcoin && \
+    useradd -m -u 1001 -g wrfcoin wrfcoin && \
+    chown -R wrfcoin:wrfcoin /app
+
+ENV RUST_LOG=info
+ENV WRFCOIN_HSM_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+ENV WRFCOIN_HSM_PIN_ENV=WRFCOIN_HSM_PIN
+
+USER wrfcoin
+
+ENTRYPOINT ["/usr/local/bin/hsm-service-entrypoint.sh"]
+CMD ["/usr/local/bin/oracle_attester"]
+
+# =============================================================================
+# Stage 3b: Node runtime image (default/final target — role remains unchanged)
+# =============================================================================
+FROM runtime-deps AS runtime
+
+# Release provenance (infra#991): source testnet/scripts/export-build-provenance.sh
+# before a release build. Unset args leave empty labels, which
+# render-release-manifest.sh classifies UNAVAILABLE (never FRESH). No build-time
+# guard: joiner, attester and CI builds pass no args and must keep building.
+ARG WRFCOIN_BUILD_REVISION
+ARG WRFCOIN_BUILD_CREATED
+LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
+      org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
+
+COPY --from=node-builder /build/target/release/launch_api /usr/local/bin/wrfcoin-node
+COPY infra/infra/docker/hsm-entrypoint.sh /usr/local/bin/hsm-entrypoint.sh
+COPY infra/infra/docker/wal-replay-healthcheck.sh /usr/local/bin/wal-replay-healthcheck.sh
+
+# Linkage guard (infra#1021): every library and GLIBC_ symbol version the binary
+# needs must resolve in THIS runtime image. `ldd` exits 0 even when a version is
+# missing, so the check matches its "not found" text instead of trusting the exit code.
+RUN out="$(ldd /usr/local/bin/wrfcoin-node 2>&1)"; printf '%s\n' "$out"; \
+    if printf '%s\n' "$out" | grep -q 'not found'; then \
+      echo "Dockerfile.core: wrfcoin-node (launch_api) does not link against this runtime image (library or glibc version floor exceeded; infra#1021)" >&2; \
+      exit 1; \
+    fi
+
+RUN chmod +x /usr/local/bin/hsm-entrypoint.sh /usr/local/bin/wal-replay-healthcheck.sh && \
+    mkdir -p /app/data /app/logs /app/config
+
+RUN groupadd -g 1001 wrfcoin && \
+    useradd -m -u 1001 -g wrfcoin wrfcoin && \
+    chown -R wrfcoin:wrfcoin /app
+
+ENV WRFCOIN_API_HOST=0.0.0.0
+ENV WRFCOIN_API_PORT=8556
+ENV RUST_LOG=info
+ENV WRFCOIN_HSM_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+ENV WRFCOIN_HSM_TOKEN_LABEL=wrfcoin-validator
+ENV WRFCOIN_HSM_KEY_LABEL=wrfcoin-signing-key
+ENV WRFCOIN_HSM_PIN_ENV=WRFCOIN_HSM_PIN
+
+# API and P2P ports
+EXPOSE 8556 9000
+
+# #561: gate container health on the auth-free /readyz endpoint (200=ready,
+# 503=not-ready) instead of curling /metrics, which now requires Reader auth
+# and returned 401 -> node marked unhealthy -> dependents with
+# `condition: service_healthy` never started after a host reboot. We also
+# confirm the state_divergence metric is still exported by sending the Reader
+# token to /metrics (empty token => /metrics auth disabled => request succeeds).
+# infra#1073: the header goes to curl on stdin (printf is a /bin/sh builtin), so
+# the Reader token never appears in the healthcheck process's argv.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -sf --max-time 5 http://localhost:8556/readyz >/dev/null && \
+        printf 'Authorization: Bearer %s\n' "${WRFCOIN_READER_TOKEN}" | curl -sf --max-time 5 -H @- http://localhost:8556/metrics | grep -q wrfcoin_state_divergence_total
+
+ENTRYPOINT ["/usr/local/bin/hsm-entrypoint.sh"]

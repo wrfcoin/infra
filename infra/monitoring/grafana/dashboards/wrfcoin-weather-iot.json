@@ -1,0 +1,489 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Wrfcoin Weather & IoT Monitoring",
+    "tags": ["wrfcoin", "weather", "iot", "environment"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "1m",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "name": "sensor_type",
+          "type": "query",
+          "query": "label_values(wrfcoin_weather_sensor_readings, sensor_type)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "location",
+          "type": "query",
+          "query": "label_values(wrfcoin_weather_sensor_readings, location)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "device_type",
+          "type": "query",
+          "query": "label_values(wrfcoin_iot_devices_active, device_type)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Data Quality Issues",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(wrfcoin_weather_validation_failures_total[10m]) > 0"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Weather Data Quality Score",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "avg(wrfcoin_weather_data_quality_score)",
+            "legendFormat": "Overall Quality Score"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.7 },
+                { "color": "green", "value": 0.9 }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Active Sensors",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "wrfcoin_weather_active_sensors_count",
+            "legendFormat": "Active Sensors"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 10 },
+                { "color": "green", "value": 50 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "IoT Devices Online",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(wrfcoin_iot_devices_active)",
+            "legendFormat": "Active Devices"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 20 },
+                { "color": "green", "value": 100 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "Data Freshness",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "(time() - wrfcoin_weather_last_update_timestamp) / 3600",
+            "legendFormat": "Hours Since Last Update"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1 },
+                { "color": "red", "value": 6 }
+              ]
+            },
+            "min": 0,
+            "max": 24,
+            "unit": "h"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "Temperature Readings",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_weather_sensor_readings{sensor_type=\"temperature\"}",
+            "legendFormat": "Temperature - {{location}}"
+          },
+          {
+            "expr": "avg(wrfcoin_weather_sensor_readings{sensor_type=\"temperature\"})",
+            "legendFormat": "Average Temperature"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Temperature (°C)",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "celsius"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 6,
+        "title": "Humidity & Pressure",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_weather_sensor_readings{sensor_type=\"humidity\"}",
+            "legendFormat": "Humidity - {{location}}"
+          },
+          {
+            "expr": "wrfcoin_weather_sensor_readings{sensor_type=\"pressure\"}",
+            "legendFormat": "Pressure - {{location}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Humidity (%) / Pressure (hPa)",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "percent"
+          }
+        },
+        "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 7,
+        "title": "Wind Speed & Direction",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_weather_sensor_readings{sensor_type=\"wind_speed\"}",
+            "legendFormat": "Wind Speed - {{location}}"
+          },
+          {
+            "expr": "wrfcoin_weather_sensor_readings{sensor_type=\"wind_direction\"}",
+            "legendFormat": "Wind Direction - {{location}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Speed (m/s) / Direction (°)",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 }
+      },
+      {
+        "id": 8,
+        "title": "Precipitation & Solar Radiation",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "wrfcoin_weather_sensor_readings{sensor_type=\"precipitation\"}",
+            "legendFormat": "Precipitation - {{location}}"
+          },
+          {
+            "expr": "wrfcoin_weather_sensor_readings{sensor_type=\"solar_radiation\"}",
+            "legendFormat": "Solar Radiation - {{location}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Precipitation (mm) / Solar (W/m²)",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 }
+      },
+      {
+        "id": 9,
+        "title": "Data Validation Results",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_weather_validation_success_total[$__rate_interval])",
+            "legendFormat": "Successful Validations/sec"
+          },
+          {
+            "expr": "rate(wrfcoin_weather_validation_failures_total[$__rate_interval])",
+            "legendFormat": "Failed Validations/sec"
+          },
+          {
+            "expr": "wrfcoin_weather_data_anomalies_detected",
+            "legendFormat": "Anomalies Detected"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Rate/Count",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 }
+      },
+      {
+        "id": 10,
+        "title": "IoT Device Activity",
+        "description": "Active IoT device count by type and platform. Uses wrfcoin_iot_devices_active gauge from backend metrics.",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "wrfcoin_iot_devices_active",
+            "legendFormat": "{{device_type}} / {{platform}}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "yellow", "value": 1 },
+                { "color": "green", "value": 5 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 }
+      },
+      {
+        "id": 11,
+        "title": "Network Connectivity",
+        "description": "NOTE: wrfcoin_iot_network_* metrics may not be exported by the backend yet. Panels will be empty until these counters are added to server/utils/metrics.ts.",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_iot_network_messages_sent_total[$__rate_interval])",
+            "legendFormat": "Messages Sent/sec - {{protocol}}"
+          },
+          {
+            "expr": "rate(wrfcoin_iot_network_messages_received_total[$__rate_interval])",
+            "legendFormat": "Messages Received/sec - {{protocol}}"
+          },
+          {
+            "expr": "rate(wrfcoin_iot_network_connection_failures_total[$__rate_interval])",
+            "legendFormat": "Connection Failures/sec"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Messages/sec",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 }
+      },
+      {
+        "id": 12,
+        "title": "Environmental Data Processing",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(wrfcoin_weather_data_processed_total[$__rate_interval])",
+            "legendFormat": "Data Points Processed/sec"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(wrfcoin_weather_processing_duration_seconds_bucket[$__rate_interval])) by (le))",
+            "legendFormat": "95th Percentile Processing Time"
+          },
+          {
+            "expr": "wrfcoin_weather_data_cache_hit_ratio",
+            "legendFormat": "Cache Hit Ratio"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Rate/Duration/Ratio",
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "lineWidth": 1,
+              "pointSize": 5,
+              "showPoints": "never"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 }
+      },
+      {
+        "id": 13,
+        "title": "Geographical Distribution",
+        "type": "worldmap",
+        "targets": [
+          {
+            "expr": "count by (location) (wrfcoin_weather_sensor_readings)",
+            "legendFormat": "{{location}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 80 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 10, "w": 24, "x": 0, "y": 41 }
+      }
+    ]
+  }
+}

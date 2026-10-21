@@ -1,0 +1,2 @@
+# Synthetic RFC1918 fixture; never contact this address.
+/ip4/192.168.40.9/tcp/9000/p2p/12D3KooWSyntheticLan

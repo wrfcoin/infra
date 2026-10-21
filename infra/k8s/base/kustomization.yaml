@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - database.yaml
+  - secrets.yaml
+
+namePrefix: wrfcoin-
+
+commonLabels:
+  app: wrfcoin
+
+configMapGenerator:
+  - name: wrfcoin-config
+    literals:
+      - NODE_ENV=production
+      - NETWORK_MODE=mainnet
+
+secretGenerator:
+  - name: wrfcoin-secrets
+    literals:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+vars:
+  - name: POSTGRES_PASSWORD
+    objref:
+      kind: Secret
+      name: wrfcoin-secrets
+      apiVersion: v1
+    fieldref:
+      fieldpath: data.POSTGRES_PASSWORD

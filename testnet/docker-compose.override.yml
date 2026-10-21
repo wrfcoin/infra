@@ -1,0 +1,407 @@
+# WRFCoin Testnet — Local Build Override
+#
+# This override replaces base compose image tags with local builds
+# (project is in stealth — no public registry).  Data volumes use the
+# named volumes defined in the base compose (CT 101 is unprivileged
+# LXC — ZFS bind mounts are not supported).
+#
+# Usage (inside CT 101):
+#   cd ~/wrfcoin/infra/testnet
+#   docker compose -f docker-compose.testnet.yml -f docker-compose.override.yml up -d --build
+#
+# LAN access: The base compose binds API ports to 127.0.0.1 (secure).
+# To access dashboards from your workstation, use SSH tunneling:
+#   ssh -L 3100:127.0.0.1:3100 -L 4001:127.0.0.1:4001 \
+#       -L 8081:127.0.0.1:8081 -L 8556:127.0.0.1:8556 \
+#       -L 9090:127.0.0.1:9090 root@<NODE_LAN_IP>
+#
+# Or to bind on all interfaces (home LAN only!), add the LAN override:
+#   docker compose -f docker-compose.testnet.yml \
+#     -f docker-compose.override.yml -f docker-compose.lan.yml up -d --build
+# Or simply: bash expose-lan.sh --build (explorer-only LAN exposure)
+
+x-core-build-args: &core-build-args
+  WRFCOIN_BUILD_REVISION: ${WRFCOIN_CORE4_BUILD_REVISION:-}
+  WRFCOIN_BUILD_CREATED: ${WRFCOIN_BUILD_CREATED:-}
+
+x-backend-build-args: &backend-build-args
+  WRFCOIN_BUILD_REVISION: ${WRFCOIN_BACKEND_BUILD_REVISION:-}
+  WRFCOIN_BUILD_CREATED: ${WRFCOIN_BUILD_CREATED:-}
+
+x-frontend-build-args: &frontend-build-args
+  WRFCOIN_BUILD_REVISION: ${WRFCOIN_FRONTEND_BUILD_REVISION:-}
+  WRFCOIN_BUILD_CREATED: ${WRFCOIN_BUILD_CREATED:-}
+
+x-infra-build-labels: &infra-build-labels
+  org.opencontainers.image.revision: ${WRFCOIN_INFRA_BUILD_REVISION:-}
+  org.opencontainers.image.created: ${WRFCOIN_BUILD_CREATED:-}
+
+# Images whose Dockerfile records the stamps itself (the faucet, infra#1121).
+x-infra-build-args: &infra-build-args
+  WRFCOIN_BUILD_REVISION: ${WRFCOIN_INFRA_BUILD_REVISION:-}
+  WRFCOIN_BUILD_CREATED: ${WRFCOIN_BUILD_CREATED:-}
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # WRFCoin Core Node — build from Rust source
+  # ---------------------------------------------------------------------------
+  softhsm-init:
+    image: wrfcoin/native-chain:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.core
+      args: *core-build-args
+
+  softhsm-seed-init:
+    image: wrfcoin/native-chain:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.core
+      args: *core-build-args
+
+  wrfcoin-node:
+    image: wrfcoin/native-chain:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.core
+      args: *core-build-args
+    # The HSM entrypoint runs init as root, then uses gosu to drop to the
+    # wrfcoin user. Reset the base no-new-privileges guard and add only the
+    # uid/gid transition caps needed for that handoff.
+    # If base wrfcoin-node later adds non-NNP security_opt entries such as
+    # seccomp or apparmor profiles, mirror them here so this reset only removes
+    # the no-new-privileges constraint that blocks gosu.
+    security_opt: !reset []
+    cap_add:
+      - SETUID
+      - SETGID
+    environment:
+      # core4#1620 exports wrfcoin_state_divergence_total; missing/nonzero must
+      # fail the Docker healthcheck rather than warn.
+      STATE_DIVERGENCE_METRIC_REQUIRED: "true"
+      # YubiKey/HSM passthrough checklist:
+      # - set WRFCOIN_HSM_MODULE_PATH to libykcs11.so before YubiKey mode
+      # - include docker-compose.yubikey.desktop.yml or docker-compose.yubikey.n5.yml
+      # - export WRFCOIN_HSM_PIN in your runtime secret flow
+      # SoftHSM2 (default) — override these to switch to YubiKey (Phase 3):
+      #   WRFCOIN_HSM_MODULE_PATH=/usr/lib/x86_64-linux-gnu/libykcs11.so
+      #   WRFCOIN_HSM_TOKEN_LABEL=YubiKey PIV #...
+      #   WRFCOIN_HSM_KEY_LABEL=Private key for Digital Signature
+      #   WRFCOIN_HSM_PUBKEY_LABEL=Public key for Digital Signature
+      WRFCOIN_HSM_MODULE_PATH: ${WRFCOIN_HSM_MODULE_PATH:-/usr/lib/softhsm/libsofthsm2.so}
+      WRFCOIN_HSM_TOKEN_LABEL: ${WRFCOIN_HSM_TOKEN_LABEL:-wrfcoin-validator}
+      WRFCOIN_HSM_KEY_LABEL: ${WRFCOIN_HSM_KEY_LABEL:-wrfcoin-signing-key}
+      WRFCOIN_HSM_PIN_ENV: WRFCOIN_HSM_PIN
+      # Keep PIN-free `config`/`build` renders quiet. The opt-in YubiKey
+      # overlays own the user-PIN interpolation check; the init services
+      # enforce both PINs at runtime before touching token storage.
+      WRFCOIN_HSM_PIN: ${WRFCOIN_HSM_PIN:-}
+      WRFCOIN_HSM_SO_PIN: ${WRFCOIN_HSM_SO_PIN:-}
+    volumes:
+      - node-data:/app/data
+    healthcheck:
+      # #798: this healthcheck is a DEPENDENCY GATE, so it must be LIVENESS —
+      # "the process is up and serving HTTP" — never readiness.
+      #
+      # A previous revision probed /readyz here (for #561 auth-freedom and
+      # #1717 divergence visibility). But /readyz correctly 503s when block
+      # production is stale, and the block producer (synthetic-collector) is
+      # itself gated on `depends_on: wrfcoin-node: condition: service_healthy`
+      # — so any stall longer than the staleness window (every reboot
+      # qualifies) deadlocked the whole stack: node needs blocks -> blocks
+      # need the producer -> producer needs a healthy node. Measured
+      # 2026-08-06: block_age_seconds 1778, height stuck at 821, every
+      # dependent refusing with "dependency failed to start", `--no-deps` the
+      # only exit. This is also exactly what the base file's comment ("API
+      # liveness, not full chain readiness") and the seed node's healthcheck
+      # already said.
+      #
+      # What each prior concern gets instead:
+      # - #561 auth-freedom: /health is auth-free, same as /readyz was.
+      # - #1717 divergence: /readyz remains the readiness/alerting surface
+      #   (promtail, node dashboard); a depends_on gate never protected
+      #   already-running dependents from a diverged node anyway — it only
+      #   blocked cold starts. The /metrics grep below still guards that the
+      #   divergence metric EXISTS (a metric-export regression cannot go
+      #   unnoticed) without depending on chain progress, so it cannot
+      #   deadlock a cold start. If WRFCOIN_READER_TOKEN is empty, /metrics
+      #   auth is disabled and the authed request still succeeds.
+      test:
+        - CMD-SHELL
+        - 'curl -sf --max-time 5 http://localhost:8556/health >/dev/null && printf "Authorization: Bearer %s\n" "$${WRFCOIN_READER_TOKEN}" | curl -sf --max-time 5 -H @- http://localhost:8556/metrics | grep -q wrfcoin_state_divergence_total'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Keep the base grace period until the N5 p99 cold replay time is measured.
+      start_period: 120s
+
+  # ---------------------------------------------------------------------------
+  # WRFCoin Seed Node — same local build (profile: seed)
+  # ---------------------------------------------------------------------------
+  wrfcoin-seed:
+    image: wrfcoin/native-chain:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.core
+      args: *core-build-args
+    # The seed profile uses the same HSM entrypoint/gosu handoff as wrfcoin-node.
+    # Keep the targeted uid/gid transition reset in sync so --profile seed does
+    # not inherit the base no-new-privileges guard that blocks gosu.
+    security_opt: !reset []
+    cap_add:
+      - SETUID
+      - SETGID
+
+  # ---------------------------------------------------------------------------
+  # WRFCoin Backend — build from Node.js source
+  # ---------------------------------------------------------------------------
+  wrfcoin-backend:
+    # Main API runs UNBUNDLED via tsx (#791) — the esbuild CJS bundle silently
+    # drops all 41 modular routes (safeMount dynamic-require + top-level await in
+    # route modules are not bundleable in --format=cjs). Other backend services
+    # keep the slim bundle image (Dockerfile.backend). See Dockerfile.backend-api.
+    image: wrfcoin/backend-api:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend-api
+      args: *backend-build-args
+
+  # ---------------------------------------------------------------------------
+  # WRFCoin Frontend — build from React source
+  # ---------------------------------------------------------------------------
+  wrfcoin-frontend:
+    image: wrfcoin/frontend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/testnet/Dockerfile.frontend
+      args:
+        <<: *frontend-build-args
+        VITE_API_URL: ${VITE_API_URL:-}
+        # ed25519 wallet login/transfer identity (frontend#346, backend#1205):
+        # must match the backend's wallet-auth chain ID and network.
+        VITE_WRFCOIN_CHAIN_ID: ${WRFCOIN_CHAIN_ID:-777}
+        VITE_WRFCOIN_NETWORK_ID: ${VITE_WRFCOIN_NETWORK_ID:-testnet}
+        # Same expression as wrfcoin-backend's WRFCOIN_WALLET_AUTH_ORIGIN in
+        # docker-compose.testnet.yml, so the origin the wallet expects in the
+        # login challenge can never diverge from the one the backend binds.
+        VITE_WALLET_AUTH_ORIGIN: ${WRFCOIN_WALLET_AUTH_ORIGIN:-${WRFCOIN_FUNNEL_ORIGIN:-https://localhost:5000}}
+        # Internal-surface switches (infra#974, frontend#348/#381). Empty =
+        # the public site. Non-empty is allowed ONLY with
+        # WRFCOIN_FRONTEND_BUILD_VARIANT=staging; a public build with any of them
+        # set fails in Dockerfile.frontend, and a staging image is never
+        # accepted by render-release-manifest.sh.
+        WRFCOIN_FRONTEND_BUILD_VARIANT: ${WRFCOIN_FRONTEND_BUILD_VARIANT:-public}
+        VITE_ENABLE_FULL_STUDIO: ${VITE_ENABLE_FULL_STUDIO:-}
+        VITE_ENABLE_DEMO_SURFACES: ${VITE_ENABLE_DEMO_SURFACES:-}
+        VITE_ENABLE_OPERATOR_PREVIEW: ${VITE_ENABLE_OPERATOR_PREVIEW:-}
+        VITE_ENABLE_CONTRACT_SURFACES: ${VITE_ENABLE_CONTRACT_SURFACES:-}
+        # Stage 1.5 read-only stage (infra#983, frontend#360). Empty = off.
+        # Allowed in the public variant, but only as empty or exactly `true`;
+        # Dockerfile.frontend refuses anything else. Owner's call to turn on.
+        VITE_PUBLIC_READONLY_PATHS: ${VITE_PUBLIC_READONLY_PATHS:-}
+        # Onboarding faucet claim step (frontend#437 W28). Empty = off (the step
+        # says the faucet is not funded yet). Same rules as above; owner's call.
+        VITE_FAUCET_OPEN: ${VITE_FAUCET_OPEN:-}
+
+  # ---------------------------------------------------------------------------
+  # DB Migrate — override base image with local build (#238)
+  # The base compose uses `wrfcoin/backend:testnet` and deployment stays local-build-only.
+  # Reuse the same locally-built backend image (already contains drizzle/ files).
+  # ---------------------------------------------------------------------------
+  db-migrate:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  # ---------------------------------------------------------------------------
+  # Critical-Path Microservices — override base images with local builds
+  # These use the same backend image with different entrypoint commands.
+  # ---------------------------------------------------------------------------
+  wrfcoin-governance:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  wrfcoin-iot:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  wrfcoin-weather-earnings:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  wrfcoin-faucet:
+    image: wrfcoin/faucet:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}/infra
+      dockerfile: testnet/services/faucet/Dockerfile
+      args: *infra-build-args
+
+  wrfcoin-cross-chain:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  wrfcoin-compute:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  wrfcoin-ml:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  wrfcoin-node-discovery:
+    image: wrfcoin/backend:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/infra/docker/Dockerfile.backend
+      args: *backend-build-args
+
+  # ---------------------------------------------------------------------------
+  # Block Explorer — local build (#159)
+  # ---------------------------------------------------------------------------
+  wrfcoin-explorer:
+    image: wrfcoin/explorer:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}
+      dockerfile: infra/testnet/Dockerfile.explorer
+      labels: *infra-build-labels
+
+  # ---------------------------------------------------------------------------
+  # Synthetic Contribution Collector — explicit developer/demo profile only
+  # ---------------------------------------------------------------------------
+  # The real weather collector (`weather-collector`, profile "collector") needs
+  # external Ambient Weather API credentials for Jon's WS-5000 station, so it is
+  # not part of the default bring-up. Without a contributor, the chain only
+  # advances when an operator runs the manual `/blocks/mine` loop.
+  #
+  # This service submits a valid ContributionCommit + ContributionReveal pair
+  # every cycle and mines one block, so the testnet advances on its own with
+  # real per-block tx composition (Coinbase + ContributionCommit +
+  # ContributionReveal). Pure Node stdlib — no API keys, no host sensors.
+  #
+  # It is deliberately absent from the default stack. Start a simulated demo with:
+  #   docker compose --profile synthetic \
+  #     -f docker-compose.testnet.yml -f docker-compose.override.yml up -d
+  # Readiness classifies that mode as SIMULATED; it can never satisfy the
+  # public-release gate even when the resulting chain height advances.
+  #
+  # If the real `weather-collector` profile is enabled it will ALSO submit and
+  # mine; the two are independent contributors and both are valid. For a
+  # demo/marketing node fed by the real station, start that profile and set
+  # SYNTHETIC_COLLECTOR_INTERVAL_SECONDS to a longer value (or 0) to keep
+  # synthetic blocks as a floor without crowding out real readings.
+  synthetic-collector:
+    image: node:20-alpine
+    container_name: wrfcoin-testnet-synthetic-collector
+    profiles: ["synthetic"]
+    labels:
+      org.wrfcoin.proof-class: "SIMULATED"
+    restart: unless-stopped
+    working_dir: /app
+    networks:
+      - wrfcoin-testnet
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+    environment:
+      WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
+      WRFCOIN_API_HOST: wrfcoin-node
+      WRFCOIN_API_PORT: "8556"
+      SYNTH_STATION_ID: ${SYNTHETIC_COLLECTOR_STATION_ID:-PWS-SYNTH-TESTNET-01}
+      # #2460: synthetic must never reuse the real Ambient contributor wallet.
+      SYNTH_CONTRIBUTOR: ${SYNTHETIC_COLLECTOR_CONTRIBUTOR:-0x53594e5448455449430000000000000000000001}
+      SYNTH_REAL_CONTRIBUTOR: ${REAL_COLLECTOR_CONTRIBUTOR:-0x5Eaf842a8341CD38812A63De6B5dcc5103f071c0}
+      SYNTH_INTERVAL_SECONDS: ${SYNTHETIC_COLLECTOR_INTERVAL_SECONDS:-60}
+    volumes:
+      - ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}/infra/testnet/services/synthetic-collector:/app:ro
+    command: ["node", "/app/submit-synthetic-contribution.cjs"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f submit-synthetic-contribution.cjs > /dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+
+  # ---------------------------------------------------------------------------
+  # AlertManager Webhook Receiver / Notification Forwarder (infra#627 / #601)
+  # ---------------------------------------------------------------------------
+  # Formerly only defined in docker-compose.alert-receiver.yml, so the standard
+  # 2-file bring-up (testnet + this override) never started it — AlertManager's
+  # critical webhook (http://wrfcoin-alert-receiver:19093/alerts) hit nothing and
+  # every critical page was silently dropped. Making it part of the DEFAULT stack
+  # closes that gap: a plain
+  #   docker compose -f docker-compose.testnet.yml -f docker-compose.override.yml up -d
+  # now brings up the receiver alongside AlertManager.
+  #
+  # It forwards a compact summary of every critical notification to the operator's
+  # ntfy/Telegram channel (ALERT_FORWARD_URL — see .env.testnet.example). Set that
+  # in the live .env or critical alerts are captured to logs only and page nobody.
+  # Forwarding is outbound-only. Health/evidence is published on host loopback
+  # so the host-run readiness snapshot can verify it without external exposure.
+  alert-receiver:
+    image: wrfcoin/alert-receiver:testnet-local
+    build:
+      context: ${WRFCOIN_ROOT:-${WRFCOIN_DEPLOY_ROOT:-/path/to/wrfcoin-deploy}}/infra/testnet
+      dockerfile: services/alert-receiver/Dockerfile
+      labels: *infra-build-labels
+    container_name: wrfcoin-alert-receiver
+    restart: unless-stopped
+    environment:
+      ALERT_FORWARD_URL: ${ALERT_FORWARD_URL:-}
+      ALERT_FORWARD_FORMAT: ${ALERT_FORWARD_FORMAT:-generic}
+      ALERT_FORWARD_TELEGRAM_CHAT_ID: ${ALERT_FORWARD_TELEGRAM_CHAT_ID:-}
+      ALERT_FORWARD_TIMEOUT_SECS: ${ALERT_FORWARD_TIMEOUT_SECS:-10}
+    ports:
+      - "127.0.0.1:${ALERT_RECEIVER_HOST_PORT:-19093}:19093"
+    networks:
+      - wrfcoin-testnet
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.2'
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"

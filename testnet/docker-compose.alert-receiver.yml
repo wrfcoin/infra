@@ -1,0 +1,61 @@
+# WRFCoin Testnet — AlertManager webhook receiver / notification forwarder (infra#601)
+#
+# Runs testnet/alertmanager-webhook-receiver.py on the testnet network so
+# critical AlertManager notifications reach a human. Without this service (or a
+# host-run receiver on :19093) the default critical-notifications webhook fires
+# into the void.
+#
+# NOTE (infra#627): the alert-receiver service is now ALSO defined in
+# docker-compose.override.yml so it comes up by default with the standard 2-file
+# bring-up. This standalone file is retained for host/non-override deployments;
+# for the normal testnet stack you no longer need to pass it explicitly.
+#
+# Usage (inside CT 101, alongside the usual stack files):
+#   docker compose -f docker-compose.testnet.yml -f docker-compose.override.yml \
+#     -f docker-compose.alert-receiver.yml up -d --build alert-receiver
+#
+# Then point AlertManager at the service and re-render:
+#   # in .env:
+#   ALERTMANAGER_WEBHOOK_URL=http://wrfcoin-alert-receiver:19093/alerts
+#   ALERT_FORWARD_URL=...        # see .env.testnet.example — ntfy topic or Telegram bot URL
+#   ALERT_FORWARD_FORMAT=ntfy    # ntfy | telegram | generic
+#   bash render-alertmanager-config.sh && docker compose ... restart alertmanager
+#
+# Forwarding is outbound-only (nothing new is exposed inbound). A channel
+# failure never breaks local capture, but firing critical alerts return non-2xx
+# so AlertManager retries rather than recording false delivery.
+
+services:
+  alert-receiver:
+    image: wrfcoin/alert-receiver:testnet-local
+    build:
+      context: .
+      dockerfile: services/alert-receiver/Dockerfile
+    container_name: wrfcoin-alert-receiver
+    restart: unless-stopped
+    environment:
+      ALERT_FORWARD_URL: ${ALERT_FORWARD_URL:-}
+      ALERT_FORWARD_FORMAT: ${ALERT_FORWARD_FORMAT:-generic}
+      ALERT_FORWARD_TELEGRAM_CHAT_ID: ${ALERT_FORWARD_TELEGRAM_CHAT_ID:-}
+      ALERT_FORWARD_TIMEOUT_SECS: ${ALERT_FORWARD_TIMEOUT_SECS:-10}
+    ports:
+      - "127.0.0.1:${ALERT_RECEIVER_HOST_PORT:-19093}:19093"
+    networks:
+      - wrfcoin-testnet
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.2'
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"

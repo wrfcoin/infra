@@ -1,0 +1,19 @@
+# Auto-configure Prometheus datasource on first Grafana boot.
+# Basic auth credentials come from the PROMETHEUS_ADMIN_PASSWORD env var
+# (set by setup-env.sh, passed through docker-compose).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    basicAuth: true
+    basicAuthUser: admin
+    jsonData:
+      httpMethod: POST
+      timeInterval: "15s"
+    secureJsonData:
+      basicAuthPassword: ${PROMETHEUS_ADMIN_PASSWORD}

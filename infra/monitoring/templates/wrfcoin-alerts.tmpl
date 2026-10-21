@@ -1,0 +1,316 @@
+{{/* Alert Templates for Wrfcoin Blockchain Monitoring with Distributed Tracing */}}
+
+{{/* HTML Email Template for Critical Alerts */}}
+{{ define "email.critical.html" }}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Critical Wrfcoin Alert</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .alert-critical { background-color: #ffe6e6; border-left: 5px solid #d32f2f; padding: 20px; margin: 10px 0; }
+        .alert-warning { background-color: #fff3cd; border-left: 5px solid #ff9800; padding: 20px; margin: 10px 0; }
+        .alert-info { background-color: #e3f2fd; border-left: 5px solid #2196f3; padding: 20px; margin: 10px 0; }
+        .trace-section { background-color: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .trace-link { background-color: #4caf50; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; }
+        .metadata { font-size: 0.9em; color: #666; }
+        .header { background-color: #1976d2; color: white; padding: 20px; text-align: center; }
+        .footer { background-color: #f5f5f5; padding: 15px; text-align: center; font-size: 0.8em; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚨 Wrfcoin Blockchain Critical Alert</h1>
+        <p>Immediate attention required</p>
+    </div>
+
+    {{ range .Alerts }}
+    <div class="alert-critical">
+        <h2>{{ .Annotations.summary }}</h2>
+        <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+        
+        <div class="metadata">
+            <p><strong>Alert Name:</strong> {{ .Labels.alertname }}</p>
+            <p><strong>Severity:</strong> {{ .Labels.severity }}</p>
+            <p><strong>Category:</strong> {{ .Labels.category }}</p>
+            <p><strong>Started:</strong> {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}</p>
+            {{ if .EndsAt }}
+            <p><strong>Ended:</strong> {{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}</p>
+            {{ end }}
+        </div>
+
+        {{ if .Annotations.trace_query }}
+        <div class="trace-section">
+            <h3>🔍 Distributed Trace Analysis</h3>
+            <p><strong>Query:</strong> <code>{{ .Annotations.trace_query }}</code></p>
+            <p>
+                <a href="http://localhost:16686/search?service=wrfcoin-blockchain&tags={{ .Annotations.trace_query | urlquery }}" class="trace-link">
+                    View Traces in Jaeger
+                </a>
+            </p>
+        </div>
+        {{ end }}
+
+        {{ if .Annotations.runbook_url }}
+        <div class="trace-section">
+            <h3>📚 Incident Response</h3>
+            <p>
+                <a href="{{ .Annotations.runbook_url }}" class="trace-link">
+                    View Runbook
+                </a>
+            </p>
+        </div>
+        {{ end }}
+    </div>
+    {{ end }}
+
+    <div class="footer">
+        <p>Wrfcoin Blockchain Monitoring System</p>
+        <p>Grafana: <a href="http://localhost:3000">http://localhost:3000</a> | 
+           Jaeger: <a href="http://localhost:16686">http://localhost:16686</a></p>
+    </div>
+</body>
+</html>
+{{ end }}
+
+{{/* Slack Template for Blockchain Alerts with Trace Correlation */}}
+{{ define "slack.blockchain.text" }}
+{{ $severity := "" }}
+{{ range .Alerts }}
+{{ if eq .Labels.severity "critical" }}{{ $severity = "🚨" }}{{ end }}
+{{ if eq .Labels.severity "warning" }}{{ $severity = "⚠️" }}{{ end }}
+{{ if eq .Labels.severity "info" }}{{ $severity = "ℹ️" }}{{ end }}
+{{ end }}
+
+{{ $severity }} *Wrfcoin Blockchain Alert*
+
+{{ range .Alerts }}
+*Alert:* {{ .Annotations.summary }}
+*Description:* {{ .Annotations.description }}
+*Severity:* {{ .Labels.severity | title }}
+*Category:* {{ .Labels.category | title }}
+*Time:* {{ .StartsAt.Format "15:04:05 UTC" }}
+
+{{ if .Labels.validator_id }}
+*Validator:* `{{ .Labels.validator_id }}`
+{{ end }}
+
+{{ if and .Labels.source_chain .Labels.target_chain }}
+*Bridge:* {{ .Labels.source_chain }} → {{ .Labels.target_chain }}
+{{ end }}
+
+{{ if .Labels.service }}
+*Service:* {{ .Labels.service }}
+{{ end }}
+
+{{ if .Annotations.trace_query }}
+📊 *Trace Analysis Available*
+Query: `{{ .Annotations.trace_query }}`
+<http://localhost:16686/search?service=wrfcoin-blockchain&tags={{ .Annotations.trace_query | urlquery }}|🔍 View in Jaeger>
+{{ end }}
+
+{{ if .Annotations.runbook_url }}
+📚 <{{ .Annotations.runbook_url }}|View Runbook>
+{{ end }}
+
+---
+{{ end }}
+
+🔗 <http://localhost:3000/d/wrfcoin-monitoring|Grafana Dashboard> | <http://localhost:16686|Jaeger Traces>
+{{ end }}
+
+{{/* PagerDuty Template for Critical Incidents */}}
+{{ define "pagerduty.critical.description" }}
+{{ range .Alerts }}
+CRITICAL: {{ .Annotations.summary }}
+
+Description: {{ .Annotations.description }}
+Category: {{ .Labels.category }}
+Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+
+{{ if .Annotations.trace_query }}
+Trace Query: {{ .Annotations.trace_query }}
+Jaeger URL: http://localhost:16686/search?service=wrfcoin-blockchain&tags={{ .Annotations.trace_query | urlquery }}
+{{ end }}
+
+{{ if .Annotations.runbook_url }}
+Runbook: {{ .Annotations.runbook_url }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{/* Teams Template for Cross-Chain Alerts */}}
+{{ define "teams.crosschain.text" }}
+{
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "{{ if eq .Status "firing" }}FF0000{{ else }}00FF00{{ end }}",
+    "summary": "Cross-Chain Bridge Alert",
+    "sections": [
+        {
+            "activityTitle": "🌉 Cross-Chain Bridge Alert",
+            "activitySubtitle": "{{ .GroupLabels.alertname }}",
+            "facts": [
+                {{ range .Alerts }}
+                {
+                    "name": "Summary",
+                    "value": "{{ .Annotations.summary }}"
+                },
+                {
+                    "name": "Description", 
+                    "value": "{{ .Annotations.description }}"
+                },
+                {
+                    "name": "Source Chain",
+                    "value": "{{ .Labels.source_chain | default "Unknown" }}"
+                },
+                {
+                    "name": "Target Chain", 
+                    "value": "{{ .Labels.target_chain | default "Unknown" }}"
+                },
+                {
+                    "name": "Time",
+                    "value": "{{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}"
+                }
+                {{ if .Annotations.trace_query }}
+                ,{
+                    "name": "Trace Query",
+                    "value": "{{ .Annotations.trace_query }}"
+                }
+                {{ end }}
+                {{ end }}
+            ]
+        }
+    ],
+    "potentialAction": [
+        {{ range .Alerts }}
+        {{ if .Annotations.trace_query }}
+        {
+            "@type": "OpenUri",
+            "name": "View Traces",
+            "targets": [
+                {
+                    "os": "default",
+                    "uri": "http://localhost:16686/search?service=wrfcoin-bridge&tags={{ .Annotations.trace_query | urlquery }}"
+                }
+            ]
+        },
+        {{ end }}
+        {{ if .Annotations.runbook_url }}
+        {
+            "@type": "OpenUri", 
+            "name": "View Runbook",
+            "targets": [
+                {
+                    "os": "default",
+                    "uri": "{{ .Annotations.runbook_url }}"
+                }
+            ]
+        },
+        {{ end }}
+        {{ end }}
+        {
+            "@type": "OpenUri",
+            "name": "Grafana Dashboard",
+            "targets": [
+                {
+                    "os": "default",
+                    "uri": "http://localhost:3000/d/wrfcoin-monitoring"
+                }
+            ]
+        }
+    ]
+}
+{{ end }}
+
+{{/* Discord Webhook Template */}}
+{{ define "discord.webhook.json" }}
+{
+    "embeds": [
+        {{ range $index, $alert := .Alerts }}
+        {{ if $index }},{{ end }}
+        {
+            "title": "{{ $alert.Labels.alertname }}",
+            "description": "{{ $alert.Annotations.description }}",
+            "color": {{ if eq $alert.Labels.severity "critical" }}16711680{{ else if eq $alert.Labels.severity "warning" }}16753920{{ else }}65280{{ end }},
+            "fields": [
+                {
+                    "name": "Summary",
+                    "value": "{{ $alert.Annotations.summary }}",
+                    "inline": false
+                },
+                {
+                    "name": "Severity",
+                    "value": "{{ $alert.Labels.severity | title }}",
+                    "inline": true
+                },
+                {
+                    "name": "Category", 
+                    "value": "{{ $alert.Labels.category | title }}",
+                    "inline": true
+                },
+                {
+                    "name": "Time",
+                    "value": "{{ $alert.StartsAt.Format "15:04:05 UTC" }}",
+                    "inline": true
+                }
+                {{ if $alert.Annotations.trace_query }}
+                ,{
+                    "name": "Trace Query",
+                    "value": "`{{ $alert.Annotations.trace_query }}`",
+                    "inline": false
+                }
+                {{ end }}
+            ],
+            "timestamp": "{{ $alert.StartsAt.Format "2006-01-02T15:04:05Z" }}"
+            {{ if $alert.Annotations.trace_query }}
+            ,"url": "http://localhost:16686/search?service=wrfcoin-blockchain&tags={{ $alert.Annotations.trace_query | urlquery }}"
+            {{ end }}
+        }
+        {{ end }}
+    ]
+}
+{{ end }}
+
+{{/* Console/CLI Template for Terminal Alerts */}}
+{{ define "console.text" }}
+================================================================================
+WRFCOIN BLOCKCHAIN ALERT
+================================================================================
+
+{{ range .Alerts }}
+Alert Name: {{ .Labels.alertname }}
+Severity:   {{ .Labels.severity | upper }}
+Category:   {{ .Labels.category | title }}
+Time:       {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+
+Summary:    {{ .Annotations.summary }}
+Description: {{ .Annotations.description }}
+
+{{ if .Labels.validator_id }}
+Validator:  {{ .Labels.validator_id }}
+{{ end }}
+
+{{ if and .Labels.source_chain .Labels.target_chain }}
+Bridge:     {{ .Labels.source_chain }} → {{ .Labels.target_chain }}
+{{ end }}
+
+{{ if .Annotations.trace_query }}
+Trace Query: {{ .Annotations.trace_query }}
+Jaeger URL:  http://localhost:16686/search?service=wrfcoin-blockchain&tags={{ .Annotations.trace_query | urlquery }}
+{{ end }}
+
+{{ if .Annotations.runbook_url }}
+Runbook:    {{ .Annotations.runbook_url }}
+{{ end }}
+
+================================================================================
+{{ end }}
+
+Links:
+- Grafana: http://localhost:3000/d/wrfcoin-monitoring
+- Jaeger:  http://localhost:16686
+- Tempo:   http://localhost:3200
+
+{{ end }}

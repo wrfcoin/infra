@@ -1,0 +1,101 @@
+# promtool rule unit tests for the service-availability group (infra#1078).
+# Run: promtool test rules testnet/alert-rules-service-availability.test.yml
+# (scripts/tests/test-prometheus-scrape-config.sh runs it on CT102).
+rule_files:
+  - alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The r11 state (2026-09-26): governance/iot /metrics 404 and faucet 403, so
+  # their `up` is 0, while all three are healthy (/health 200). Nothing may page.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="wrfcoin-governance", instance="wrfcoin-governance:8000"}'
+        values: '0x15'
+      - series: 'up{job="wrfcoin-iot", instance="wrfcoin-iot:3002"}'
+        values: '0x15'
+      - series: 'up{job="wrfcoin-faucet", instance="wrfcoin-faucet:8080"}'
+        values: '0x15'
+      - series: 'up{job="wrfcoin-service-health", instance="http://wrfcoin-governance:8000/health"}'
+        values: '1x15'
+      - series: 'probe_success{job="wrfcoin-service-health", instance="http://wrfcoin-governance:8000/health"}'
+        values: '1x15'
+      - series: 'probe_success{job="wrfcoin-service-health", instance="http://wrfcoin-iot:3002/health"}'
+        values: '1x15'
+      - series: 'probe_success{job="wrfcoin-service-health", instance="http://wrfcoin-faucet:8080/health"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ServiceDown
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ServiceHealthProbeFailed
+        exp_alerts: []
+      # The faucet's scrape failure is visible, but only as a log-only warning.
+      - eval_time: 15m
+        alertname: FaucetMetricsScrapeFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: wrfcoin-faucet
+              instance: wrfcoin-faucet:8080
+            exp_annotations:
+              summary: "Prometheus cannot scrape faucet /metrics"
+              description: "wrfcoin-faucet /metrics scrape failing for 10+ minutes (403 = FAUCET_METRICS_TOKEN differs from prometheus-bearer-token; infra#1078). Faucet balance alerts are blind until fixed."
+
+  # A really dead governance / faucet still pages, through the health probe.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="wrfcoin-service-health", instance="http://wrfcoin-governance:8000/health"}'
+        values: '0x5'
+      - series: 'probe_success{job="wrfcoin-service-health", instance="http://wrfcoin-faucet:8080/health"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ServiceHealthProbeFailed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ServiceHealthProbeFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: wrfcoin-service-health
+              instance: http://wrfcoin-governance:8000/health
+            exp_annotations:
+              summary: "Health probe failed for http://wrfcoin-governance:8000/health"
+              description: "blackbox-exporter got no 2xx from http://wrfcoin-governance:8000/health for 2+ minutes. The service is down or unhealthy."
+          - exp_labels:
+              severity: critical
+              job: wrfcoin-service-health
+              instance: http://wrfcoin-faucet:8080/health
+            exp_annotations:
+              summary: "Health probe failed for http://wrfcoin-faucet:8080/health"
+              description: "blackbox-exporter got no 2xx from http://wrfcoin-faucet:8080/health for 2+ minutes. The service is down or unhealthy."
+
+  # Positive control: ServiceDown still pages for a scraped liveness job, and
+  # when the health-probe exporter itself is unreachable.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="wrfcoin-backend", instance="wrfcoin-backend:4001"}'
+        values: '0x5'
+      - series: 'up{job="wrfcoin-service-health", instance="http://wrfcoin-iot:3002/health"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: wrfcoin-backend
+              instance: wrfcoin-backend:4001
+            exp_annotations:
+              summary: "Service wrfcoin-backend is down"
+              description: "Prometheus cannot scrape wrfcoin-backend (target wrfcoin-backend:4001). The container may have crashed or failed its healthcheck."
+          - exp_labels:
+              severity: critical
+              job: wrfcoin-service-health
+              instance: http://wrfcoin-iot:3002/health
+            exp_annotations:
+              summary: "Service wrfcoin-service-health is down"
+              description: "Prometheus cannot scrape wrfcoin-service-health (target http://wrfcoin-iot:3002/health). The container may have crashed or failed its healthcheck."

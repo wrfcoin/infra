@@ -1,0 +1,83 @@
+---
+# Filecoin Lotus Full Node StatefulSet
+# Provides long-term deal-based storage for weather datasets
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: filecoin-lotus
+  namespace: storage
+  labels:
+    app: filecoin-lotus
+    component: storage
+spec:
+  serviceName: filecoin-lotus
+  replicas: 1
+  selector:
+    matchLabels:
+      app: filecoin-lotus
+  template:
+    metadata:
+      labels:
+        app: filecoin-lotus
+        component: storage
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "1234"
+    spec:
+      # Lotus requires root for chain sync; cannot run as non-root
+      containers:
+        - name: lotus
+          image: filecoin/lotus:v1.25.2
+          ports:
+            - name: api
+              containerPort: 1234
+              protocol: TCP
+            - name: p2p
+              containerPort: 1235
+              protocol: TCP
+          env:
+            - name: LOTUS_API_LISTENADDRESS
+              value: "/ip4/0.0.0.0/tcp/1234/http"
+            - name: LOTUS_API_REMOTELISTENADDRESS
+              value: "filecoin-api.storage.svc.cluster.local:1234"
+            - name: LOTUS_JAEGER_AGENT_HOST
+              value: ""
+          envFrom:
+            - secretRef:
+                name: filecoin-secrets
+                optional: true
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+          volumeMounts:
+            - name: lotus-data
+              mountPath: /root/.lotus
+          livenessProbe:
+            httpGet:
+              path: /rpc/v0
+              port: 1234
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /rpc/v0
+              port: 1234
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: lotus-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 500Gi

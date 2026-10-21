@@ -1,0 +1,62 @@
+llm:
+  primary:
+    endpoint: "http://localhost:11434/v1"
+    model: "llama3.1:8b"
+    max_tokens: 2048
+    temperature: 0.1
+    timeout_ms: 30000
+  secondary: null
+  rate_limit_rpm: 30
+
+sources:
+  docker:
+    socket: "/var/run/docker.sock"
+    container_prefix: "wrfcoin-"
+    log_window_minutes: 5
+  prometheus:
+    url: "http://prometheus:9090"
+  health:
+    services:
+      - name: "core-api"
+        url: "http://localhost:5002/health"
+      - name: "backend-api"
+        url: "http://localhost:4001/health"
+
+outputs:
+  grafana:
+    url: ""
+    api_key: ""
+  webhook:
+    url: null
+  journal:
+    dir: "/data/journal"
+
+tasks:
+  log-anomaly:
+    enabled: true
+    schedule: "*/5 * * * *"
+    config:
+      window_minutes: 5
+      containers: ["*"]
+      min_severity: "warning"
+      max_log_lines: 500
+      noise_filters:
+        - "health.*check.*ok"
+        - "GET /health 200"
+        - "GET /metrics 200"
+  sensor-quality:
+    enabled: true
+    schedule: "*/15 * * * *"
+    config:
+      window_minutes: 15
+      min_readings_per_station: 3
+      max_stations_per_batch: 50
+      backend_api_url: "http://localhost:4001"
+  alert-summary:
+    enabled: true
+    schedule: "on-alert"
+    config:
+      batch_window_seconds: 60
+      min_alerts_for_correlation: 2
+      include_resolved: true
+      alert_receiver_port: 8090
