@@ -1,7 +1,7 @@
 # WRFCoin testnet container-health watcher (infra#902).
 # Local build only — never push to a registry, matching every other testnet
 # service image in this repo.
-FROM python:3.14-alpine
+FROM python:3.15-alpine
 
 COPY container_health_watch.py /app/container_health_watch.py
 
