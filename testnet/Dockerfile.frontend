@@ -82,7 +82,7 @@ RUN npm run build
 # Stage 2: Serve
 # =============================================================================
 # Pinned 2026-04-13. Next CVE review: 2026-05-13 (see infra#336 for cadence).
-FROM nginx:1.31-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+FROM nginx:1.31-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
 
 # Release provenance (infra#991): source testnet/scripts/export-build-provenance.sh
 # before a release build. Unset args leave empty labels, which
