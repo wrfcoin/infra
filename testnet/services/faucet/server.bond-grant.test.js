@@ -80,6 +80,7 @@ function memoryRedis() {
   const live = (k) => { const e = store.get(k); if (e && e.expiresAt !== null && e.expiresAt <= Date.now()) { store.delete(k); return undefined; } return e; };
   return {
     async set(k, v, o = {}) { if (o.NX && live(k)) return null; store.set(k, { value: String(v), expiresAt: o.EX ? Date.now() + o.EX * 1000 : (live(k)?.expiresAt ?? null) }); return 'OK'; },
+    async lRange(k, start, end) { return JSON.parse(live(k)?.value || '[]').slice(start, end + 1); },
     async get(k) { const e = live(k); return e ? e.value : null; },
     async del(k) { store.delete(k); return 1; },
     async ttl(k) { const e = live(k); if (!e) return -2; return e.expiresAt === null ? -1 : Math.ceil((e.expiresAt - Date.now()) / 1000); },
@@ -92,6 +93,9 @@ function memoryRedis() {
         for (let i = 0; i < 3; i += 1) if (live(keys[i])) return [0, i + 1];
         const c = Number(live(keys[3])?.value ?? 0);
         if (c >= Number(args[1])) return [0, 4];
+        const gap = live(keys[4]);
+        if (gap) return [0, 5, Math.max(1, Math.ceil((gap.expiresAt - Date.now()) / 1000))];
+        store.set(keys[4], { value: args[0], expiresAt: Date.now() + Number(args[3]) * 1000 });
         for (let i = 0; i < 3; i += 1) store.set(keys[i], { value: args[0], expiresAt: null });
         const e = live(keys[3]);
         store.set(keys[3], { value: String(c + 1), expiresAt: e ? e.expiresAt : Date.now() + Number(args[2]) * 1000 });
@@ -102,7 +106,14 @@ function memoryRedis() {
         for (let i = 0; i < 3; i += 1) if (live(keys[i])?.value === args[0]) { store.delete(keys[i]); released = 1; }
         const e = live(keys[3]);
         if (released && e && Number(e.value) > 0) store.set(keys[3], { value: String(Number(e.value) - 1), expiresAt: e.expiresAt });
+        if (live(keys[4])?.value === args[0]) store.delete(keys[4]);
         return released;
+      }
+      if (script.includes('-- faucet-bond-grant-publish')) {
+        for (let i = 0; i < 3; i++) store.set(keys[i], { value: args[0], expiresAt: null });
+        const rows = JSON.parse(live(keys[3])?.value || '[]'); rows.unshift(args[1]);
+        store.set(keys[3], { value: JSON.stringify(rows.slice(0, Number(args[2]))), expiresAt: null });
+        return 1;
       }
       const [amount, cap, ttl] = args.map(Number); const e = live(keys[0]); const cur = Number(e ? e.value : 0);
       if (cur + amount > cap) return [0, cur];
@@ -136,9 +147,11 @@ async function boot() {
     });
   }
   function visible(...ns) {
-    setPeers(ns.map((n) => ({ peer_id: '12D3KooW' + String(n).repeat(44).slice(0, 44), advertised_height: TIP, advertisement_age_secs: 3, banned: false })));
+    setPeers(ns.map((n) => ({ peer_id: '12D3KooW' + String(n).repeat(44).slice(0, 44), advertised_height: TIP, advertisement_age_secs: 3, connection_age_secs: 86400, banned: false })));
   }
   async function grant(body, { proxy = true, path = '/faucet/bond-grant' } = {}) {
+    // Legacy identity/outcome scenarios isolate pacing; pacing scenarios retain the key.
+    if (process.env.TEST_CLEAR_SPACING === 'true') await reader.del(process.env.FAUCET_BOND_GRANT_PREFIX + 'spacing');
     const r = await fetch(base + path, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(proxy ? { authorization: 'Bearer operator-token', 'x-client-ip': 'device-1' } : {}) },
@@ -149,7 +162,7 @@ async function boot() {
   }
   async function marks() {
     const out = {};
-    for (const k of (await reader.keys(process.env.FAUCET_BOND_GRANT_PREFIX + '*')).sort()) out[k.slice(process.env.FAUCET_BOND_GRANT_PREFIX.length).split(':')[0] + ':' + k.split(':').pop().slice(0, 6)] = await reader.get(k);
+    for (const k of (await reader.keys(process.env.FAUCET_BOND_GRANT_PREFIX + '*')).sort()) if (!k.endsWith(':spacing') && !k.endsWith(':audit')) out[k.slice(process.env.FAUCET_BOND_GRANT_PREFIX.length).split(':')[0] + ':' + k.split(':').pop().slice(0, 6)] = await reader.get(k);
     return out;
   }
   async function pending() {
@@ -163,14 +176,14 @@ async function boot() {
     node.close();
     process.exit(0);
   }
-  return { server, signed, visible, grant, marks, pending, close, submits, TIP, hashAt };
+  return { server, signed, visible, grant, marks, pending, close, submits, TIP, hashAt, reader, base };
 }
 `;
 
 function runScenario(body, extraEnv = {}) {
   const script = `${HARNESS}
 (async () => {
-  const { server, signed, visible, grant, marks, pending, close, submits, TIP, hashAt } = await boot();
+  const { server, signed, visible, grant, marks, pending, close, submits, TIP, hashAt, reader, base } = await boot();
   const out = {};
   ${body}
   process.stdout.write(JSON.stringify(out));
@@ -193,6 +206,7 @@ function runScenario(body, extraEnv = {}) {
     FAUCET_GLOBAL_DAILY_CAP: '1000',
     FAUCET_WALLET_BALANCE_FLOOR: '10',
     FAUCET_BOND_GRANT_ENABLED: 'true',
+    TEST_CLEAR_SPACING: 'true',
     REDIS_URL: REAL_REDIS_URL,
     FAUCET_RATE_LIMIT_PREFIX: `t${run}:ip:`,
     FAUCET_RATE_LIMIT_TSUSER_PREFIX: `t${run}:ts:`,
@@ -307,12 +321,12 @@ test('the node must be visible and synced on the faucet node; nothing is reserve
 test('a lagging, stale or banned peer is refused', () => {
   const out = runScenario(`
     const p = (n) => '12D3KooW' + String(n).repeat(44).slice(0, 44);
-    const base = { advertisement_age_secs: 3, banned: false };
+    const peerBase = { advertisement_age_secs: 3, connection_age_secs: 86400, banned: false };
     out.r = [];
     for (const peer of [
-      { ...base, peer_id: p(1), advertised_height: TIP - 21 },
-      { ...base, peer_id: p(1), advertised_height: TIP, advertisement_age_secs: 301 },
-      { ...base, peer_id: p(1), advertised_height: TIP, banned: true },
+      { ...peerBase, peer_id: p(1), advertised_height: TIP - 21 },
+      { ...peerBase, peer_id: p(1), advertised_height: TIP, advertisement_age_secs: 301 },
+      { ...peerBase, peer_id: p(1), advertised_height: TIP, banned: true },
     ]) {
       setPeers([peer]);
       out.r.push((await grant(signed(1))).code);
@@ -409,4 +423,129 @@ test('chain reads failing is a 503 that reserves nothing; public path needs a ca
   assert.notEqual(out.publicNoCaptcha.status, 200);
   assert.deepEqual(out.marks, {});
   assert.equal(out.submits, 0);
+});
+
+
+test('operator required by default; public switch permits captcha path but never a wrong bearer', () => {
+  const out = runScenario(`visible(1); out.r = await grant(signed(1), { proxy: false }); out.marks = await marks();`);
+  assert.equal(out.r.status, 401);
+  assert.equal(out.r.code, 'OPERATOR_REQUIRED');
+  assert.deepEqual(out.marks, {});
+  const pub = runScenario(`visible(1); out.r = await grant(signed(1), { proxy: false }); out.proxy = await grant(signed(1)); out.wrong = (await fetch(base+'/faucet/bond-grant', {method:'POST',headers:{'content-type':'application/json',authorization:'Bearer wrong'},body:JSON.stringify(signed(2))})).status;`, { FAUCET_BOND_GRANT_PUBLIC: 'true' });
+  assert.notEqual(pub.r.code, 'OPERATOR_REQUIRED');
+  assert.equal(pub.proxy.status, 200); assert.equal(pub.wrong, 403);
+  assert.notEqual(pub.r.status, 200); // captcha is still required for direct callers
+});
+
+test('probation rejects young, absent, non-numeric and non-finite ages without reservations; threshold passes', () => {
+  const out = runScenario(`
+    out.rejected = [];
+    for (const age of [86399, undefined, null, '86400', 'old', -1]) {
+      setPeers([{ peer_id: signed(1).peerId, advertised_height: TIP, advertisement_age_secs: 3, connection_age_secs: age }]);
+      out.rejected.push(await grant(signed(1)));
+    }
+    out.marks = await marks(); visible(1); out.pass = await grant(signed(1));
+  `);
+  for (const r of out.rejected) {
+    assert.equal(r.status, 409); assert.equal(r.code, 'NODE_TOO_NEW');
+    assert.ok(r.body.error.details.retryAfterSeconds > 0);
+  }
+  assert.deepEqual(out.marks, {});
+  assert.equal(out.pass.status, 200);
+});
+
+test('spacing returns 429 and Retry-After, default gap is six hours; definitive failure releases gap', () => {
+  const out = runScenario(`
+    visible(1, 2); out.first = await grant(signed(1)); out.second = await grant(signed(2));
+    out.ttl = await reader.ttl(process.env.FAUCET_BOND_GRANT_PREFIX + 'spacing');
+    out.marks = await marks();
+  `, { TEST_CLEAR_SPACING: 'false' });
+  assert.equal(out.first.status, 200); assert.equal(out.second.status, 429);
+  assert.equal(out.second.code, 'BOND_GRANT_SPACING');
+  assert.ok(Number(out.second.retryAfter) > 21590);
+  assert.ok(out.ttl <= 21600 && out.ttl > 21590);
+  assert.equal(Object.keys(out.marks).filter(k => k.startsWith('server')).length, 1);
+  const release = runScenario(`visible(1); setSubmitMode('reject'); out.rejected = await grant(signed(1)); setSubmitMode('ok'); out.retry = await grant(signed(1));`, { TEST_CLEAR_SPACING: 'false' });
+  assert.equal(release.rejected.status, 502); assert.equal(release.retry.status, 200);
+});
+
+test('two simultaneous independent Redis reservations cannot both pass the spacing gate', () => {
+  const out = runScenario(`
+    const prefix = process.env.FAUCET_BOND_GRANT_PREFIX;
+    const reserve = (n) => reader.eval(server.BOND_GRANT_RESERVE_LUA, {
+      keys: [prefix+'server:'+n, prefix+'peer:'+n, prefix+'wallet:'+n, prefix+'daily:test', prefix+'spacing'],
+      arguments: [JSON.stringify({n}), '2', '86400', '21600'],
+    });
+    out.results = await Promise.all([reserve(1), reserve(2)]);
+  `, { TEST_CLEAR_SPACING: 'false' });
+  assert.equal(out.results.filter(r => Number(r[0]) === 1).length, 1);
+  assert.equal(out.results.filter(r => Number(r[0]) === 0 && Number(r[1]) === 5).length, 1);
+});
+
+test('daily cap defaults to two grants', () => {
+  const out = runScenario(`visible(1, 2, 3); out.r = [await grant(signed(1)), await grant(signed(2)), await grant(signed(3))];`);
+  assert.deepEqual(out.r.map(r => r.status), [200, 200, 429]);
+  assert.equal(out.r[2].code, 'BOND_GRANT_DAILY_LIMIT');
+});
+
+test('audit is reader gated, contains exactly public fields, bounded to 100, bonded unavailable per addendum', () => {
+  const out = runScenario(`
+    visible(1); await grant(signed(1));
+    out.anon = (await fetch(base+'/faucet/bond-grants')).status;
+    out.wrong = (await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer wrong'}})).status;
+    const read = await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer reader-token'}});
+    out.status = read.status; out.body = await read.json();
+    const raw = {...out.body.grants[0], ip:'private', token:'secret', body:{private:true}};
+    // Exercise bounded read even if an old/manual writer leaves a longer list.
+    for (let n=0;n<120;n++) await reader.eval(server.BOND_GRANT_PUBLISH_LUA, {keys:['a','b','c',process.env.FAUCET_BOND_GRANT_PREFIX+'audit'],arguments:['{}',JSON.stringify(raw),'200']});
+    out.bounded = await (await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer reader-token'}})).json();
+  `, { FAUCET_READER_TOKEN: 'reader-token' });
+  assert.equal(out.anon, 401); assert.equal(out.wrong, 403); assert.equal(out.status, 200);
+  const row = out.body.grants[0];
+  assert.deepEqual(Object.keys(row).sort(), ['bonded','ownerAddress','peerId','serverKey','time','txHash']);
+  assert.equal(row.ownerAddress, OWNER(1)); assert.equal(row.bonded, null);
+  assert.equal(row.txHash, '0x'+'ab'.repeat(32)); assert.ok(Date.parse(row.time));
+  assert.equal(out.bounded.grants.length, 100);
+  assert.ok(out.bounded.grants.every(r => Object.keys(r).length === 6 && r.bonded === null));
+  const pub = runScenario(`out.r = await fetch(base+'/faucet/bond-grants'); out.status=out.r.status; out.body=await out.r.json();`, { FAUCET_BOND_GRANT_PUBLIC:'true' });
+  assert.equal(pub.status, 200); assert.deepEqual(pub.body, {grants:[]});
+});
+
+test('invalid pacing env overrides fall back to approved defaults', () => {
+  for (const value of ['-1', '0', 'NaN', 'Infinity', '999999999999999999', '2garbage', '1.5', '']) {
+    const out = runScenario(`
+      out.integer = server.bondGrantInteger(process.env.BAD_VALUE, 2, 1, 100);
+      visible(1, 2); out.first=await grant(signed(1)); out.next=await grant(signed(2));
+      setPeers([{peer_id:signed(3).peerId, advertised_height:TIP, connection_age_secs:86399}]);
+      out.young=await grant(signed(3));
+    `, { BAD_VALUE:value, FAUCET_BOND_GRANT_DAILY_COUNT_CAP:value, FAUCET_BOND_GRANT_MIN_INTERVAL_SECONDS:value, FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS:value, TEST_CLEAR_SPACING:'false' });
+    assert.equal(out.integer, 2, value); assert.equal(out.first.status, 200, value);
+    assert.equal(out.next.code, 'BOND_GRANT_SPACING', value); assert.ok(Number(out.next.retryAfter)>21590, value);
+    assert.equal(out.young.code, 'NODE_TOO_NEW', value);
+  }
+});
+
+test('concurrent valid HTTP requests never both pay; unknown outcome keeps the spacing reservation', () => {
+  const out = runScenario(`
+    visible(1, 2); out.concurrent = await Promise.all([grant(signed(1)), grant(signed(2))]);
+    out.submits = submits.length;
+  `, { TEST_CLEAR_SPACING: 'false' });
+  assert.equal(out.concurrent.filter(r => r.status === 200).length, 1);
+  assert.equal(out.submits, 1);
+  const pending = runScenario(`
+    visible(1, 2); setSubmitMode('server-error'); out.first = await grant(signed(1));
+    setSubmitMode('ok'); out.second = await grant(signed(2));
+  `, { TEST_CLEAR_SPACING: 'false' });
+  assert.equal(pending.first.code, 'CLAIM_PENDING');
+  assert.equal(pending.second.status, 429); assert.equal(pending.second.code, 'BOND_GRANT_SPACING');
+});
+
+test('audit storage failure returns a generic response without error internals', () => {
+  const out = runScenario(`
+    server.setRedisClientForTests({lRange: async () => {throw new Error('operator-token private-host stack trace')}});
+    const r = await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer operator-token'}});
+    out.status = r.status; out.text = await r.text();
+  `);
+  assert.equal(out.status, 503);
+  assert.doesNotMatch(out.text, /operator-token|private-host|stack trace/);
 });

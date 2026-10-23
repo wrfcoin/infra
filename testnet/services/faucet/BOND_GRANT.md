@@ -56,8 +56,9 @@ never prints the key.
 ## Checks, in order
 
 1. **Feature on.** `FAUCET_BOND_GRANT_ENABLED=true`, otherwise 404.
-2. **Caller.** The backend proxy's operator bearer, or a captcha on the public
-   path, exactly as for the drip.
+2. **Caller.** The operator bearer is required by default. Direct captcha
+   callers are accepted only with `FAUCET_BOND_GRANT_PUBLIC=true`; an invalid
+   supplied bearer is always refused.
 3. **Shape and signature.** Malformed fields give 400. A signature that does not
    verify gives 400. Nothing has been reserved yet.
 4. **Synced and visible, on the faucet's own node.**
@@ -73,7 +74,7 @@ never prints the key.
 5. **Abuse controls, in one Redis Lua call.** The call refuses when the server
    key, the peer id or the owner wallet already has a grant or a pending one.
    It also refuses when today's grant **count** has reached
-   `FAUCET_BOND_GRANT_DAILY_COUNT_CAP` (default 4). Otherwise it marks all
+   `FAUCET_BOND_GRANT_DAILY_COUNT_CAP` (default 2). Otherwise it marks all
    three and counts the grant. The three marks never expire. The daily count
    expires at the end of the UTC day.
 6. **Transfer.** The grant uses the same nonce fence, in-flight guard, balance
@@ -101,7 +102,10 @@ fees.
 |---|---|
 | `FAUCET_BOND_GRANT_ENABLED` | `false` |
 | `FAUCET_BOND_GRANT_AMOUNT` | `250.36` |
-| `FAUCET_BOND_GRANT_DAILY_COUNT_CAP` | `4` |
+| `FAUCET_BOND_GRANT_DAILY_COUNT_CAP` | `2` (1–100) |
+| `FAUCET_BOND_GRANT_PUBLIC` | `false` |
+| `FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS` | `86400` (1–2592000) |
+| `FAUCET_BOND_GRANT_MIN_INTERVAL_SECONDS` | `21600` (1–604800) |
 | `FAUCET_BOND_GRANT_MAX_LAG_BLOCKS` | `20` |
 | `FAUCET_BOND_GRANT_MAX_ADVERT_AGE_SECONDS` | `300` |
 | `FAUCET_READER_TOKEN` | falls back to `FAUCET_API_TOKEN` |
@@ -118,3 +122,34 @@ backend onboarding proxy and the edge allowlist. A public bond grant needs the
 same two pieces: a backend route that forwards to `/faucet/bond-grant` with
 the operator bearer, and its edge allowlist entry. Until then, the grant works
 for calls that carry the operator token.
+
+## Self-serve pacing (owner-approved spec 2026-10-23)
+
+A peer must have numeric `connection_age_secs` of at least 86400 (24 h).
+Missing, invalid or young ages fail closed with 409 `NODE_TOO_NEW` and
+`retryAfterSeconds`, before any Redis reservation. Existing sync checks remain.
+The identity/daily Lua reservation also atomically reserves a global gap of
+21600 seconds (6 h). A paid or pending grant keeps the gap; definitive
+non-admission releases only its own gap. Spacing refusal is 429
+`BOND_GRANT_SPACING` with `Retry-After`. Two grants per UTC day is the default.
+One grant ever per server key, peer id and owner wallet remains unchanged.
+Numeric settings accept whole integers within the documented bounds; invalid
+values fall back to defaults. Maximum lag accepts 1–1000, advert age 1–86400.
+
+`GET /faucet/bond-grants` requires `FAUCET_READER_TOKEN` unless
+`FAUCET_BOND_GRANT_PUBLIC=true`. It returns `{ "grants": [...] }`, newest
+first, at most 100 successful grants. Each row contains exactly
+`ownerAddress`, `peerId`, `serverKey`, `txHash`, `time` (ISO UTC), `bonded`.
+No IPs, bodies, reservation tokens, or upstream error details are exposed.
+This bounded history starts with this version; lifetime identity marks remain.
+
+**Bond status: not yet available.** Per LEAD addendum 1, every row currently
+has `bonded: null`. Core4 `GET /node/bonds/{id}` needs a deployment id, which
+is a separate input in CLI `node_deposit.rs` and absent from grant records.
+`node_bond_registry.rs::node_bond_escrow_address` derives an escrow from an id;
+it does not derive the id from grant fields. A follow-up needs a sourced
+mapping before true/false resolution and its 60-second cache can be enabled.
+No Core4 route is added here.
+
+No deploy: the owner enables it after the first payout. Both switches default
+OFF. No host `.env` change is part of this work.
