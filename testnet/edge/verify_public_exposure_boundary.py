@@ -44,7 +44,8 @@ EXPECTED = {
     "wallet_refresh": ("POST", "path /api/auth/refresh", BACKEND),
     "faucet_challenge": ("POST", "path /api/onboarding/faucet/challenge", BACKEND),
     "faucet_claim": ("POST", "path /api/onboarding/faucet/claim", BACKEND),
-    "faucet_bond_grant": ("POST", "path /api/faucet/bond-grant", BACKEND),
+    # Self-serve bond grant (spec 2026-10-23, section 2): a ~1 KiB signed request, capped at 8 KiB at the edge.
+    "faucet_bond_grant": ("POST", "path /api/faucet/bond-grant", BACKEND_CAPPED_8KIB),
     "faucet_bond_grants": ("GET", "path /api/faucet/bond-grants", BACKEND),
     "station_verify": ("POST", "path /api/weather/stations/verify-key", BACKEND),
     "station_register": ("POST", "path /api/weather/stations", BACKEND),
@@ -768,13 +769,35 @@ def self_test() -> None:
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("@station_owner_actions {\n\t\tmethod POST", "@station_owner_actions {\n\t\tmethod POST GET"),
         ),
+        "bond-grant POST edge body cap removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @faucet_bond_grant {\n\t\trequest_body {\n\t\t\tmax_size 8KiB\n\t\t}\n",
+                "handle @faucet_bond_grant {\n",
+            ),
+        ),
+        "bond-grant POST edge body cap widened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @faucet_bond_grant {\n\t\trequest_body {\n\t\t\tmax_size 8KiB",
+                "handle @faucet_bond_grant {\n\t\trequest_body {\n\t\t\tmax_size 2MB",
+            ),
+        ),
+        # Scoped to the owner-action handler: the bond-grant handler carries the same 8 KiB cap, and a
+        # file-wide replace would be rejected for the bond-grant route instead of this one.
         "infra#1095 owner-action relay edge body cap removed": (
             "testnet/edge/public_onboarding.caddy",
-            lambda s: s.replace("\t\trequest_body {\n\t\t\tmax_size 8KiB\n\t\t}\n", ""),
+            lambda s: s.replace(
+                "handle @station_owner_actions {\n\t\trequest_body {\n\t\t\tmax_size 8KiB\n\t\t}\n",
+                "handle @station_owner_actions {\n",
+            ),
         ),
         "infra#1095 owner-action relay edge body cap widened": (
             "testnet/edge/public_onboarding.caddy",
-            lambda s: s.replace("max_size 8KiB", "max_size 2MB"),
+            lambda s: s.replace(
+                "handle @station_owner_actions {\n\t\trequest_body {\n\t\t\tmax_size 8KiB",
+                "handle @station_owner_actions {\n\t\trequest_body {\n\t\t\tmax_size 2MB",
+            ),
         ),
         "infra#1095 owner-action relay query lock removed": (
             "testnet/edge/public_onboarding.caddy",

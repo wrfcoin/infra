@@ -15,7 +15,7 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `POST` | `/api/auth/refresh` | route-specific |
 | `POST` | `/api/onboarding/faucet/challenge` | route-specific |
 | `POST` | `/api/onboarding/faucet/claim` | route-specific |
-| `POST` | `/api/faucet/bond-grant` | route-specific |
+| `POST` | `/api/faucet/bond-grant` | route-specific (body at most 8 KiB at the edge; shared faucet rate zone 5 per minute per IP) |
 | `GET` | `/api/faucet/bond-grants` | none/read-only |
 | `POST` | `/api/weather/stations/verify-key` | route-specific |
 | `POST` | `/api/weather/stations` | route-specific |

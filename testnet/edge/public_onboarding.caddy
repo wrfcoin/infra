@@ -126,12 +126,17 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
-	# Owner-approved spec 2026-10-23, section 2: backend proxy only.
+	# Owner-approved spec 2026-10-23, section 2: backend proxy only. A signed grant
+	# request is about 1 KiB, so the edge caps the body at 8 KiB (the backend caps
+	# again at 16 KiB); a larger body gets the edge's 413 and never reaches the app.
 	@faucet_bond_grant {
 		method POST
 		path /api/faucet/bond-grant
 	}
 	handle @faucet_bond_grant {
+		request_body {
+			max_size 8KiB
+		}
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
