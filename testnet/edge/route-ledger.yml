@@ -70,7 +70,8 @@ services:
       exact allowlist in testnet/edge/public_onboarding.caddy (#679) —
       auth/nonce, wallet-login, refresh, faucet challenge/claim, station
       register/verify, reward-progress, join snapshot artifacts (#886), and
-      self-serve bond grant POST /api/faucet/bond-grant (5/min/client IP) plus
+      self-serve bond grant POST /api/faucet/bond-grant (5/min/client IP, body
+      at most 8 KiB at the edge) plus
       audit GET /api/faucet/bond-grants (30/min/client IP), owner-approved
       spec 2026-10-23 section 2. Both reach the backend proxy; faucet issuance
       stays OFF by default. Backend POST also applies login-style limiting

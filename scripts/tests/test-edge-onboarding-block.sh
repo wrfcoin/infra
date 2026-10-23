@@ -36,8 +36,11 @@ echo "== the block exists; exact /onboarding is open, everything else stays bloc
 
 if [[ -n "${S9_CADDY_BIN:-}" ]]; then
   check "S9 signed transfer real-Caddy runtime matrix" python3 "${REPO}/testnet/edge/verify_wallet_send_runtime.py" "${S9_CADDY_BIN}"
+  # The bond-grant body cap needs a backend that reads the body (the docker matrix below has none, so
+  # its proxy fails to dial first and any body size answers 502); the runtime verifier brings one.
+  check "bond-grant 8 KiB edge body cap real-Caddy runtime matrix" python3 "${REPO}/testnet/edge/verify_bond_grant_runtime.py" "${S9_CADDY_BIN}"
 else
-  echo "  SKIP  S9 runtime matrix (set S9_CADDY_BIN to the edge Caddy executable)"
+  echo "  SKIP  S9 and bond-grant runtime matrices (set S9_CADDY_BIN to the edge Caddy executable)"
 fi
 check "S9 boundary and weakening controls pass" python3 "${REPO}/testnet/edge/verify_public_exposure_boundary.py" --self-test
 check "snippet defines (disabled_wallet_secret_routes)" \

@@ -163,6 +163,17 @@ jobs:
       - name: Run runtime verifier and RED controls
         run: python3 testnet/edge/verify_public_exposure_runtime.py
 
+      # The bond-grant 8 KiB body cap needs a backend that reads the body, which the
+      # container harness above does not run; this verifier brings a loopback stub and
+      # drives the Caddy binary from the image just built (the pinned version).
+      - name: Bond-grant edge body cap against the built Caddy
+        run: |
+          set -euo pipefail
+          cid="$(docker create wrfcoin/edge-caddy:testnet-local)"
+          docker cp "${cid}:/usr/bin/caddy" "${RUNNER_TEMP}/edge-caddy"
+          docker rm "${cid}" >/dev/null
+          python3 testnet/edge/verify_bond_grant_runtime.py "${RUNNER_TEMP}/edge-caddy"
+
   runtime-evidence:
     # API access required by this job only.
     permissions:

@@ -122,6 +122,9 @@ for matcher in matchers:
                     "and recovery cancel, signature-only for recovery execute; the signed tx is forwarded unaltered; "
                     "body at most 8 KiB; own rate zone 10 per 10 min per IP)"
                 )
+            # Self-serve bond grant (spec 2026-10-23 section 2): the edge's own limits on the backend proxy.
+            if matcher["name"] == "faucet_bond_grant":
+                auth = "route-specific (body at most 8 KiB at the edge; shared faucet rate zone 5 per minute per IP)"
             # S1: backend wallet-routes.js requireAuth + requireOwnAddress.
             if matcher["bearer"]:
                 auth = (
