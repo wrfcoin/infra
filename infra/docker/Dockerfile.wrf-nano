@@ -40,7 +40,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdf-dev \
     libnetcdff-dev \
     libhdf5-dev \
-    libjasper-dev \
     libpng-dev \
     zlib1g-dev \
     csh \
@@ -51,10 +50,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables for WRF build
+# JasPer (GRIB2 output) is deliberately not installed: libjasper-dev/libjasper4
+# are not available on ubuntu:22.04. With JASPERLIB/JASPERINC unset, WRF's
+# configure builds without GRIB2 support; this CI image only needs the netCDF
+# I/O path (wrf.exe/real.exe/ndown.exe/tc.exe).
 ENV NETCDF=/usr
 ENV HDF5=/usr
-ENV JASPERLIB=/usr/lib
-ENV JASPERINC=/usr/include
 ENV WRF_DIR=/build/WRF
 ENV WRFIO_NCD_LARGE_FILE_SUPPORT=1
 
@@ -92,7 +93,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdff7 \
     libhdf5-103-1 \
-    libjasper4 \
     libpng16-16 \
     bash \
     && rm -rf /var/lib/apt/lists/*
