@@ -87,8 +87,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # core4 #3229 merge: check_release_endpoints.py with panic-drill, --binary marker, --profile-file.
-  CHECKER_SHA: 24237c2d606c1c1e6c6a601cb3ed70cbddfc3b65
+  # Public core4 launch snapshot (tag v888-launch); its check_release_endpoints.py
+  # carries the panic-drill feature list, --binary marker and --profile-file.
+  CHECKER_SHA: 52cca4b6234f0ed67a3b25e50066ae6103ce2b4a
   # N4: upper bound on build runner's shared BuildKit cache after this job (most-recently-used kept).
   BUILDER_CACHE_KEEP: 20GB
 
@@ -123,7 +124,6 @@ jobs:
         with:
           repository: wrfcoin/core4
           ref: ${{ env.CHECKER_SHA }}
-          token: ${{ secrets.WRFCOIN_CORE4_READ_TOKEN || github.token }}
           path: core4-checker
           persist-credentials: false
           sparse-checkout: |
@@ -191,7 +191,6 @@ jobs:
         with:
           repository: wrfcoin/core4
           ref: ${{ steps.pin.outputs.core4 }}
-          token: ${{ secrets.WRFCOIN_CORE4_READ_TOKEN || github.token }}
           path: wrfcoin/core4
           persist-credentials: false
 
