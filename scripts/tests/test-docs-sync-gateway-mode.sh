@@ -64,15 +64,19 @@ done
 
 # The workflow maps exactly these three names from the PRODUCTION_* variables and lets the
 # script decide; the old inline any-empty-skips check must not come back.
-# The patterns below are literal workflow text (${{ }} and $(...)), never meant to expand.
+# The patterns below are literal workflow text (${{ }} and $(...)), never meant to expand;
+# the directive covers the whole function.
 # shellcheck disable=SC2016
-grep -qF 'MAIN_API_BASE_URL: ${{ vars.PRODUCTION_MAIN_API_BASE_URL }}' "$WORKFLOW" || fail "workflow no longer maps MAIN_API_BASE_URL"
-grep -qF 'MAIN_API_WS_URL: ${{ vars.PRODUCTION_MAIN_API_WS_URL }}' "$WORKFLOW" || fail "workflow no longer maps MAIN_API_WS_URL"
-grep -qF 'COMPUTE_API_BASE_URL: ${{ vars.PRODUCTION_COMPUTE_API_BASE_URL }}' "$WORKFLOW" || fail "workflow no longer maps COMPUTE_API_BASE_URL"
-grep -qF 'MODE="$(bash scripts/docs-sync-gateway-mode.sh)" || exit 1' "$WORKFLOW" || fail "workflow does not take its mode from the script (or ignores its failure)"
-if grep -qE '\[ -z "\$(MAIN_API_BASE_URL|MAIN_API_WS_URL|COMPUTE_API_BASE_URL)" \]' "$WORKFLOW"; then
-  fail "workflow still has an inline empty-variable check"
-fi
+check_workflow_wiring() {
+  grep -qF 'MAIN_API_BASE_URL: ${{ vars.PRODUCTION_MAIN_API_BASE_URL }}' "$WORKFLOW" || fail "workflow no longer maps MAIN_API_BASE_URL"
+  grep -qF 'MAIN_API_WS_URL: ${{ vars.PRODUCTION_MAIN_API_WS_URL }}' "$WORKFLOW" || fail "workflow no longer maps MAIN_API_WS_URL"
+  grep -qF 'COMPUTE_API_BASE_URL: ${{ vars.PRODUCTION_COMPUTE_API_BASE_URL }}' "$WORKFLOW" || fail "workflow no longer maps COMPUTE_API_BASE_URL"
+  grep -qF 'MODE="$(bash scripts/docs-sync-gateway-mode.sh)" || exit 1' "$WORKFLOW" || fail "workflow does not take its mode from the script (or ignores its failure)"
+  if grep -qE '\[ -z "\$(MAIN_API_BASE_URL|MAIN_API_WS_URL|COMPUTE_API_BASE_URL)" \]' "$WORKFLOW"; then
+    fail "workflow still has an inline empty-variable check"
+  fi
+}
+check_workflow_wiring
 cases=$((cases + 1))
 
 echo "PASS docs-sync gateway mode: $cases checks (8 variable combinations + workflow wiring)"
