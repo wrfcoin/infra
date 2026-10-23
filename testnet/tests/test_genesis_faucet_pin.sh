@@ -15,7 +15,8 @@ ADDR_UPPER="0xF72059C3B4A6D3C431920C3CF3E40DBF68A6B5D3"
 OTHER="0x1111111111111111111111111111111111111111"
 ZERO="0x0000000000000000000000000000000000000000"
 
-# Synthetic fixtures only; the real testnet/cut-pins.env and .env are never read.
+# Synthetic fixtures, except the real_pins_* cases at the end, which copy the
+# committed testnet/cut-pins.env (never a real .env).
 # The gate reads what wrfcoin-node RECEIVES from `docker compose config`, so an
 # exported value in this shell would leak into every render: clear it.
 unset WRFCOIN_GENESIS_FAUCET_ADDRESS
@@ -133,11 +134,23 @@ expect_pass steady_777_malformed_pin_warns 'WARN  WRFCOIN_CUT_GENESIS_FAUCET_ADD
 expect_pass steady_main_silent      'PASS: every required variable'                 no-forward.yml host-main.env pins-main.env
 expect_no   steady_main_silent      'GENESIS_FAUCET_ADDRESS'
 
-# The committed pins must stay parseable by this gate: chain 777 predates
-# #3361, so today's steady-state run WARNs rather than fails.
+# The committed pins must stay parseable by this gate. They pin chain 888, which
+# funds a faucet slice and pins its address, so the chain-777 "predates #3361"
+# WARN is covered above by synthetic pins only. A follower configured the way
+# join-testnet-sync-node.sh / operator-install.sh leave it declares chain 888.
 cp "$REPO_ROOT/testnet/cut-pins.env" "$ROOT/real-pins.env"
-sed -n 's/^WRFCOIN_CUT_SNAPSHOT_TRUSTED_SIGNERS=/WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS=/p' "$ROOT/real-pins.env" >"$ROOT/host-follower.env"
-expect_pass real_pins_steady_warns 'faucet unbound until option A' no-forward.yml host-follower.env real-pins.env
-expect_fail real_pins_cut_red 'pins no genesis faucet address (core4#3361)' forward.yml host.env real-pins.env --cut
+real_chain="$(sed -n 's/^WRFCOIN_CUT_CHAIN_ID=//p' "$ROOT/real-pins.env")"
+sed -n 's/^WRFCOIN_CUT_SNAPSHOT_TRUSTED_SIGNERS=/WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS=/p' "$ROOT/real-pins.env" >"$ROOT/host-follower-nochain.env"
+{ cat "$ROOT/host-follower-nochain.env"; printf 'WRFCOIN_CHAIN_ID=%s\n' "$real_chain"; } >"$ROOT/host-follower.env"
+cat "$ROOT/host-follower.env" "$ROOT/host.env" >"$ROOT/host-real.env"
+cat "$ROOT/host-follower.env" "$ROOT/host-other.env" >"$ROOT/host-real-other.env"
+expect_pass real_pins_steady_ok 'PASS: every required variable' no-forward.yml host-follower.env real-pins.env
+expect_no   real_pins_steady_ok 'faucet unbound'
+# A follower whose .env lacks WRFCOIN_CHAIN_ID boots as 777 under compose's
+# ${WRFCOIN_CHAIN_ID:-777}: that must stay an ERROR against the committed pins.
+expect_fail real_pins_absent_chain_red 'persisted WRFCOIN_CHAIN_ID differs from cut pins' no-forward.yml host-follower-nochain.env real-pins.env
+expect_pass real_pins_cut_match 'genesis faucet: wrfcoin-node receives a valid address equal to the cut pin' forward.yml host-real.env real-pins.env --cut
+expect_fail real_pins_cut_mismatch_red 'the value wrfcoin-node receives does not match' forward.yml host-real-other.env real-pins.env --cut
+expect_fail real_pins_cut_unforwarded_red 'wrfcoin-node does not receive it' no-forward.yml host-real.env real-pins.env --cut
 
 echo "PASS: genesis faucet pin (core4#3361)"

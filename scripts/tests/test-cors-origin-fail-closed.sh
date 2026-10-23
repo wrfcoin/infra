@@ -56,14 +56,30 @@ done
 # is used only while nothing is pinned.
 SIGNERS="$(sed -n 's/^WRFCOIN_CUT_SNAPSHOT_TRUSTED_SIGNERS=//p' "$ROOT/testnet/cut-pins.env" | tail -n 1)"
 [[ -n "$SIGNERS" ]] || SIGNERS="$(printf 'ab%.0s' {1..32})"
+# Likewise the chain id: the gate refuses a host whose persisted WRFCOIN_CHAIN_ID
+# differs from the pin (absent defaults to 777), so the fixture declares the pin.
+CHAIN="$(sed -n 's/^WRFCOIN_CUT_CHAIN_ID=//p' "$ROOT/testnet/cut-pins.env" | tail -n 1)"
+# A chain-888 host also carries the bootstrap declarations the joiner copies
+# from the pins (bootstrap.888.env requires them to render). Pinned values are
+# used when present; fixture values only while the pins lack them.
+pin_or() { local v; v="$(sed -n "s/^$1=//p" "$ROOT/testnet/cut-pins.env" | tail -n 1)"; printf '%s' "${v:-$2}"; }
+BOOT_HASH="$(pin_or WRFCOIN_CUT_GENESIS_HASH "$(printf 'cd%.0s' {1..32})")"
+BOOT_SCHEDULE="$(pin_or WRFCOIN_GENESIS_ACTIVATION_SCHEDULE '0:v1')"
+BOOT_PRODUCERS="$(pin_or WRFCOIN_GENESIS_PRODUCER_SET "'{\"version\":1,\"members\":[{\"producer_id\":\"fixture\"}]}'")"
 
 # env_with NAME VALUE|unset: the example env with CORS_ORIGIN replaced or
 # removed. The three host-specific values the example leaves blank get RFC 5737
 # / fixture values, so a green case is green on CORS_ORIGIN alone.
 env_with() {
   local out="$TMP/$1.env"
-  grep -vE '^(CORS_ORIGIN|WRFCOIN_P2P_EXTERNAL_ADDR|WRFCOIN_SEED_P2P_EXTERNAL_ADDR|WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS)=' "$EXAMPLE" > "$out"
+  grep -vE '^(CORS_ORIGIN|WRFCOIN_CHAIN_ID|WRFCOIN_GENESIS_HASH|WRFCOIN_GENESIS_ACTIVATION_SCHEDULE|WRFCOIN_GENESIS_PRODUCER_SET|WRFCOIN_P2P_EXTERNAL_ADDR|WRFCOIN_SEED_P2P_EXTERNAL_ADDR|WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS)=' "$EXAMPLE" > "$out"
   {
+    printf 'WRFCOIN_CHAIN_ID=%s\n' "$CHAIN"
+    if [[ "$CHAIN" != 777 ]]; then
+      printf 'WRFCOIN_GENESIS_HASH=%s\n' "$BOOT_HASH"
+      printf 'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE=%s\n' "$BOOT_SCHEDULE"
+      printf 'WRFCOIN_GENESIS_PRODUCER_SET=%s\n' "$BOOT_PRODUCERS"
+    fi
     echo 'WRFCOIN_P2P_EXTERNAL_ADDR=/ip4/198.51.100.7/tcp/9000'
     echo 'WRFCOIN_SEED_P2P_EXTERNAL_ADDR=/ip4/203.0.113.9/tcp/9000'
     printf 'WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS=%s\n' "$SIGNERS"
