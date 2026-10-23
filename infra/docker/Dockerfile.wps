@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdf-dev \
     libnetcdff-dev \
     libhdf5-dev \
-    libjasper-dev \
+    cmake \
     libpng-dev \
     zlib1g-dev \
     mpich \
@@ -50,8 +50,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set environment variables for NetCDF/HDF5
 ENV NETCDF=/usr
 ENV HDF5=/usr
-ENV JASPERLIB=/usr/lib
-ENV JASPERINC=/usr/include
+
+# JasPer is not packaged on ubuntu:22.04 (no libjasper-dev/libjasper4), so build
+# a pinned release from source. Static, so the runtime stage needs no JasPer
+# package. WPS/WRF configure use JASPERLIB/JASPERINC for GRIB2 support.
+ARG JASPER_VERSION=2.0.33
+ARG JASPER_SHA256=38b8f74565ee9e7fec44657e69adb5c9b2a966ca5947ced5717cde18a7d2eca6
+RUN wget -q "https://github.com/jasper-software/jasper/archive/refs/tags/version-${JASPER_VERSION}.tar.gz" \
+    -O /tmp/jasper.tar.gz \
+    && echo "${JASPER_SHA256}  /tmp/jasper.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/jasper.tar.gz -C /tmp \
+    && cmake -S /tmp/jasper-version-${JASPER_VERSION} -B /tmp/jasper-build \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jasper \
+        -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DJAS_ENABLE_SHARED=OFF -DJAS_ENABLE_PROGRAMS=OFF -DJAS_ENABLE_DOC=OFF \
+        -DJAS_ENABLE_LIBJPEG=OFF -DALLOW_IN_SOURCE_BUILD=OFF \
+    && cmake --build /tmp/jasper-build -j"$(nproc)" \
+    && cmake --install /tmp/jasper-build \
+    && rm -rf /tmp/jasper.tar.gz /tmp/jasper-version-${JASPER_VERSION} /tmp/jasper-build
+ENV JASPERLIB=/opt/jasper/lib
+ENV JASPERINC=/opt/jasper/include
 
 WORKDIR /build
 
@@ -87,7 +105,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdff7 \
     libhdf5-103-1 \
-    libjasper4 \
     libpng16-16 \
     mpich \
     bash \
