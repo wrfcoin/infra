@@ -118,6 +118,22 @@ cleanup() {
   phase "cleanup"
   PHASE_TEARDOWN="running"
 
+  if [ "$exit_code" -ne 0 ]; then
+    # Capture node state before the containers are removed, so a failed gate
+    # explains itself in the job log and in the uploaded artifact.
+    {
+      printf '\n--- docker ps -a (%s) ---\n' "$CONTAINER_PREFIX"
+      docker ps -a --filter "name=${CONTAINER_PREFIX}" 2>&1 || true
+      for container in "${CONTAINERS[@]:-}"; do
+        [ -n "$container" ] || continue
+        printf '\n--- docker inspect state: %s ---\n' "$container"
+        docker inspect --format '{{json .State}}' "$container" 2>&1 || true
+        printf '\n--- docker logs --tail 200: %s ---\n' "$container"
+        docker logs --tail 200 "$container" 2>&1 || true
+      done
+    } | tee "$REPORT_DIR/node-logs.txt" || true
+  fi
+
   for container in "${CONTAINERS[@]:-}"; do
     docker rm -f "$container" >/dev/null 2>&1 || true
     record_cleanup_action "removed container ${container}"
