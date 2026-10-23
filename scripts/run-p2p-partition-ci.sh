@@ -246,9 +246,9 @@ phase "starting cluster"
 # Node A (seed)
 start_node node-a 9000 ""
 # Node B (connects to A)
-start_node node-b 9000 "node-a:9000"
+start_node node-b 9000 "/dns4/node-a/tcp/9000"
 # Node C (connects to B)
-start_node node-c 9000 "node-b:9000"
+start_node node-c 9000 "/dns4/node-b/tcp/9000"
 
 phase "baseline readiness"
 PHASE_BASELINE="running"
