@@ -17,8 +17,19 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		# The frontend uses geolocation (station setup / nearby stations) and no camera,
+		# microphone or motion sensors.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(self)"
 		-Server
 	}
+}
+
+# Report-only mirror of the frontend nginx CSP (nginx-frontend.conf), for the website
+# host only. NOT enforcing: nginx already enforces the same policy on the frontend
+# responses; this adds the policy to every edge-served page response without risk of
+# breaking one. Promote to `Content-Security-Policy` only after the owner has observed it.
+(report_only_csp) {
+	header Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 }
 
 (sane_limits) {
@@ -69,6 +80,11 @@
 	handle @noncanonical_uri {
 		respond "Bad request" 400
 	}
+
+	# Edge hardening: the admin credential header has no business on a public route
+	# (the weather station route would honor it). Authorization is kept: wallet send
+	# needs the user's Bearer JWT.
+	request_header -X-Admin-Token
 
 	@wallet_nonce {
 		method GET

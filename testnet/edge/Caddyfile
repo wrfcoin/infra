@@ -48,6 +48,7 @@ import downloads.caddy
 # =============================================================================
 {$WRFCOIN_PUBLIC_DOMAIN} {
 	import security_headers
+	import report_only_csp
 	import sane_limits
 	import public_onboarding_limits
 	encode gzip zstd
