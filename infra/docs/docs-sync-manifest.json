@@ -35,12 +35,6 @@
         "README.md"
       ]
     },
-    "security-testing": {
-      "path": "security-testing",
-      "required_files": [
-        "README.md"
-      ]
-    },
     "smart-contracts": {
       "path": "smart-contracts",
       "required_files": [

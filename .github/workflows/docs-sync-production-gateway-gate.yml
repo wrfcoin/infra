@@ -52,12 +52,8 @@ jobs:
           path: core4
           token: ${{ env.CROSS_REPO_TOKEN }}
 
-      - name: Checkout security-testing
-        uses: actions/checkout@v7
-        with:
-          repository: wrfcoin/security-testing
-          path: security-testing
-          token: ${{ env.CROSS_REPO_TOKEN }}
+      # security-testing is private and is not checked out here (the public
+      # repository's token gets a 404); it is also absent from the docs manifest.
 
       - name: Checkout smart-contracts
         uses: actions/checkout@v7
