@@ -295,6 +295,10 @@
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
       {
+        "path": "scripts/tests/test-docs-sync-gateway-mode.sh",
+        "reason": "Portable source regression for the docs-sync gate mode (infra#27 review): all 8 PRODUCTION_* combinations against the real mode script, synthetic values only; no credentials, network or host."
+      },
+      {
         "path": "scripts/tests/test-edge-onboarding-block.sh",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
