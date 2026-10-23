@@ -36,12 +36,12 @@ jobs:
 
       # Exact reviewed Core4 merge tree containing #2746. This is a build
       # compatibility fixture, not the genesis/cut pin in cut-pins.env.
+      # core4 is public, so the default workflow token is enough; no secret.
       - name: Checkout Core4 attester source
         uses: actions/checkout@v7
         with:
           repository: wrfcoin/core4
           ref: 40c4c1e1c1c2eeca1de4990a3c6d288f41e861aa
-          token: ${{ secrets.WRFCOIN_CORE4_READ_TOKEN || github.token }}
           path: wrfcoin/core4
           persist-credentials: false
 
