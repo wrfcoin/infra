@@ -93,10 +93,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash testnet/tests/test_public_build_freshness.sh
 
-      - name: Oracle sanity auth fixture
-        # infra#1036. Offline: docker/curl are PATH stubs; no live host is contacted.
-        if: ${{ !cancelled() }}
-        run: bash testnet/tests/test_oracle_auth.sh
+      # Not run on the public tree: testnet/tests/test_oracle_auth.sh (the
+      # system under test, test_oracle.sh, is excluded from the public snapshot).
 
       - name: Snapshot trusted-signer env fixture
         # infra#979 / infra#1080. Until 2026-09-27 nothing ran this suite. It
@@ -119,13 +117,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash testnet/tests/test_render_cut_overlay.sh
 
-      - name: Snapshot-signer attestation record
-        # infra#1080 ceremony C4. Offline (openssl only): the committed YubiKey
-        # 9C attestation chains to Yubico Attestation Root 1, and its ED25519
-        # key equals the WRFCOIN_CUT_SNAPSHOT_TRUSTED_SIGNERS pin. RED controls:
-        # a tampered cert, a chain without F9, and a different pin must fail.
-        if: ${{ !cancelled() }}
-        run: bash testnet/tests/test_snapshot_signer_attestation.sh
+      # Not run on the public tree: testnet/tests/test_snapshot_signer_attestation.sh
+      # (the testnet/ceremony/snapshot-signer-9c certificates it re-verifies are
+      # excluded from the public snapshot).
 
       - name: Runtime image gate fixture
         # testnet/scripts/validate-runtime-image.sh: immutable image-ID pins,
