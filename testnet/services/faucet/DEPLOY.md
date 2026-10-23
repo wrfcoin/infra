@@ -337,3 +337,20 @@ Steps:
 
 `<node-shell>` means the operator-provided shell inside the node deployment.
 Replace it with your own access method; no host/container layout is assumed.
+
+### Bond grant pacing configuration (all opt-in)
+
+Owner-approved spec 2026-10-23 (`spec-self-serve-bond-grant.md`). No deploy:
+the owner enables it after the first payout. The compose faucet environment
+accepts these keys; do not change live `.env` files as part of source review.
+
+| Key | Default |
+|---|---|
+| `FAUCET_BOND_GRANT_ENABLED` | `false` |
+| `FAUCET_BOND_GRANT_PUBLIC` | `false` |
+| `FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS` | `86400` |
+| `FAUCET_BOND_GRANT_MIN_INTERVAL_SECONDS` | `21600` |
+| `FAUCET_BOND_GRANT_DAILY_COUNT_CAP` | `2` |
+
+See BOND_GRANT.md for allowed numeric ranges, audit retention/authentication,
+and the current `bonded: null` follow-up.

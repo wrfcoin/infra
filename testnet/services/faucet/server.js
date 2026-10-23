@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { verifyPeerSignature } = require('./bond-grant-peer');
 const express = require('express');
 const promClient = require('prom-client');
 const { createClient } = require('redis');
@@ -2217,18 +2218,19 @@ async function handleFaucetRequest(req, res) {
 // ---------------------------------------------------------------------------
 const FAUCET_BOND_GRANT_ENABLED = (process.env.FAUCET_BOND_GRANT_ENABLED || 'false').trim() === 'true';
 const FAUCET_BOND_GRANT_AMOUNT = process.env.FAUCET_BOND_GRANT_AMOUNT || '250.36';
-const FAUCET_BOND_GRANT_DAILY_COUNT_CAP = Math.max(
-  0,
-  Number.parseInt(process.env.FAUCET_BOND_GRANT_DAILY_COUNT_CAP || '4', 10) || 0,
-);
-const FAUCET_BOND_GRANT_MAX_LAG_BLOCKS = Math.max(
-  1,
-  Number.parseInt(process.env.FAUCET_BOND_GRANT_MAX_LAG_BLOCKS || '20', 10) || 20,
-);
-const FAUCET_BOND_GRANT_MAX_ADVERT_AGE_SECONDS = Math.max(
-  1,
-  Number.parseInt(process.env.FAUCET_BOND_GRANT_MAX_ADVERT_AGE_SECONDS || '300', 10) || 300,
-);
+// Reject malformed/out-of-policy overrides rather than silently disabling pacing.
+function bondGrantInteger(value, fallback, min, max) {
+  if (!/^\d+$/.test(String(value ?? ''))) return fallback;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= min && n <= max ? Math.max(min, n) : fallback;
+}
+const FAUCET_BOND_GRANT_PUBLIC = (process.env.FAUCET_BOND_GRANT_PUBLIC || 'false').trim() === 'true';
+const FAUCET_BOND_GRANT_DAILY_COUNT_CAP = bondGrantInteger(process.env.FAUCET_BOND_GRANT_DAILY_COUNT_CAP, 2, 1, 100);
+const FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS = bondGrantInteger(process.env.FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS, 86400, 1, 2592000);
+const FAUCET_BOND_GRANT_MIN_INTERVAL_SECONDS = bondGrantInteger(process.env.FAUCET_BOND_GRANT_MIN_INTERVAL_SECONDS, 21600, 1, 604800);
+const FAUCET_BOND_GRANT_MAX_LAG_BLOCKS = bondGrantInteger(process.env.FAUCET_BOND_GRANT_MAX_LAG_BLOCKS, 20, 1, 1000);
+const FAUCET_BOND_GRANT_MAX_ADVERT_AGE_SECONDS = bondGrantInteger(process.env.FAUCET_BOND_GRANT_MAX_ADVERT_AGE_SECONDS, 300, 1, 86400);
+const BOND_GRANT_AUDIT_LIMIT = 100;
 // Reader is enough for these reads; the operator token also satisfies Reader.
 const FAUCET_READER_TOKEN = process.env.FAUCET_READER_TOKEN || FAUCET_API_TOKEN;
 const FAUCET_TIP_PATH = process.env.FAUCET_TIP_PATH || '/network/info';
@@ -2305,7 +2307,12 @@ function parseBondGrantRequest(body) {
   if (!HEX64.test(blockHash)) throw invalid('blockHash must be a 32-byte hex block hash');
   const signature = String(body?.signature || '').trim().toLowerCase();
   if (!HEX128.test(signature)) throw invalid('signature must be a 64-byte ed25519 signature in hex');
-  return { ownerAddress: normalizeWalletAddress(owner), serverKey, peerId, height, blockHash, signature };
+  const fields = { ownerAddress: normalizeWalletAddress(owner), serverKey, peerId, height, blockHash, signature };
+  const peerSignature = String(body?.peerSignature || '').trim().toLowerCase();
+  if (!verifyPeerSignature(peerId, peerSignature, buildBondGrantMessage(fields))) {
+    throw invalid('peerSignature must prove possession of the peer identity key over this request');
+  }
+  return { ...fields, peerSignature };
 }
 
 async function readNodeJson(path) {
@@ -2351,6 +2358,13 @@ async function assertNodeSyncedAndVisible({ peerId, height, blockHash }) {
   if (!peer) {
     throw new FaucetRequestError(409, 'NODE_NOT_VISIBLE', 'The node is not a visible sync peer of the faucet node');
   }
+  const connectionAge = peer.connection_age_secs;
+  if (typeof connectionAge !== 'number' || !Number.isFinite(connectionAge) || connectionAge < FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS) {
+    throw new FaucetRequestError(409, 'NODE_TOO_NEW', 'The node must remain connected through the probation period', {
+      retryAfterSeconds: typeof connectionAge === 'number' && Number.isFinite(connectionAge) && connectionAge >= 0
+        ? Math.ceil(FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS - connectionAge) : FAUCET_BOND_GRANT_MIN_PEER_AGE_SECONDS,
+    });
+  }
   const advertised = Number(peer.advertised_height);
   const age = peer.advertisement_age_secs;
   if (
@@ -2369,6 +2383,7 @@ function buildBondGrantKeys({ serverKey, peerId, ownerAddress }, now = new Date(
     peerKey: `${REDIS_BOND_GRANT_PREFIX}peer:${peerId}`,
     walletKey: `${REDIS_BOND_GRANT_PREFIX}wallet:${ownerAddress}`,
     dailyCountKey: `${REDIS_BOND_GRANT_PREFIX}daily:${dailyKeySuffix(now)}`,
+    spacingKey: `${REDIS_BOND_GRANT_PREFIX}spacing`,
   };
 }
 
@@ -2380,6 +2395,9 @@ for i = 1, 3 do
 end
 local count = tonumber(redis.call('GET', KEYS[4]) or '0')
 if count >= tonumber(ARGV[2]) then return {0, 4} end
+local ttl = redis.call('TTL', KEYS[5])
+if ttl ~= -2 then return {0, 5, math.max(1, ttl)} end
+redis.call('SET', KEYS[5], ARGV[1], 'EX', tonumber(ARGV[4]))
 for i = 1, 3 do redis.call('SET', KEYS[i], ARGV[1]) end
 local n = redis.call('INCR', KEYS[4])
 if n == 1 then redis.call('EXPIRE', KEYS[4], tonumber(ARGV[3])) end
@@ -2392,7 +2410,15 @@ for i = 1, 3 do
   if redis.call('GET', KEYS[i]) == ARGV[1] then redis.call('DEL', KEYS[i]); released = 1 end
 end
 if released == 1 and tonumber(redis.call('GET', KEYS[4]) or '0') > 0 then redis.call('DECR', KEYS[4]) end
+if redis.call('GET', KEYS[5]) == ARGV[1] then redis.call('DEL', KEYS[5]) end
 return released
+`;
+// Publish only explicitly selected public fields, bounded independently of lifetime identity marks.
+const BOND_GRANT_PUBLISH_LUA = `-- faucet-bond-grant-publish
+for i = 1, 3 do redis.call('SET', KEYS[i], ARGV[1]) end
+redis.call('LPUSH', KEYS[4], ARGV[2])
+redis.call('LTRIM', KEYS[4], 0, tonumber(ARGV[3]) - 1)
+return 1
 `;
 const BOND_GRANT_REFUSALS = {
   1: ['BOND_GRANT_ALREADY_USED', 'This node key has already received its bond grant'],
@@ -2414,7 +2440,7 @@ async function handleBondGrantRequest(req, res) {
     const { keys, token } = reserved;
     reserved = null;
     await redisClient.eval(BOND_GRANT_RELEASE_LUA, {
-      keys: [keys.serverKeyKey, keys.peerKey, keys.walletKey, keys.dailyCountKey],
+      keys: [keys.serverKeyKey, keys.peerKey, keys.walletKey, keys.dailyCountKey, keys.spacingKey],
       arguments: [token],
     }).catch(() => {});
   };
@@ -2434,6 +2460,9 @@ async function handleBondGrantRequest(req, res) {
     const trustedProxy = suppliedBearer && checkBearerToken(req, FAUCET_API_TOKEN).ok;
     if (suppliedBearer && !trustedProxy) {
       throw new FaucetRequestError(403, 'INVALID_PROXY_TOKEN', 'Bearer token does not match the faucet operator token');
+    }
+    if (!FAUCET_BOND_GRANT_PUBLIC && !trustedProxy) {
+      throw new FaucetRequestError(401, 'OPERATOR_REQUIRED', 'Bond grants require the operator bearer');
     }
     request = parseBondGrantRequest(req.body);
     const amountBaseUnits = toBaseUnits(FAUCET_BOND_GRANT_AMOUNT);
@@ -2482,11 +2511,14 @@ async function handleBondGrantRequest(req, res) {
       requestedAt: now.toISOString(),
     });
     const result = await redisClient.eval(BOND_GRANT_RESERVE_LUA, {
-      keys: [keys.serverKeyKey, keys.peerKey, keys.walletKey, keys.dailyCountKey],
-      arguments: [record, String(FAUCET_BOND_GRANT_DAILY_COUNT_CAP), String(dailyKeyTtlSeconds(now))],
+      keys: [keys.serverKeyKey, keys.peerKey, keys.walletKey, keys.dailyCountKey, keys.spacingKey],
+      arguments: [record, String(FAUCET_BOND_GRANT_DAILY_COUNT_CAP), String(dailyKeyTtlSeconds(now)), String(FAUCET_BOND_GRANT_MIN_INTERVAL_SECONDS)],
     });
     if (!Array.isArray(result) || Number(result[0]) !== 1) {
       const which = Array.isArray(result) ? Number(result[1]) : 0;
+      if (which === 5) {
+        throw new FaucetRequestError(429, 'BOND_GRANT_SPACING', 'Bond grants are paced; try later', { retryAfterSeconds: Number(result[2]) });
+      }
       if (which === 4) {
         throw new FaucetRequestError(429, 'BOND_GRANT_DAILY_LIMIT', 'Today\'s bond grants are used up; try after the UTC day resets', {
           retryAfterSeconds: secondsUntilNextUtcDay(now),
@@ -2509,8 +2541,12 @@ async function handleBondGrantRequest(req, res) {
     const receipt = await requestTransfer({ walletAddress: request.ownerAddress, nonce: transferNonce, amountBaseUnits });
 
     const granted = JSON.stringify({ ...JSON.parse(record), state: 'granted', txHash: receipt.txHash });
-    await Promise.all([keys.serverKeyKey, keys.peerKey, keys.walletKey]
-      .map((key) => redisClient.set(key, granted).catch(() => {})));
+    const auditRow = JSON.stringify({ ownerAddress: request.ownerAddress, peerId: request.peerId,
+      serverKey: request.serverKey, txHash: receipt.txHash, time: now.toISOString(), bonded: null });
+    await redisClient.eval(BOND_GRANT_PUBLISH_LUA, {
+      keys: [keys.serverKeyKey, keys.peerKey, keys.walletKey, `${REDIS_BOND_GRANT_PREFIX}audit`],
+      arguments: [granted, auditRow, String(BOND_GRANT_AUDIT_LIMIT)],
+    });
     reserved = null;
     bondGrantsTotal.inc({ result: 'granted' });
     transfersTotal.inc({ result: 'success' });
@@ -2694,6 +2730,28 @@ app.post('/faucet/request', (req, res) => {
   });
 });
 
+// Addendum 1: deployment id is a separate CLI input, absent from grant records.
+// Bond status: not yet available. Do not infer it from the server key or peer id.
+app.get('/faucet/bond-grants', async (req, res) => {
+  if (!FAUCET_BOND_GRANT_PUBLIC) {
+    const auth = checkBearerToken(req, FAUCET_READER_TOKEN);
+    if (!auth.ok && !checkBearerToken(req, FAUCET_API_TOKEN).ok) return res.status(auth.status).end();
+  }
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (!redisClient) throw new Error('redis unavailable');
+    const rows = await redisClient.lRange(`${REDIS_BOND_GRANT_PREFIX}audit`, 0, BOND_GRANT_AUDIT_LIMIT - 1);
+    const grants = rows.map((raw) => {
+      const row = JSON.parse(raw);
+      return { ownerAddress: row.ownerAddress, peerId: row.peerId, serverKey: row.serverKey,
+        txHash: row.txHash, time: row.time, bonded: null };
+    });
+    return res.json({ grants });
+  } catch (_) {
+    return jsonError(res, 503, 'BOND_GRANTS_UNAVAILABLE', 'Bond grant history is unavailable');
+  }
+});
+
 app.post('/faucet/bond-grant', (req, res) => {
   handleBondGrantRequest(req, res).catch((error) => {
     console.error('[faucet] bond grant handler failed:', error);
@@ -2839,6 +2897,9 @@ module.exports = {
   startWalletBalancePolling,
   registry,
   BOND_GRANT_DOMAIN,
+  BOND_GRANT_RESERVE_LUA,
+  BOND_GRANT_PUBLISH_LUA,
+  bondGrantInteger,
   buildBondGrantMessage,
   verifyBondGrantSignature,
   parseBondGrantRequest,
