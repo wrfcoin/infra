@@ -15,7 +15,7 @@ ARG WRF_VERSION=4.5.2
 ARG BASE_IMAGE=ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7
 # Pinned SHA256 for the WRF v4.5.2 source tarball from GitHub Releases.
 # See infra/docker/wrf/SHA256SUMS.txt for the current pinned values.
-ARG WRF_SHA256=8906da9e90dbfb6b3d617483c2dceae133600844b22f802e7eab31a1bb5cd48d
+ARG WRF_SHA256=408ba6aa60d9cd51d6bad2fa075a3d37000eb581b5d124162885b049c892bbdc
 
 # =============================================================================
 # Stage 1: Builder — compile WRF-Chem with dmpar (MPI) from source
@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdf-dev \
     libnetcdff-dev \
     libhdf5-dev \
-    libjasper-dev \
+    cmake \
     libpng-dev \
     zlib1g-dev \
     mpich \
@@ -55,21 +55,45 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set environment variables for WRF-Chem build
 ENV NETCDF=/usr
 ENV HDF5=/usr
-ENV JASPERLIB=/usr/lib
-ENV JASPERINC=/usr/include
 ENV WRF_DIR=/build/WRF
 ENV WRFIO_NCD_LARGE_FILE_SUPPORT=1
 ENV WRF_CHEM=1
 
+# JasPer is not packaged on ubuntu:22.04 (no libjasper-dev/libjasper4), so build
+# a pinned release from source. Static, so the runtime stage needs no JasPer
+# package. WPS/WRF configure use JASPERLIB/JASPERINC for GRIB2 support.
+ARG JASPER_VERSION=2.0.33
+ARG JASPER_SHA256=38b8f74565ee9e7fec44657e69adb5c9b2a966ca5947ced5717cde18a7d2eca6
+RUN wget -q "https://github.com/jasper-software/jasper/archive/refs/tags/version-${JASPER_VERSION}.tar.gz" \
+    -O /tmp/jasper.tar.gz \
+    && echo "${JASPER_SHA256}  /tmp/jasper.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/jasper.tar.gz -C /tmp \
+    && cmake -S /tmp/jasper-version-${JASPER_VERSION} -B /tmp/jasper-build \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jasper \
+        -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DJAS_ENABLE_SHARED=OFF -DJAS_ENABLE_PROGRAMS=OFF -DJAS_ENABLE_DOC=OFF \
+        -DJAS_ENABLE_LIBJPEG=OFF -DALLOW_IN_SOURCE_BUILD=OFF \
+    && cmake --build /tmp/jasper-build -j"$(nproc)" \
+    && cmake --install /tmp/jasper-build \
+    && rm -rf /tmp/jasper.tar.gz /tmp/jasper-version-${JASPER_VERSION} /tmp/jasper-build
+ENV JASPERLIB=/opt/jasper/lib
+ENV JASPERINC=/opt/jasper/include
+
+# Debian names the HDF5 high-level Fortran library libhdf5hl_fortran; WRF's
+# configure links -lhdf5_hl_fortran, which otherwise fails with
+# "ld: cannot find -lhdf5_hl_fortran" while linking the WRF executables.
+RUN ln -s /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.so /usr/lib/x86_64-linux-gnu/libhdf5_hl_fortran.so \
+    && ln -s /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.a /usr/lib/x86_64-linux-gnu/libhdf5_hl_fortran.a
+
 WORKDIR /build
 
 # Download WRF source and verify the pinned SHA256 checksum.
-RUN wget -q "https://github.com/wrf-model/WRF/archive/refs/tags/v${WRF_VERSION}.tar.gz" \
+RUN wget -q "https://github.com/wrf-model/WRF/releases/download/v${WRF_VERSION}/v${WRF_VERSION}.tar.gz" \
     -O wrf.tar.gz \
     && echo "${WRF_SHA256}  wrf.tar.gz" | sha256sum -c - \
     && tar xzf wrf.tar.gz \
     && rm wrf.tar.gz \
-    && mv WRF-${WRF_VERSION} WRF
+    && mv WRFV${WRF_VERSION} WRF
 
 WORKDIR /build/WRF
 
@@ -95,7 +119,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdff7 \
     libhdf5-103-1 \
-    libjasper4 \
+    libhdf5-fortran-102 \
+    libhdf5-hl-fortran-100 \
     libpng16-16 \
     mpich \
     bash \
