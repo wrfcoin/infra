@@ -220,7 +220,7 @@ node without the supplied snapshot; existing nonempty node data is retained.
 
 The script:
 - generates a local `.env` with fresh secrets (first run only),
-- pins you to the canonical testnet (`chain_id 777`, genesis `0x6ad436…`),
+- pins you to the canonical testnet (`chain_id 888`, genesis `0x553a37…`),
 - **restores the published chain snapshot** into a brand-new node's data
   volume (see "Snapshot join" below — this is required, not an optimization),
 - points you at the reference node as a bootstrap peer,
@@ -233,41 +233,39 @@ starts are fast.
 
 ### Public chain 888 bootstrap inputs (after the owner's cut)
 
-Use the owner's reviewed public `cut-pins.env` for chain 888, including the
-genesis hash filled **after** the cut, activation schedule and inline producer
-set JSON. These are public chain declarations, never signing keys. An unfilled
+Use the owner's reviewed public `cut-pins.env` for chain 888. Besides the
+genesis hash (filled **after** the cut) and the genesis faucet address, it pins
+every genesis declaration the cutter was started with
+(`docker-compose.genesis.yml`): activation schedule, inline producer and oracle
+set JSON, schedule governance keys, faucet allocation, flat reward, node-share
+epoch and challenge windows, and the signing protocol version. These are public chain declarations, never signing keys. An unfilled
 `cut-pins.888.env.example` is not a usable cut configuration.
 
 The join script and `scripts/operator-install.sh` validate these declarations
 from that file, write them to `.env`, and export them for Compose. Missing,
 empty or placeholder pins refuse startup; a stale shell value cannot supply a
-missing pin. The node and seed each load `bootstrap.888.env`, which requires
-all three at Compose interpolation time, including on snapshot joins. Legacy
+missing pin. They also write `WRFCOIN_CHAIN_ID=888`: a `.env` without it boots
+as 777 under Compose's `${WRFCOIN_CHAIN_ID:-777}`, and `check-env-completeness.sh`
+refuses that host. The node and seed each load `bootstrap.888.env`, which
+requires every declaration at Compose interpolation time, including on
+snapshot joins. Legacy
 777 loads `bootstrap.777.env` with no additional environment entries.
 
-For a manually managed startup, source the reviewed public pins and pass the
-same explicit environment to the node (the producer set must be inline JSON).
+For a manually managed startup, pass the node the same explicit environment
+the join script exports (the producer and oracle sets stay inline JSON).
 Start with the `.env` prepared by setup/join; validate the public pins before
 launching a binary directly. A zero genesis hash is reserved for the separate
 owner cutter procedure and is refused here:
 
 ```bash
-python3 scripts/chain-identity.py --pins ./cut-pins.env --bootstrap-env .env >/dev/null || exit 1
-set -a
-. ./cut-pins.env
-set +a
-: "${WRFCOIN_CUT_CHAIN_ID:?use the reviewed 888 cut pins}"
-: "${WRFCOIN_CUT_GENESIS_HASH:?fill the hash after the cut}"
-: "${WRFCOIN_GENESIS_ACTIVATION_SCHEDULE:?use the reviewed schedule}"
-: "${WRFCOIN_GENESIS_PRODUCER_SET:?use the reviewed inline producer set}"
-export WRFCOIN_CHAIN_ID="$WRFCOIN_CUT_CHAIN_ID"
-export WRFCOIN_GENESIS_HASH="$WRFCOIN_CUT_GENESIS_HASH"
-export WRFCOIN_GENESIS_ACTIVATION_SCHEDULE
-export WRFCOIN_GENESIS_PRODUCER_SET
+# Validates every declaration, writes them to .env, and prints KEY=VALUE lines
+# (WRFCOIN_CHAIN_ID=888 first); exits 1 on any missing or placeholder pin.
+bootstrap="$(python3 scripts/chain-identity.py --pins ./cut-pins.env --bootstrap-env .env)" || exit 1
+while IFS='=' read -r key value; do export "${key}=${value}"; done <<< "$bootstrap"
 export WRFCOIN_MIN_WORK_FACTOR=0
 ```
 
-Keep all three bootstrap declarations in direct-binary or systemd startup
+Keep every bootstrap declaration in direct-binary or systemd startup
 environments too: a `.env` file alone is not automatically loaded by a binary.
 Do not substitute 777's compiled pins or a guessed pre-cut hash. A configuration
 render proves propagation, not successful block validation or node rewards.
@@ -315,7 +313,7 @@ curl -s http://localhost:8556/network/info | jq '{genesis_hash, chain_height, pe
 ```
 
 You're healthy when:
-- `genesis_hash` is `0x6ad436386cfc6c746146f6ef2f9d32ddb7a93f18efd3635606abd27c9ca17db8`
+- `genesis_hash` is `0x553a3758386d9631037d7469686acb4a121ced81dcf5cde256e2d05667c5f332`
   — this is the chain-identity check; a different value means you're on the
   wrong chain (the node will refuse to peer in that case),
 - `peer_count` ≥ 1,

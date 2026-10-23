@@ -123,7 +123,7 @@ if [ "$1" = compose ]; then
   if [ "${WRFCOIN_CHAIN_ID:-}" = 888 ]; then
     python3 - "${S}/bootstrap.json" <<'PY'
 import json, os, sys
-keys = ['WRFCOIN_GENESIS_HASH', 'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE', 'WRFCOIN_GENESIS_PRODUCER_SET']
+keys = sorted(k for k in os.environ if k.startswith(('WRFCOIN_GENESIS_', 'WRFCOIN_SIGNING_PROTOCOL_VERSION')))
 with open(sys.argv[1], 'w') as handle:
     json.dump({key: os.environ.get(key) for key in keys}, handle)
 PY
@@ -330,9 +330,17 @@ prepare_888() {
   local ws="$1"
   # Replace, not duplicate, any reviewed declarations the committed pins carry.
   sed -i -e 's/^WRFCOIN_CUT_CHAIN_ID=.*/WRFCOIN_CUT_CHAIN_ID=888/' \
-    -e '/^WRFCOIN_GENESIS_ACTIVATION_SCHEDULE=/d' -e '/^WRFCOIN_GENESIS_PRODUCER_SET=/d' \
+    -e '/^WRFCOIN_GENESIS_[A-Z_]*=/d' -e '/^WRFCOIN_SIGNING_PROTOCOL_VERSION=/d' \
     "${ws}/infra/testnet/cut-pins.env"
   cat >> "${ws}/infra/testnet/cut-pins.env" <<'PINS'
+WRFCOIN_GENESIS_ORACLE_SET='{"oracle_set":[{"oracle_id":"synthetic"}],"oracle_quorum":1}'
+WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS='5555555555555555555555555555555555555555555555555555555555555555'
+WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS='10000'
+WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS='20'
+WRFCOIN_GENESIS_FLAT_REWARD_SECONDS='600'
+WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS='512'
+WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS='512'
+WRFCOIN_SIGNING_PROTOCOL_VERSION='1'
 WRFCOIN_GENESIS_ACTIVATION_SCHEDULE='0:v1,2:schedule_extension,2:node_share_settlement'
 WRFCOIN_GENESIS_PRODUCER_SET='{"version":1,"members":[{"producer_id":"synthetic","payout_address":"0x1111111111111111111111111111111111111111","public_key":"2222222222222222222222222222222222222222222222222222222222222222"}]}'
 PINS
@@ -352,12 +360,22 @@ captured = json.loads((ws / 'state/bootstrap.json').read_text())
 assert captured['WRFCOIN_GENESIS_HASH'] == sys.argv[2]
 assert captured['WRFCOIN_GENESIS_ACTIVATION_SCHEDULE'] == '0:v1,2:schedule_extension,2:node_share_settlement'
 assert json.loads(captured['WRFCOIN_GENESIS_PRODUCER_SET'])['members'][0]['producer_id'] == 'synthetic'
+assert json.loads(captured['WRFCOIN_GENESIS_ORACLE_SET'])['oracle_set'][0]['oracle_id'] == 'synthetic'
+assert captured['WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS'] == '5' * 64
+assert captured['WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS'] == '20'
+assert captured['WRFCOIN_SIGNING_PROTOCOL_VERSION'] == '1'
+# The joiner exports every genesis input the cutter was started with (Compose
+# hands them to the node via bootstrap.888.env; test_node_bootstrap.py renders it).
+import re
+cutter = set(re.findall(r'^  (WRFCOIN_[A-Z0-9_]+): \$\{\1:\?',
+                        (ws / 'infra/testnet/docker-compose.genesis.yml').read_text(), re.M)) - {'WRFCOIN_CHAIN_ID'}
+assert cutter <= set(captured), sorted(cutter - set(captured))
 value = runpy.run_path(str(ws / 'infra/testnet/scripts/chain-identity.py'))['value']
 for key, expected in captured.items():
     assert value(ws / 'infra/testnet/.env', key) == expected
 PY
 }
-check "fresh 888 join: reviewed genesis hash, schedule and producer set despite stale shell" fresh_888_bootstrap
+check "fresh 888 join: every reviewed genesis declaration reaches .env and the node despite stale shell" fresh_888_bootstrap
 
 missing_888_bootstrap() {
   local key="$1" ws; ws="$(make_ws "missing-${key}")"
@@ -367,7 +385,11 @@ missing_888_bootstrap() {
       WRFCOIN_GENESIS_PRODUCER_SET=stale run_join "${ws}" --yes; then return 1; fi
   grep -q "${key}" "${ws}/out.log" && not_started "${ws}"
 }
-for key in WRFCOIN_CUT_GENESIS_HASH WRFCOIN_GENESIS_ACTIVATION_SCHEDULE WRFCOIN_GENESIS_PRODUCER_SET; do
+for key in WRFCOIN_CUT_GENESIS_HASH WRFCOIN_CUT_GENESIS_FAUCET_ADDRESS WRFCOIN_GENESIS_ACTIVATION_SCHEDULE \
+    WRFCOIN_GENESIS_PRODUCER_SET WRFCOIN_GENESIS_ORACLE_SET WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS \
+    WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS \
+    WRFCOIN_GENESIS_FLAT_REWARD_SECONDS WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS \
+    WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS WRFCOIN_SIGNING_PROTOCOL_VERSION; do
   check "fresh 888 missing ${key}: refused before volume creation/startup" missing_888_bootstrap "${key}"
 done
 

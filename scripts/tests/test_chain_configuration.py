@@ -12,7 +12,16 @@ FILES = ['docker-compose.testnet.yml', 'docker-compose.override.yml',
          'docker-compose.block-heartbeat.yml', 'docker-compose.oracle-attester.yml']
 BOOTSTRAP_888 = {'WRFCOIN_GENESIS_HASH': 'a' * 64,
                  'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE': '0:v1,2:schedule_extension',
-                 'WRFCOIN_GENESIS_PRODUCER_SET': '{"version":1,"members":[{"producer_id":"synthetic","payout_address":"0x' + '1' * 40 + '","public_key":"' + '2' * 64 + '"}]}'}
+                 'WRFCOIN_GENESIS_PRODUCER_SET': '{"version":1,"members":[{"producer_id":"synthetic","payout_address":"0x' + '1' * 40 + '","public_key":"' + '2' * 64 + '"}]}',
+                 'WRFCOIN_GENESIS_ORACLE_SET': '{"oracle_set":[{"oracle_id":"synthetic"}],"oracle_quorum":1}',
+                 'WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS': '5' * 64,
+                 'WRFCOIN_GENESIS_FAUCET_ADDRESS': '0x' + '4' * 40,
+                 'WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS': '10000',
+                 'WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS': '20',
+                 'WRFCOIN_GENESIS_FLAT_REWARD_SECONDS': '600',
+                 'WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS': '512',
+                 'WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS': '512',
+                 'WRFCOIN_SIGNING_PROTOCOL_VERSION': '1'}
 
 
 def render(chain, files=None, extra=None, env_file='/dev/null'):

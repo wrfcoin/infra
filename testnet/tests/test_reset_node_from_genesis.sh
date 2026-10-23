@@ -61,21 +61,23 @@ assert_no_node_mutation_after_guard_failure() {
   fi
 }
 
+# The chain is whatever cut-pins.env pins (CANONICAL_CHAIN_ID, from the sourced
+# script), so each red case below differs from a canonical config in ONE field.
 valid_config() {
-  printf '%s\n' '[
+  printf '[
     "WRFCOIN_NETWORK_ID=testnet",
-    "WRFCOIN_CHAIN_ID=777",
+    "WRFCOIN_CHAIN_ID=%s",
     "WRFCOIN_P2P_BOOTSTRAP=/ip4/100.64.0.1/tcp/9000/p2p/12D3KooWMM7ukbQrn4BH2SjSNvyvAW2SaKUkHmDRng9KnifgYeWr"
-  ]'
+  ]\n' "${CANONICAL_CHAIN_ID}"
 }
 
 assert_success "canonical container config accepted" validate_container_env_json "$(valid_config)"
 assert_failure "missing bootstrap rejected" validate_container_env_json \
-  '["WRFCOIN_NETWORK_ID=testnet","WRFCOIN_CHAIN_ID=777"]'
+  "[\"WRFCOIN_NETWORK_ID=testnet\",\"WRFCOIN_CHAIN_ID=${CANONICAL_CHAIN_ID}\"]"
 assert_failure "wrong chain rejected" validate_container_env_json \
   '["WRFCOIN_NETWORK_ID=testnet","WRFCOIN_CHAIN_ID=778","WRFCOIN_P2P_BOOTSTRAP=/p2p/12D3KooWMM7ukbQrn4BH2SjSNvyvAW2SaKUkHmDRng9KnifgYeWr"]'
 assert_failure "wrong bootstrap identity rejected" validate_container_env_json \
-  '["WRFCOIN_NETWORK_ID=testnet","WRFCOIN_CHAIN_ID=777","WRFCOIN_P2P_BOOTSTRAP=/ip4/192.0.2.1/tcp/9000/p2p/wrong"]'
+  "[\"WRFCOIN_NETWORK_ID=testnet\",\"WRFCOIN_CHAIN_ID=${CANONICAL_CHAIN_ID}\",\"WRFCOIN_P2P_BOOTSTRAP=/ip4/192.0.2.1/tcp/9000/p2p/wrong\"]"
 
 assert_failure "seed service cannot be selected" bash -c \
   'source "$1"; main --confirm --service wrfcoin-seed' _ \
@@ -101,12 +103,12 @@ preflight() {
 read_node_info() {
   printf '{
     "network_id":"testnet",
-    "chain_id":"777",
+    "chain_id":"%s",
     "genesis_hash":"%s",
     "chain_height":42,
     "peer_count":1,
     "sync_status":"synced"
-  }\n' "${CANONICAL_GENESIS_HASH}"
+  }\n' "${CANONICAL_CHAIN_ID}" "${CANONICAL_GENESIS_HASH}"
 }
 
 for operator_doc in \
@@ -302,7 +304,7 @@ fi
 assert_failure "bad genesis identity fails closed" bash -c '
   source "$1"
   read_node_info() {
-    printf "%s\\n" "{\\\"network_id\\\":\\\"testnet\\\",\\\"chain_id\\\":\\\"777\\\",\\\"genesis_hash\\\":\\\"0xnot-canonical\\\",\\\"chain_height\\\":42,\\\"peer_count\\\":1}"
+    printf "%s\\n" "{\\\"network_id\\\":\\\"testnet\\\",\\\"chain_id\\\":\\\"${CANONICAL_CHAIN_ID}\\\",\\\"genesis_hash\\\":\\\"0xnot-canonical\\\",\\\"chain_height\\\":42,\\\"peer_count\\\":1}"
   }
   RESET_TIMEOUT_SECS=1
   wait_for_canonical_identity
