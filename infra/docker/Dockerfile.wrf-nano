@@ -13,9 +13,11 @@
 
 ARG WRF_VERSION=4.5.2
 ARG BASE_IMAGE=ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7
-# Pinned SHA256 for the WRF v4.5.2 source tarball from GitHub Releases.
+# Pinned SHA256 for the WRF v4.5.2 release-asset tarball (v4.5.2.tar.gz). Unlike
+# the auto-generated archive/refs/tags tarball, the release asset includes the
+# NoahMP submodule sources that `compile em_real` requires.
 # See infra/docker/wrf/SHA256SUMS.txt for the current pinned values.
-ARG WRF_SHA256=8906da9e90dbfb6b3d617483c2dceae133600844b22f802e7eab31a1bb5cd48d
+ARG WRF_SHA256=408ba6aa60d9cd51d6bad2fa075a3d37000eb581b5d124162885b049c892bbdc
 
 # =============================================================================
 # Stage 1: Builder — compile WRF serial from source
@@ -62,12 +64,12 @@ ENV WRFIO_NCD_LARGE_FILE_SUPPORT=1
 WORKDIR /build
 
 # Download and extract WRF source, verifying the pinned checksum.
-RUN wget -q "https://github.com/wrf-model/WRF/archive/refs/tags/v${WRF_VERSION}.tar.gz" \
+RUN wget -q "https://github.com/wrf-model/WRF/releases/download/v${WRF_VERSION}/v${WRF_VERSION}.tar.gz" \
     -O wrf.tar.gz \
     && echo "${WRF_SHA256}  wrf.tar.gz" | sha256sum -c - \
     && tar xzf wrf.tar.gz \
     && rm wrf.tar.gz \
-    && mv WRF-${WRF_VERSION} WRF
+    && mv WRFV${WRF_VERSION} WRF
 
 WORKDIR /build/WRF
 
