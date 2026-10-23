@@ -44,6 +44,8 @@ EXPECTED = {
     "wallet_refresh": ("POST", "path /api/auth/refresh", BACKEND),
     "faucet_challenge": ("POST", "path /api/onboarding/faucet/challenge", BACKEND),
     "faucet_claim": ("POST", "path /api/onboarding/faucet/claim", BACKEND),
+    "faucet_bond_grant": ("POST", "path /api/faucet/bond-grant", BACKEND),
+    "faucet_bond_grants": ("GET", "path /api/faucet/bond-grants", BACKEND),
     "station_verify": ("POST", "path /api/weather/stations/verify-key", BACKEND),
     "station_register": ("POST", "path /api/weather/stations", BACKEND),
     "station_reward_progress": (
@@ -426,7 +428,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "faucet_claim": [
             "match {",
-            "path /api/onboarding/faucet/claim",
+            "path /api/onboarding/faucet/claim /api/faucet/bond-grant",
             "}",
             "key {client_ip}",
             "events 5",
@@ -434,7 +436,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/*",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/*",
             "}",
             "key {client_ip}",
             "events 30",
@@ -519,6 +521,10 @@ def self_test() -> None:
         return tree
 
     mutations = {
+        "bond grant method widened": ("testnet/edge/public_onboarding.caddy", lambda s: s.replace("method POST\n\t\tpath /api/faucet/bond-grant", "method GET POST\n\t\tpath /api/faucet/bond-grant")),
+        "bond audit path widened": ("testnet/edge/public_onboarding.caddy", lambda s: s.replace("path /api/faucet/bond-grants\n", "path /api/faucet/bond-grants*\n")),
+        "bond grant dropped from limiter": ("testnet/edge/public_onboarding.caddy", lambda s: s.replace("path /api/onboarding/faucet/claim /api/faucet/bond-grant", "path /api/onboarding/faucet/claim")),
+        "bond audit dropped from limiter": ("testnet/edge/public_onboarding.caddy", lambda s: s.replace("path /api/faucet/bond-grants /api/blockchain/*", "path /api/blockchain/*")),
         "S9 submit method widened": ("testnet/edge/public_onboarding.caddy", lambda s: s.replace("method POST\n\t\tpath /api/wallet/send", "method GET\n\t\tpath /api/wallet/send")),
         "S9 submit Bearer removed": ("testnet/edge/public_onboarding.caddy", lambda s: s.replace('header Authorization "Bearer *"\n\t\theader Content-Type application/json', 'header Content-Type application/json')),
         "S9 submit query lock removed": ("testnet/edge/public_onboarding.caddy", lambda s: s.replace('expression `{query} == ""`\n\t\theader Authorization "Bearer *"\n\t\theader Content-Type application/json', 'header Authorization "Bearer *"\n\t\theader Content-Type application/json')),

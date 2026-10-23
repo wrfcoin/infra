@@ -15,6 +15,8 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `POST` | `/api/auth/refresh` | route-specific |
 | `POST` | `/api/onboarding/faucet/challenge` | route-specific |
 | `POST` | `/api/onboarding/faucet/claim` | route-specific |
+| `POST` | `/api/faucet/bond-grant` | route-specific |
+| `GET` | `/api/faucet/bond-grants` | none/read-only |
 | `POST` | `/api/weather/stations/verify-key` | route-specific |
 | `POST` | `/api/weather/stations` | route-specific |
 | `POST` | `regex: ^/api/stations/st_[0-9a-f]{12}/owner-actions$` | route-specific (station alias path only; wallet JWT equal to a signer for transfer, owner action and recovery cancel, signature-only for recovery execute; the signed tx is forwarded unaltered; body at most 8 KiB; own rate zone 10 per 10 min per IP); query string must be exactly none (anything else 404s) |
