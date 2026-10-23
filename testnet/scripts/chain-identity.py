@@ -49,16 +49,37 @@ def validate(pin, env_file):
             raise ValueError('WRFCOIN_GOVERNANCE_CHAIN_ID differs from cut pins; update it with WRFCOIN_CHAIN_ID')
 
 
+# The genesis declarations a chain-888 node is started with: the same set
+# docker-compose.genesis.yml requires of the cutter, so a joiner validates
+# block 1 onward against exactly the inputs the chain was cut with.
+# runtime key -> pins key. Hash and faucet come from their WRFCOIN_CUT_* pin
+# (one constant, one copy); the rest are pinned under their runtime names.
+GENESIS_888 = {
+    'WRFCOIN_GENESIS_HASH': 'WRFCOIN_CUT_GENESIS_HASH',
+    'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE': 'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE',
+    'WRFCOIN_GENESIS_PRODUCER_SET': 'WRFCOIN_GENESIS_PRODUCER_SET',
+    'WRFCOIN_GENESIS_ORACLE_SET': 'WRFCOIN_GENESIS_ORACLE_SET',
+    'WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS': 'WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS',
+    'WRFCOIN_GENESIS_FAUCET_ADDRESS': 'WRFCOIN_CUT_GENESIS_FAUCET_ADDRESS',
+    'WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS': 'WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS',
+    'WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS': 'WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS',
+    'WRFCOIN_GENESIS_FLAT_REWARD_SECONDS': 'WRFCOIN_GENESIS_FLAT_REWARD_SECONDS',
+    'WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS': 'WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS',
+    'WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS': 'WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS',
+    'WRFCOIN_SIGNING_PROTOCOL_VERSION': 'WRFCOIN_SIGNING_PROTOCOL_VERSION',
+}
+POSITIVE_INTEGERS = ['WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS', 'WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS',
+                     'WRFCOIN_GENESIS_FLAT_REWARD_SECONDS', 'WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS',
+                     'WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS', 'WRFCOIN_SIGNING_PROTOCOL_VERSION']
+
+
 def bootstrap_inputs(path, pin):
     if pin == '777':
         return {}
     if pin != '888':
         raise ValueError('bootstrap declarations support only chain 777 or 888')
-    keys = {'WRFCOIN_GENESIS_HASH': 'WRFCOIN_CUT_GENESIS_HASH',
-            'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE': 'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE',
-            'WRFCOIN_GENESIS_PRODUCER_SET': 'WRFCOIN_GENESIS_PRODUCER_SET'}
     result = {'WRFCOIN_CHAIN_ID': pin}
-    for runtime, source in keys.items():
+    for runtime, source in GENESIS_888.items():
         declared = value(path, source)
         if not declared.strip() or any(c in declared for c in '<>\r\n'):
             raise ValueError(source + ' is missing or still a placeholder for chain 888')
@@ -76,6 +97,21 @@ def bootstrap_inputs(path, pin):
         raise ValueError('WRFCOIN_GENESIS_PRODUCER_SET must be inline public JSON') from None
     if not isinstance(producers, dict) or producers.get('version') != 1 or not producers.get('members'):
         raise ValueError('WRFCOIN_GENESIS_PRODUCER_SET needs version 1 and nonempty members')
+    try:
+        oracles = json.loads(result['WRFCOIN_GENESIS_ORACLE_SET'])
+    except ValueError:
+        raise ValueError('WRFCOIN_GENESIS_ORACLE_SET must be inline public JSON') from None
+    if (not isinstance(oracles, dict) or not isinstance(oracles.get('oracle_set'), list)
+            or not oracles['oracle_set'] or type(oracles.get('oracle_quorum')) is not int):
+        raise ValueError('WRFCOIN_GENESIS_ORACLE_SET needs a nonempty oracle_set and an integer oracle_quorum')
+    if not re.fullmatch(r'[0-9a-f]{64}(?:,[0-9a-f]{64})*', result['WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS']):
+        raise ValueError('WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS must be comma-separated 64-hex public keys')
+    faucet = result['WRFCOIN_GENESIS_FAUCET_ADDRESS'].lower()
+    if not re.fullmatch(r'0x[0-9a-f]{40}', faucet) or faucet == '0x' + '0' * 40:
+        raise ValueError('WRFCOIN_CUT_GENESIS_FAUCET_ADDRESS must be 0x + 40 hex and not the zero address')
+    for key in POSITIVE_INTEGERS:
+        if not re.fullmatch(r'[1-9][0-9]*', result[key]):
+            raise ValueError(key + ' must be a positive integer')
     return result
 
 

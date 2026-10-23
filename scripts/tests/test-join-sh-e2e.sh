@@ -123,7 +123,7 @@ if [ "$1" = compose ]; then
   if [ "${WRFCOIN_CHAIN_ID:-}" = 888 ]; then
     python3 - "${S}/bootstrap.json" <<'PY'
 import json, os, sys
-keys = ['WRFCOIN_GENESIS_HASH', 'WRFCOIN_GENESIS_ACTIVATION_SCHEDULE', 'WRFCOIN_GENESIS_PRODUCER_SET']
+keys = sorted(k for k in os.environ if k.startswith(('WRFCOIN_GENESIS_', 'WRFCOIN_SIGNING_PROTOCOL_VERSION')))
 with open(sys.argv[1], 'w') as handle:
     json.dump({key: os.environ.get(key) for key in keys}, handle)
 PY
@@ -328,8 +328,19 @@ check "happy path (snapshot URL, file://): same guarantees" happy_url
 
 prepare_888() {
   local ws="$1"
-  sed -i 's/^WRFCOIN_CUT_CHAIN_ID=.*/WRFCOIN_CUT_CHAIN_ID=888/' "${ws}/infra/testnet/cut-pins.env"
+  # Replace, not duplicate, any reviewed declarations the committed pins carry.
+  sed -i -e 's/^WRFCOIN_CUT_CHAIN_ID=.*/WRFCOIN_CUT_CHAIN_ID=888/' \
+    -e '/^WRFCOIN_GENESIS_[A-Z_]*=/d' -e '/^WRFCOIN_SIGNING_PROTOCOL_VERSION=/d' \
+    "${ws}/infra/testnet/cut-pins.env"
   cat >> "${ws}/infra/testnet/cut-pins.env" <<'PINS'
+WRFCOIN_GENESIS_ORACLE_SET='{"oracle_set":[{"oracle_id":"synthetic"}],"oracle_quorum":1}'
+WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS='5555555555555555555555555555555555555555555555555555555555555555'
+WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS='10000'
+WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS='20'
+WRFCOIN_GENESIS_FLAT_REWARD_SECONDS='600'
+WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS='512'
+WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS='512'
+WRFCOIN_SIGNING_PROTOCOL_VERSION='1'
 WRFCOIN_GENESIS_ACTIVATION_SCHEDULE='0:v1,2:schedule_extension,2:node_share_settlement'
 WRFCOIN_GENESIS_PRODUCER_SET='{"version":1,"members":[{"producer_id":"synthetic","payout_address":"0x1111111111111111111111111111111111111111","public_key":"2222222222222222222222222222222222222222222222222222222222222222"}]}'
 PINS
@@ -349,12 +360,22 @@ captured = json.loads((ws / 'state/bootstrap.json').read_text())
 assert captured['WRFCOIN_GENESIS_HASH'] == sys.argv[2]
 assert captured['WRFCOIN_GENESIS_ACTIVATION_SCHEDULE'] == '0:v1,2:schedule_extension,2:node_share_settlement'
 assert json.loads(captured['WRFCOIN_GENESIS_PRODUCER_SET'])['members'][0]['producer_id'] == 'synthetic'
+assert json.loads(captured['WRFCOIN_GENESIS_ORACLE_SET'])['oracle_set'][0]['oracle_id'] == 'synthetic'
+assert captured['WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS'] == '5' * 64
+assert captured['WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS'] == '20'
+assert captured['WRFCOIN_SIGNING_PROTOCOL_VERSION'] == '1'
+# The joiner exports every genesis input the cutter was started with (Compose
+# hands them to the node via bootstrap.888.env; test_node_bootstrap.py renders it).
+import re
+cutter = set(re.findall(r'^  (WRFCOIN_[A-Z0-9_]+): \$\{\1:\?',
+                        (ws / 'infra/testnet/docker-compose.genesis.yml').read_text(), re.M)) - {'WRFCOIN_CHAIN_ID'}
+assert cutter <= set(captured), sorted(cutter - set(captured))
 value = runpy.run_path(str(ws / 'infra/testnet/scripts/chain-identity.py'))['value']
 for key, expected in captured.items():
     assert value(ws / 'infra/testnet/.env', key) == expected
 PY
 }
-check "fresh 888 join: reviewed genesis hash, schedule and producer set despite stale shell" fresh_888_bootstrap
+check "fresh 888 join: every reviewed genesis declaration reaches .env and the node despite stale shell" fresh_888_bootstrap
 
 missing_888_bootstrap() {
   local key="$1" ws; ws="$(make_ws "missing-${key}")"
@@ -364,7 +385,11 @@ missing_888_bootstrap() {
       WRFCOIN_GENESIS_PRODUCER_SET=stale run_join "${ws}" --yes; then return 1; fi
   grep -q "${key}" "${ws}/out.log" && not_started "${ws}"
 }
-for key in WRFCOIN_CUT_GENESIS_HASH WRFCOIN_GENESIS_ACTIVATION_SCHEDULE WRFCOIN_GENESIS_PRODUCER_SET; do
+for key in WRFCOIN_CUT_GENESIS_HASH WRFCOIN_CUT_GENESIS_FAUCET_ADDRESS WRFCOIN_GENESIS_ACTIVATION_SCHEDULE \
+    WRFCOIN_GENESIS_PRODUCER_SET WRFCOIN_GENESIS_ORACLE_SET WRFCOIN_GENESIS_SCHEDULE_GOVERNANCE_KEYS \
+    WRFCOIN_GENESIS_FAUCET_ALLOCATION_BASE_UNITS WRFCOIN_GENESIS_FLAT_REWARD_BASE_UNITS \
+    WRFCOIN_GENESIS_FLAT_REWARD_SECONDS WRFCOIN_GENESIS_NODE_SHARE_EPOCH_BLOCKS \
+    WRFCOIN_GENESIS_NODE_SHARE_CHALLENGE_BLOCKS WRFCOIN_SIGNING_PROTOCOL_VERSION; do
   check "fresh 888 missing ${key}: refused before volume creation/startup" missing_888_bootstrap "${key}"
 done
 
@@ -436,9 +461,21 @@ check "well-formed archive of another state beside the manifest -> refused befor
 check "snapshot manifest for another genesis -> refused before any volume/node" \
   snap_refused chain wrong_chain_snap "genesis_hash mismatch"
 
+# Legacy chain 777 (the #2806 wedge at block 11,016) is no longer what the
+# committed pins name, so these cases get a PRIVATE 777 pins fixture: the
+# workspace copy re-pointed to chain 777, without the 888-only bootstrap
+# declarations, with a manifest and node stub that also say 777.
+make_ws_777() {
+  local ws; ws="$(make_ws "$1")"
+  sed -i -e 's/^WRFCOIN_CUT_CHAIN_ID=.*/WRFCOIN_CUT_CHAIN_ID=777/' \
+    -e '/^WRFCOIN_GENESIS_ACTIVATION_SCHEDULE=/d' -e '/^WRFCOIN_GENESIS_PRODUCER_SET=/d' \
+    "${ws}/infra/testnet/cut-pins.env"
+  make_manifest "${ws}/snap/manifest.json" "${ws}/snap/snapshot.tar.gz" "${CUT_GENESIS}" 777 "${CUT_NETWORK}"
+  printf '%s' "${ws}"
+}
 no_snapshot_refused() {
-  local ws; ws="$(make_ws nosnap)"
-  refused "${ws}" "core4#2806" --yes && not_started "${ws}"
+  local ws; ws="$(make_ws_777 nosnap)"
+  E2E_NODE_CHAIN=777 refused "${ws}" "core4#2806" --yes && not_started "${ws}"
 }
 check "brand-new node without a snapshot -> refused, names core4#2806" no_snapshot_refused
 
@@ -484,7 +521,7 @@ red_control() {
   # the happy path must NOT hold, and it must fail for the EXPECTED reason
   # (a mutant that dies of something incidental proves nothing).
   local ws name="$1" file="$2" pat="$3" rep="$4" why="$5" reason
-  ws="$(make_ws "red-${name}")"
+  ws="$("${RED_WS:-make_ws}" "red-${name}")"
   mutate "${ws}" "${file}" "${pat}" "${rep}" || return 1
   run_join "${ws}" --snapshot "${ws}/snap" --yes
   if reason="$(happy_path_holds "${ws}" 2>&1)"; then echo "    (mutant ${name} survived)" >&2; return 1; fi
@@ -505,8 +542,10 @@ check "RED sync-node: stale persisted work factor survives without explicit writ
   red_control no-work-write join-testnet-sync-node.sh '^set_env WRFCOIN_MIN_WORK_FACTOR .*$' ':' '(.env work factor)'
 check "RED sync-node: stale exported work factor overrides Compose without explicit export" \
   red_control no-work-export join-testnet-sync-node.sh '^export WRFCOIN_MIN_WORK_FACTOR=0$' ':' 'testnet work-factor environment must be 0'
-check "RED sync-node: snapshot restore skipped (full sync into the #2806 wedge)" \
-  red_control no-restore join-testnet-sync-node.sh '^  if \[ -n "\$\{SNAPSHOT_SOURCE\}" \]; then\n    echo "==> Brand-new node' '  if false; then\n    echo "==> Brand-new node' 'core4#2806'
+red_no_restore_777() {
+  RED_WS=make_ws_777 E2E_NODE_CHAIN=777 red_control no-restore join-testnet-sync-node.sh '^  if \[ -n "\$\{SNAPSHOT_SOURCE\}" \]; then\n    echo "==> Brand-new node' '  if false; then\n    echo "==> Brand-new node' 'core4#2806'
+}
+check "RED sync-node: snapshot restore skipped (full sync into the #2806 wedge)" red_no_restore_777
 red_identity() {
   # Protecting check: wrong_genesis (refused, named). On this mutant it must FAIL.
   local ws; ws="$(make_ws red-identity)"

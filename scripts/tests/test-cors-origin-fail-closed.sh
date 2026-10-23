@@ -56,19 +56,27 @@ done
 # is used only while nothing is pinned.
 SIGNERS="$(sed -n 's/^WRFCOIN_CUT_SNAPSHOT_TRUSTED_SIGNERS=//p' "$ROOT/testnet/cut-pins.env" | tail -n 1)"
 [[ -n "$SIGNERS" ]] || SIGNERS="$(printf 'ab%.0s' {1..32})"
+# Likewise the chain id: the gate refuses a host whose persisted WRFCOIN_CHAIN_ID
+# differs from the pin (absent defaults to 777), so the fixture declares the pin.
+CHAIN="$(sed -n 's/^WRFCOIN_CUT_CHAIN_ID=//p' "$ROOT/testnet/cut-pins.env" | tail -n 1)"
 
 # env_with NAME VALUE|unset: the example env with CORS_ORIGIN replaced or
 # removed. The three host-specific values the example leaves blank get RFC 5737
 # / fixture values, so a green case is green on CORS_ORIGIN alone.
 env_with() {
   local out="$TMP/$1.env"
-  grep -vE '^(CORS_ORIGIN|WRFCOIN_P2P_EXTERNAL_ADDR|WRFCOIN_SEED_P2P_EXTERNAL_ADDR|WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS)=' "$EXAMPLE" > "$out"
+  grep -vE '^(CORS_ORIGIN|WRFCOIN_CHAIN_ID|WRFCOIN_P2P_EXTERNAL_ADDR|WRFCOIN_SEED_P2P_EXTERNAL_ADDR|WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS)=' "$EXAMPLE" > "$out"
   {
+    printf 'WRFCOIN_CHAIN_ID=%s\n' "$CHAIN"
     echo 'WRFCOIN_P2P_EXTERNAL_ADDR=/ip4/198.51.100.7/tcp/9000'
     echo 'WRFCOIN_SEED_P2P_EXTERNAL_ADDR=/ip4/203.0.113.9/tcp/9000'
     printf 'WRFCOIN_SNAPSHOT_TRUSTED_SIGNERS=%s\n' "$SIGNERS"
   } >> "$out"
   [[ "$2" == unset ]] || printf 'CORS_ORIGIN=%s\n' "$2" >> "$out"
+  # A chain-888 host carries the genesis declarations the joiner writes from the
+  # pins (bootstrap.888.env requires them to render); write them the same way.
+  python3 "$ROOT/testnet/scripts/chain-identity.py" --pins "$ROOT/testnet/cut-pins.env" \
+    --bootstrap-env "$out" > /dev/null
   printf '%s' "$out"
 }
 
