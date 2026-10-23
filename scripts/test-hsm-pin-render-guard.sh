@@ -12,7 +12,7 @@ trap 'rm -f "$RENDERED_CONFIG"; rm -rf "$COMMAND_DIR" "$BUILD_ROOT"' EXIT
 COMPOSE_FILES=(
   -f "${REPO_ROOT}/testnet/docker-compose.testnet.yml"
   -f "${REPO_ROOT}/testnet/docker-compose.override.yml"
-  -f "${REPO_ROOT}/testnet/docker-compose.local-paths.yml"
+  -f "${REPO_ROOT}/testnet/docker-compose.local-paths.example.yml"
 )
 
 export POSTGRES_PASSWORD=render-test-postgres
