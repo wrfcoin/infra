@@ -126,6 +126,23 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Owner-approved spec 2026-10-23, section 2: backend proxy only.
+	@faucet_bond_grant {
+		method POST
+		path /api/faucet/bond-grant
+	}
+	handle @faucet_bond_grant {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@faucet_bond_grants {
+		method GET
+		path /api/faucet/bond-grants
+	}
+	handle @faucet_bond_grants {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	@station_verify {
 		method POST
 		path /api/weather/stations/verify-key
@@ -673,7 +690,7 @@
 		}
 		zone faucet_claim {
 			match {
-				path /api/onboarding/faucet/claim
+				path /api/onboarding/faucet/claim /api/faucet/bond-grant
 			}
 			key {client_ip}
 			events 5
@@ -686,7 +703,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/*
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/*
 			}
 			key {client_ip}
 			events 30

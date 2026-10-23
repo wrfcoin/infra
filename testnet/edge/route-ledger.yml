@@ -70,7 +70,12 @@ services:
       exact allowlist in testnet/edge/public_onboarding.caddy (#679) —
       auth/nonce, wallet-login, refresh, faucet challenge/claim, station
       register/verify, reward-progress, join snapshot artifacts (#886), and
-      (sonnet-r1) a GET-only read-only viewer surface: chain status,
+      self-serve bond grant POST /api/faucet/bond-grant (5/min/client IP) plus
+      audit GET /api/faucet/bond-grants (30/min/client IP), owner-approved
+      spec 2026-10-23 section 2. Both reach the backend proxy; faucet issuance
+      stays OFF by default. Backend POST also applies login-style limiting
+      and a one-use captcha; GET uses a separate read budget. No direct faucet host.
+      The GET-only read-only viewer surface (sonnet-r1) includes chain status,
       block list (summaries only), transaction list/detail, validator list,
       blockchain stats, and weather coverage-zones. The four added blockchain
       reads are mounted at enhanced_unified_api_optimized.ts:1626 and currently
