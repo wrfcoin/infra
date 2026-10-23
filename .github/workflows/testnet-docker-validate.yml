@@ -243,6 +243,16 @@ jobs:
           WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000
         run: bash scripts/test-hsm-pin-render-guard.sh
 
+      # infra#32 review follow-up: the guard also checks the operator's real local-paths overlay
+      # when present (never on this public runner). These RED controls feed it mutant real
+      # overlays (PIN env, SO-PIN env, PIN-variable indirection, env_file PIN, literal --pin
+      # command) that must all be refused, and a benign copy of the example that must pass.
+      - name: HSM PIN render guard RED controls
+        env:
+          WRFCOIN_P2P_EXTERNAL_ADDR: /ip4/198.51.100.7/tcp/9000
+          WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000
+        run: bash scripts/test-hsm-pin-render-guard.sh --self-test
+
       - name: Test backend esbuild hardening
         run: sh scripts/test-esbuild-backend-hardening.sh
 
