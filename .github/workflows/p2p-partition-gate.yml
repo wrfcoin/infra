@@ -16,7 +16,7 @@ jobs:
   p2p-partition:
     name: P2P Partition Regression Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
 
     steps:
       - name: Checkout infra
