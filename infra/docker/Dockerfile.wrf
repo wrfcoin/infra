@@ -74,6 +74,12 @@ RUN wget -q "https://github.com/jasper-software/jasper/archive/refs/tags/version
 ENV JASPERLIB=/opt/jasper/lib
 ENV JASPERINC=/opt/jasper/include
 
+# Debian names the HDF5 high-level Fortran library libhdf5hl_fortran; WRF's
+# configure links -lhdf5_hl_fortran, which otherwise fails with
+# "ld: cannot find -lhdf5_hl_fortran" while linking the executables.
+RUN ln -s /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.so /usr/lib/x86_64-linux-gnu/libhdf5_hl_fortran.so \
+    && ln -s /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.a /usr/lib/x86_64-linux-gnu/libhdf5_hl_fortran.a
+
 WORKDIR /build
 
 # Download WRF source and verify the pinned SHA256 checksum.
@@ -110,6 +116,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdff7 \
     libhdf5-103-1 \
+    libhdf5-fortran-102 \
+    libhdf5-hl-fortran-100 \
     libpng16-16 \
     mpich \
     bash \
