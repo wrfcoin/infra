@@ -16,7 +16,8 @@ const helper = require('./bond-grant-request');
 
 const REAL_REDIS_URL = process.env.FAUCET_TEST_REDIS_URL || '';
 const GRANT_UNITS = 25036000000;
-const PEER = (n) => `12D3KooW${String(n).repeat(44).slice(0, 44)}`;
+const PEER = (n) => helper.peerIdFromSeed(String(n).padStart(2, '0').repeat(32));
+const PEER_KEY = (n) => { const seed = Buffer.from(String(n).padStart(2, '0').repeat(32), 'hex'); const key = crypto.createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'), seed]), format:'der',type:'pkcs8'}); return Buffer.concat([Buffer.from('08011240','hex'), seed, crypto.createPublicKey(key).export({format:'der',type:'spki'}).subarray(-32)]); };
 const OWNER = (n) => `0x${String(n).repeat(40).slice(0, 40)}`;
 const SEED = (n) => String(n).padStart(2, '0').repeat(32);
 
@@ -24,6 +25,8 @@ const HARNESS = String.raw`
 const http = require('node:http');
 const helper = require('./bond-grant-request');
 const TIP = 1000;
+const peerId = (n) => helper.peerIdFromSeed(String(n).padStart(2,'0').repeat(32));
+const peerKey = (n) => { const seed = Buffer.from(String(n).padStart(2,'0').repeat(32),'hex'); const key = require('node:crypto').createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed]),format:'der',type:'pkcs8'});return Buffer.concat([Buffer.from('08011240','hex'),seed,require('node:crypto').createPublicKey(key).export({format:'der',type:'spki'}).subarray(-32)]); };
 const hashAt = (h) => require('node:crypto').createHash('sha256').update('block' + h).digest('hex');
 let peers = [];
 let submitMode = 'ok';
@@ -40,7 +43,7 @@ async function startMockNode() {
     req.on('end', () => {
       res.setHeader('content-type', 'application/json');
       if (req.method === 'GET' && req.url === '/network/info') {
-        res.end(JSON.stringify({ chain_id: '888', network_id: 'testnet', chain_height: TIP, local_peer_id: 'x' }));
+        res.end(JSON.stringify({ chain_id: '888', network_id: 'testnet', chain_height: TIP, local_peer_id: peerId(1) }));
         return;
       }
       if (req.method === 'GET' && req.url.startsWith('/chain/block/')) {
@@ -138,16 +141,16 @@ async function boot() {
   await new Promise((r) => http_.once('listening', r));
   const base = 'http://127.0.0.1:' + http_.address().port;
   // A node: its seed, owner, peer id; sign a block 'behind' under the tip.
-  function signed(n, { owner, peer, behind = 2, chainId = '888', hash } = {}) {
+  function signed(n, { owner, peer, behind = 2, chainId = '888', hash, peerN = n } = {}) {
     const height = TIP - behind;
     return helper.signBondGrant({
-      seedHex: String(n).padStart(2, '0').repeat(32), chainId, networkId: 'testnet',
+      seedHex: String(n).padStart(2, '0').repeat(32), peerIdentityBytes: peerKey(peerN), chainId, networkId: 'testnet',
       ownerAddress: owner || '0x' + String(n).repeat(40).slice(0, 40),
-      peerId: peer || '12D3KooW' + String(n).repeat(44).slice(0, 44), height, blockHash: hash || hashAt(height),
+      peerId: peer || peerId(peerN), height, blockHash: hash || hashAt(height),
     });
   }
   function visible(...ns) {
-    setPeers(ns.map((n) => ({ peer_id: '12D3KooW' + String(n).repeat(44).slice(0, 44), advertised_height: TIP, advertisement_age_secs: 3, connection_age_secs: 86400, banned: false })));
+    setPeers(ns.map((n) => ({ peer_id: peerId(n), advertised_height: TIP, advertisement_age_secs: 3, connection_age_secs: 86400, banned: false })));
   }
   async function grant(body, { proxy = true, path = '/faucet/bond-grant' } = {}) {
     // Legacy identity/outcome scenarios isolate pacing; pacing scenarios retain the key.
@@ -223,7 +226,7 @@ function runScenario(body, extraEnv = {}) {
 test('helper and server build the same signed message, and the signature verifies', () => {
   process.env.WRFCOIN_CHAIN_ID = process.env.WRFCOIN_CHAIN_ID || '888';
   const req = helper.signBondGrant({
-    seedHex: SEED(5), chainId: '888', networkId: 'testnet', ownerAddress: `wrf${'5'.repeat(40)}`,
+    seedHex: SEED(5), peerIdentityBytes: PEER_KEY(5), chainId: '888', networkId: 'testnet', ownerAddress: `wrf${'5'.repeat(40)}`,
     peerId: PEER(5), height: 42, blockHash: `0x${'AA'.repeat(32)}`,
   });
   assert.equal(req.ownerAddress, OWNER(5));
@@ -270,8 +273,8 @@ test('a synced, visible node gets exactly the bond once; key, peer and wallet ar
     out.first = await grant(signed(1));
     out.paid = submits.slice();
     out.marks = await marks();
-    out.sameKey = await grant(signed(1, { owner: '0x' + '9'.repeat(40), peer: '12D3KooW' + '9'.repeat(44) }));
-    out.samePeer = await grant(signed(2, { peer: '12D3KooW' + '1'.repeat(44) }));
+    out.sameKey = await grant(signed(1, { owner: '0x' + '9'.repeat(40), peerN: 9 }));
+    out.samePeer = await grant(signed(2, { peerN: 1 }));
     out.sameWallet = await grant(signed(3, { owner: '0x' + '1'.repeat(40) }));
     out.fresh = await grant(signed(4));
     out.submits = submits.length;
@@ -320,7 +323,7 @@ test('the node must be visible and synced on the faucet node; nothing is reserve
 
 test('a lagging, stale or banned peer is refused', () => {
   const out = runScenario(`
-    const p = (n) => '12D3KooW' + String(n).repeat(44).slice(0, 44);
+    const p = peerId;
     const peerBase = { advertisement_age_secs: 3, connection_age_secs: 86400, banned: false };
     out.r = [];
     for (const peer of [
@@ -351,8 +354,8 @@ test('bad signatures and malformed requests are refused before any chain read or
     out.marks = await marks();
     out.submits = submits.length;
   `);
-  assert.equal(out.otherOwner.code, 'INVALID_BOND_GRANT_SIGNATURE');
-  assert.equal(out.otherChain.code, 'INVALID_BOND_GRANT_SIGNATURE');
+  assert.equal(out.otherOwner.code, 'INVALID_BOND_GRANT_REQUEST');
+  assert.equal(out.otherChain.code, 'INVALID_BOND_GRANT_REQUEST');
   for (const k of ['badKey', 'badPeer', 'badHeight']) assert.equal(out[k].code, 'INVALID_BOND_GRANT_REQUEST', k);
   assert.deepEqual(out.marks, {});
   assert.equal(out.submits, 0);
@@ -549,4 +552,77 @@ test('audit storage failure returns a generic response without error internals',
   `);
   assert.equal(out.status, 503);
   assert.doesNotMatch(out.text, /operator-token|private-host|stack trace/);
+});
+
+test('reference libp2p peer vector fixes both messages, protobuf identity, and signatures byte-for-byte', () => {
+  const v = require('./bond-grant-peer-vector.json');
+  assert.equal(helper.decodePeerPublicKey(v.request.peerId).toString('hex'), v.peerPublicKeyHex);
+  assert.equal(helper.peerIdFromSeed(v.testOnlyPeerSeedHex), v.request.peerId);
+  const req = helper.signBondGrant({seedHex:v.testOnlyServerSeedHex, peerIdentityBytes:Buffer.from(v.peerPrivateKeyProtobufHex,'hex'), chainId:v.chainId,networkId:v.networkId,...v.request});
+  assert.deepEqual(req,v.request);
+  const message = helper.buildBondGrantMessage({chainId:v.chainId,networkId:v.networkId,...v.request});
+  assert.equal(message.toString('hex'),v.serverMessageHex);
+  assert.equal(helper.peerMessage(message).toString('hex'),v.peerMessageHex);
+  assert.equal(helper.verifyPeerSignature(req.peerId,req.peerSignature,message),true);
+});
+
+test('fresh server key cannot borrow an old peer without peer possession; both caller paths fail before reservation', () => {
+  for (const publicMode of ['false','true']) {
+    const out = runScenario(`
+      visible(1); const oldPeer = signed(1).peerId;
+      // Attacker controls its server key, but only its own peer key.
+      const stolen = { ...signed(2), peerId: oldPeer };
+      const crypto = require('node:crypto');
+      const seed = Buffer.from('02'.repeat(32),'hex');
+      const key = crypto.createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed]),format:'der',type:'pkcs8'});
+      stolen.signature = crypto.sign(null, server.buildBondGrantMessage(stolen),key).toString('hex');
+      out.borrowed = await grant(stolen);
+      out.missing = await grant({...stolen,peerSignature:undefined});
+      out.direct = await grant({...stolen,peerSignature:undefined},{proxy:false});
+      out.marks = await marks(); out.submits = submits.length;
+      out.valid = await grant(signed(1));
+    `,{FAUCET_BOND_GRANT_PUBLIC:publicMode});
+    for(const k of ['borrowed','missing']) {assert.equal(out[k].status,400,k);assert.equal(out[k].code,'INVALID_BOND_GRANT_REQUEST',k);}
+    assert.equal(out.direct.status, publicMode === 'true' ? 400 : 401);
+    assert.deepEqual(out.marks,{});assert.equal(out.submits,0);assert.equal(out.valid.status,200);
+  }
+});
+
+test('peer proof rejects wrong message, wrong domain, malformed and non-identity peer ids', () => {
+  const out = runScenario(`
+    visible(1); const good = signed(1);
+    const crypto = require('node:crypto');
+    const key = helper.keyFromIdentityFile(peerKey(1));
+    out.bad = [];
+    for (const request of [
+      {...good,peerSignature:'00'.repeat(64)},
+      {...good,peerSignature:crypto.sign(null,server.buildBondGrantMessage(good),key).toString('hex')},
+      {...good,peerSignature:crypto.sign(null,Buffer.concat([Buffer.from('wrong_domain'),server.buildBondGrantMessage(good)]),key).toString('hex')},
+      {...good,peerSignature:signed(1,{behind:3}).peerSignature},
+      {...good,peerId:'12D3KooW'+'1'.repeat(44)},
+      {...good,peerId:'QmYwAPJzv5CZsnAzt8auVZRnGi2CzBfo7UkWQp6R9kDkZ4'},
+      {...good,peerId:'z'+good.peerId},
+    ]) out.bad.push(await grant(request));
+    out.marks = await marks(); out.submits = submits.length;
+  `);
+  for(const r of out.bad){assert.equal(r.status,400);assert.equal(r.code,'INVALID_BOND_GRANT_REQUEST');}
+  assert.deepEqual(out.marks,{});assert.equal(out.submits,0);
+});
+
+test('request CLI reads Core4 protobuf identity and emits dual signatures without echoing keys', () => {
+  const out = runScenario(`
+    const fs = require('node:fs'); const path = require('node:path');
+    const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(),'bond-grant-builder-'));
+    try {
+      const seedPath = path.join(dir,'server-seed'); const peerPath = path.join(dir,'peer_identity.key');
+      fs.writeFileSync(seedPath,'01'.repeat(32),{mode:0o600});fs.writeFileSync(peerPath,peerKey(1),{mode:0o600});
+      const {stdout,stderr} = await new Promise((resolve,reject)=>require('node:child_process').execFile(process.execPath,[require.resolve('./bond-grant-request'),'--owner','0x'+'1'.repeat(40),'--server-key-file',seedPath,'--peer-key-file',peerPath,'--chain-id','888','--network-id','testnet','--node',process.env.FAUCET_NODE_URL],(error,stdout,stderr)=>error?reject(error):resolve({stdout,stderr})));
+      out.request = JSON.parse(stdout);out.stderr = stderr;
+      out.verified = server.parseBondGrantRequest(out.request).peerSignature === out.request.peerSignature;
+      out.serverValid = server.verifyBondGrantSignature(out.request,out.request.signature);
+      fs.chmodSync(peerPath,0o644);try{helper.readPeerKeyFile(peerPath);out.insecureAccepted=true;}catch{out.insecureAccepted=false;}
+    } finally {fs.rmSync(dir,{recursive:true,force:true});}
+  `);
+  assert.equal(out.verified,true);assert.equal(out.serverValid,true);assert.equal(out.insecureAccepted,false);assert.equal(out.stderr,'');
+  assert.ok(out.request.peerSignature);assert.ok(!Object.values(out.request).includes('01'.repeat(32)));
 });

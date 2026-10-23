@@ -6,15 +6,17 @@
 //
 //   node bond-grant-request.js --owner 0x<bond owner address> \
 //     --server-key-file <file holding the 32-byte server key seed as hex> \
+//     --peer-key-file <node-data-dir>/peer_identity.key \
 //     --chain-id 888 --network-id testnet \
 //     [--node http://127.0.0.1:8556] [--behind 2] [--expect-server-key <64 hex>]
 //
 // It reads the node's own peer id and a block `--behind` blocks under its tip
 // from --node, signs, and prints JSON to POST to /faucet/bond-grant (add a
-// captchaToken on the public page). The seed file is read once and not echoed.
+// captchaToken on the public page). The seed and peer identity files are read once and never echoed.
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const peer = require('./bond-grant-peer');
 
 const BOND_GRANT_DOMAIN = 'wrfcoin_faucet_bond_grant_v1';
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
@@ -53,8 +55,10 @@ function buildBondGrantMessage({ chainId, networkId, ownerAddress, serverKey, pe
   ]);
 }
 
-function signBondGrant({ seedHex, chainId, networkId, ownerAddress, peerId, height, blockHash }) {
-  const seed = Buffer.from(String(seedHex).trim().replace(/^0x/i, ''), 'hex');
+function signBondGrant({ seedHex, peerIdentityBytes, chainId, networkId, ownerAddress, peerId, height, blockHash }) {
+  const seedText = String(seedHex).trim().replace(/^0x/i, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(seedText)) throw new Error('the server key file must hold a 32-byte ed25519 seed in hex');
+  const seed = Buffer.from(seedText, 'hex');
   if (seed.length !== 32) throw new Error('the server key file must hold a 32-byte ed25519 seed in hex');
   const key = crypto.createPrivateKey({ key: Buffer.concat([ED25519_PKCS8_PREFIX, seed]), format: 'der', type: 'pkcs8' });
   const spki = crypto.createPublicKey(key).export({ format: 'der', type: 'spki' });
@@ -69,13 +73,14 @@ function signBondGrant({ seedHex, chainId, networkId, ownerAddress, peerId, heig
     height,
     blockHash: hash,
     signature: crypto.sign(null, message, key).toString('hex'),
+    peerSignature: peer.signPeerMessage(peerIdentityBytes, peerId, message),
   };
 }
 
 function parseArgs(argv) {
   const out = { node: 'http://127.0.0.1:8556', behind: 2 };
   const names = {
-    '--owner': 'owner', '--server-key-file': 'keyFile', '--chain-id': 'chainId', '--network-id': 'networkId',
+    '--peer-key-file': 'peerKeyFile', '--owner': 'owner', '--server-key-file': 'keyFile', '--chain-id': 'chainId', '--network-id': 'networkId',
     '--node': 'node', '--behind': 'behind', '--expect-server-key': 'expect',
   };
   for (let i = 0; i < argv.length; i += 2) {
@@ -83,7 +88,7 @@ function parseArgs(argv) {
     if (!name || argv[i + 1] === undefined) throw new Error(`unknown or incomplete argument ${argv[i]}`);
     out[name] = argv[i + 1];
   }
-  for (const required of ['owner', 'keyFile', 'chainId', 'networkId']) {
+  for (const required of ['owner', 'keyFile', 'peerKeyFile', 'chainId', 'networkId']) {
     if (!out[required]) throw new Error(`--${required === 'keyFile' ? 'server-key-file' : required.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)} is required`);
   }
   out.behind = Number.parseInt(out.behind, 10);
@@ -98,6 +103,19 @@ async function getJson(url) {
   return body?.data ?? body;
 }
 
+function readPeerKeyFile(path) {
+  const fd = fs.openSync(path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size !== 68 || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) {
+      throw new Error('peer identity file must be a 68-byte regular file with owner-only permissions');
+    }
+    const bytes = fs.readFileSync(fd);
+    peer.keyFromIdentityFile(bytes);
+    return bytes;
+  } finally { fs.closeSync(fd); }
+}
+
 async function main(argv) {
   const args = parseArgs(argv);
   const info = await getJson(`${args.node}/network/info`);
@@ -109,6 +127,7 @@ async function main(argv) {
   const block = await getJson(`${args.node}/chain/block/${height}`);
   const request = signBondGrant({
     seedHex: fs.readFileSync(args.keyFile, 'utf8'),
+    peerIdentityBytes: readPeerKeyFile(args.peerKeyFile),
     chainId: args.chainId,
     networkId: args.networkId,
     ownerAddress: args.owner,
@@ -129,4 +148,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { BOND_GRANT_DOMAIN, buildBondGrantMessage, signBondGrant, parseArgs };
+module.exports = { BOND_GRANT_DOMAIN, buildBondGrantMessage, signBondGrant, parseArgs, readPeerKeyFile, ...peer };

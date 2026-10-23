@@ -29,6 +29,7 @@ registrations later.
 | `peerId` | The node's libp2p peer id. |
 | `height`, `blockHash` | A block the node holds, near the tip. |
 | `signature` | ed25519 signature by the server key over the message below. |
+| `peerSignature` | ed25519 proof of possession of the peer identity key over the peer message below. |
 
 The signed message is:
 
@@ -153,3 +154,102 @@ No Core4 route is added here.
 
 No deploy: the owner enables it after the first payout. Both switches default
 OFF. No host `.env` change is part of this work.
+
+## Peer possession amendment (LEAD addendum 2, 2026-10-23)
+
+The requester must control both the bond server key and the libp2p identity
+behind `peerId`. The faucet verifies **both signatures**, including requests
+with an operator bearer. Missing/invalid peer proof, malformed ids, hashed
+(non-identity) multihashes and non-ed25519 keys return 400
+`INVALID_BOND_GRANT_REQUEST` before any chain read or Redis reservation.
+Merely naming a long-connected peer does not satisfy probation.
+
+With `FAUCET_BOND_GRANT_PUBLIC=false`, the former captcha-only public path
+from public main is removed. This is intentionally stricter than main.
+
+### Final byte layout (for the Core4 CLI)
+
+`signature = Ed25519.sign(server_private_key, M)` where:
+
+```text
+M = UTF8("wrfcoin_faucet_bond_grant_v1")
+    || str(chain_id) || str(network_id)
+    || str(ownerAddress) || str(serverKey) || str(peerId)
+    || u64LE(height) || str(blockHash)
+str(s) = u32LE(UTF8(s).length) || UTF8(s)
+```
+
+`peerSignature = Ed25519.sign(peer_private_key, P)` where:
+
+```text
+P = UTF8("wrfcoin_faucet_bond_grant_peer_v1") || M
+```
+
+Both domain strings are raw UTF-8 bytes, with **no length prefix or NUL**.
+Neither message is hashed before Ed25519 signing. `M` is exactly the same
+byte array for both signers. `peerSignature` and `signature` themselves are
+not fields of `M`. Chain/network ids are strings; wallet is lowercase `0x`
+plus 40 hex; server key is lowercase 64 hex; peer id is the canonical,
+unprefixed base58btc string; height is eight unsigned little-endian bytes;
+block hash is lowercase 64 hex without `0x`. Signatures are 128 lowercase hex.
+
+The accepted peer id decodes to these 38 bytes:
+`00 24 08 01 12 20 || peer_ed25519_public_key[32]`.
+`00` is the identity multihash code, `24` its 36-byte digest length, and
+`08 01 12 20` is protobuf PublicKey Type=Ed25519 (1), Data length=32.
+Reject every other layout; do not treat a hash as an embedded public key.
+
+### Node identity file / request builder
+
+Core4 `p2p/src/identity.rs::load_or_generate_keypair` writes
+`Keypair::to_protobuf_encoding()` to `<node-data-dir>/peer_identity.key`.
+The launch API chooses that path in `native-chain/src/bin/launch_api/main.rs`.
+For ed25519, the 68-byte file is protobuf PrivateKey:
+`08 01 12 40 || seed[32] || public_key[32]`. It is binary, not hex text.
+The builder checks its owner-only file permissions on Unix, exact encoding,
+seed/public-key consistency, and that the key matches the node's peer id.
+It never prints either private key. Do not copy this file into a web client.
+
+```sh
+node bond-grant-request.js --owner 0x<BOND_OWNER> \
+  --server-key-file <server-seed-hex-file> \
+  --peer-key-file <node-data-dir>/peer_identity.key \
+  --chain-id 888 --network-id testnet --node http://127.0.0.1:8556
+```
+
+The request contains both signatures. The backend's one-use captcha proof
+(`challengeId`, `answer`) is appended separately and is not signed.
+
+### Frozen reference vector
+
+`bond-grant-peer-vector.json` is the machine-readable copy; tests compare
+both preimages and both signatures byte-for-byte. All seeds in that fixture
+are deterministic public test data, never operator credentials. The libp2p
+reference generated the peer id, protobuf private key and peer signature:
+
+Node v24.15.0; `@libp2p/crypto` 5.2.0; `@libp2p/peer-id` 6.0.18.
+
+Reference calls: `generateKeyPairFromSeed('Ed25519', Uint8Array(32).fill(2))`,
+`peerIdFromPrivateKey(peerKey).toString()`, `privateKeyToProtobuf(peerKey)`,
+and `peerKey.sign(P)`. The server test seed is `Uint8Array(32).fill(1)`.
+The helper's peer signature equals the independently signed libp2p result.
+The packages are used only to generate the reference, not at faucet runtime.
+
+```json
+{
+  "chainId": "888",
+  "networkId": "testnet",
+  "peerPublicKeyHex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+  "request": {
+    "ownerAddress": "0x3333333333333333333333333333333333333333",
+    "serverKey": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+    "peerId": "12D3KooWJWoaqZhDaoEFshF7Rh1bpY9ohihFhzcW6d69Lr2NASuq",
+    "height": 42,
+    "blockHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "signature": "dcca8a3707f2d8004f826330002b44ae8bf6dab50084c7bfce8b6336c15d8c45b8babf67f1a5ae8a6a8085f88822fad257a14cebc473c5f5769ac9d7a1957a0f",
+    "peerSignature": "3735d36b70f2033a99bd369d9c3cbd33ec1dcf339efb8bb7edcc25dc53a35a18cea79cf9d641304a99e82a6339f21afb783972495bcf0aa7698463d83a95d800"
+  },
+  "serverMessageHex": "777266636f696e5f6661756365745f626f6e645f6772616e745f76310300000038383807000000746573746e65742a000000307833333333333333333333333333333333333333333333333333333333333333333333333333333333400000003861383865336464373430396631393566643532646232643363626135643732636136373039626631643934313231626633373438383031623430663666356334000000313244334b6f6f574a576f61715a6844616f454673684637526831627059396f68696846687a6357366436394c72324e415375712a000000000000004000000061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+  "peerMessageHex": "777266636f696e5f6661756365745f626f6e645f6772616e745f706565725f7631777266636f696e5f6661756365745f626f6e645f6772616e745f76310300000038383807000000746573746e65742a000000307833333333333333333333333333333333333333333333333333333333333333333333333333333333400000003861383865336464373430396631393566643532646232643363626135643732636136373039626631643934313231626633373438383031623430663666356334000000313244334b6f6f574a576f61715a6844616f454673684637526831627059396f68696846687a6357366436394c72324e415375712a000000000000004000000061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161"
+}
+```

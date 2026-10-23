@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { verifyPeerSignature } = require('./bond-grant-peer');
 const express = require('express');
 const promClient = require('prom-client');
 const { createClient } = require('redis');
@@ -2306,7 +2307,12 @@ function parseBondGrantRequest(body) {
   if (!HEX64.test(blockHash)) throw invalid('blockHash must be a 32-byte hex block hash');
   const signature = String(body?.signature || '').trim().toLowerCase();
   if (!HEX128.test(signature)) throw invalid('signature must be a 64-byte ed25519 signature in hex');
-  return { ownerAddress: normalizeWalletAddress(owner), serverKey, peerId, height, blockHash, signature };
+  const fields = { ownerAddress: normalizeWalletAddress(owner), serverKey, peerId, height, blockHash, signature };
+  const peerSignature = String(body?.peerSignature || '').trim().toLowerCase();
+  if (!verifyPeerSignature(peerId, peerSignature, buildBondGrantMessage(fields))) {
+    throw invalid('peerSignature must prove possession of the peer identity key over this request');
+  }
+  return { ...fields, peerSignature };
 }
 
 async function readNodeJson(path) {
