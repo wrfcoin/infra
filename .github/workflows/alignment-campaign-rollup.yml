@@ -18,7 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ALIGNMENT_OWNER: wrfcoin
-      ALIGNMENT_REPOS: core4,backend,frontend,defi-protocols,storage-providers,smart-contracts,infra,security-testing
+      # security-testing is private; the public repository's token gets a 404 for it.
+      ALIGNMENT_REPOS: core4,backend,frontend,defi-protocols,storage-providers,smart-contracts,infra
     steps:
       - name: Checkout
         uses: actions/checkout@v7

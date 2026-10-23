@@ -52,12 +52,8 @@ jobs:
           path: core4
           token: ${{ env.CROSS_REPO_TOKEN }}
 
-      - name: Checkout security-testing
-        uses: actions/checkout@v7
-        with:
-          repository: wrfcoin/security-testing
-          path: security-testing
-          token: ${{ env.CROSS_REPO_TOKEN }}
+      # security-testing is private and is not checked out here (the public
+      # repository's token gets a 404); it is also absent from the docs manifest.
 
       - name: Checkout smart-contracts
         uses: actions/checkout@v7
@@ -80,8 +76,15 @@ jobs:
             SAFE_FLAG="--safe-mode"
             echo "safe mode enabled for deterministic execution"
           fi
+          MODE=all
+          if [ -z "$MAIN_API_BASE_URL" ] || [ -z "$MAIN_API_WS_URL" ] || [ -z "$COMPUTE_API_BASE_URL" ]; then
+            # The PRODUCTION_* repository variables are not configured here, so the
+            # gateway probe has nothing to call. Run the docs-sync half only, loudly.
+            echo "::notice::PRODUCTION_* variables are not set; running docs-sync only, gateway check skipped"
+            MODE=docs-sync
+          fi
           node scripts/validate-docs-sync-and-production-gateway.cjs \
-            --mode all \
+            --mode "$MODE" \
             $SAFE_FLAG | tee artifacts/docs-gateway-check/command-output.txt
 
       - name: Publish validation summary
