@@ -34,14 +34,17 @@ jobs:
           path: wrfcoin/infra
           persist-credentials: false
 
-      # Exact reviewed Core4 merge tree containing #2746. This is a build
-      # compatibility fixture, not the genesis/cut pin in cut-pins.env.
+      # Public core4 launch snapshot (tag v888-launch). It contains the
+      # attester crate and every attester fix up to the chain 888 launch tree.
+      # This is a build compatibility fixture, not the genesis/cut pin in
+      # cut-pins.env. The live attesters were built before launch from private
+      # history and are not byte-reproducible from the public tree.
+      # core4 is public, so the default workflow token is enough; no secret.
       - name: Checkout Core4 attester source
         uses: actions/checkout@v7
         with:
           repository: wrfcoin/core4
-          ref: 40c4c1e1c1c2eeca1de4990a3c6d288f41e861aa
-          token: ${{ secrets.WRFCOIN_CORE4_READ_TOKEN || github.token }}
+          ref: 52cca4b6234f0ed67a3b25e50066ae6103ce2b4a  # v888-launch
           path: wrfcoin/core4
           persist-credentials: false
 

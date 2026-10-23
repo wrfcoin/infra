@@ -37,7 +37,7 @@ import re
 import sys
 from pathlib import Path
 
-# core4 scripts/check_release_endpoints.py SHIP_FORBIDDEN_FEATURES at 24237c2d6 (#3229).
+# core4 scripts/check_release_endpoints.py SHIP_FORBIDDEN_FEATURES at the public launch snapshot 52cca4b6 (v888-launch).
 DEFAULT_FORBIDDEN = ("dev-endpoints", "panic-drill")
 
 
