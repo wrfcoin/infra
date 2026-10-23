@@ -112,7 +112,10 @@ read_node_info() {
 for operator_doc in \
   "${SCRIPT_DIR}/../JOIN_TESTNET.md" \
   "${SCRIPT_DIR}/../TESTNET_OPERATOR_GUIDE.md"; do
-  if grep -Fq "${CANONICAL_GENESIS_HASH}" "${operator_doc}"; then
+  if [[ ! -e "${operator_doc}" && "$(basename "${operator_doc}")" == TESTNET_OPERATOR_GUIDE.md ]]; then
+    # Not shipped in the public tree; still FAILS below if the file exists but drifted.
+    echo "  SKIP  $(basename "${operator_doc}") not present in this tree"
+  elif grep -Fq "${CANONICAL_GENESIS_HASH}" "${operator_doc}"; then
     pass "$(basename "${operator_doc}") uses cut-pins genesis"
   else
     fail "$(basename "${operator_doc}") drifted from cut-pins genesis"
