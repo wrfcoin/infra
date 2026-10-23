@@ -1416,6 +1416,12 @@ echo "== handoff: the produced bundle is consumed by the REAL joiner chain (infr
 # must restore exactly these bytes before starting the node.
 handoff_to_joiner() {
   fresh_stage
+  # The frozen copy is the COMMITTED chain: its stub /network/info reports the
+  # committed pins' genesis and chain, not this file's private 777 fixture.
+  local GENESIS PUBLISH_FROZEN_CHAIN
+  GENESIS="$(sed -n 's/^WRFCOIN_CUT_GENESIS_HASH=//p' "${REPO}/testnet/cut-pins.env")"
+  PUBLISH_FROZEN_CHAIN="$(sed -n 's/^WRFCOIN_CUT_CHAIN_ID=//p' "${REPO}/testnet/cut-pins.env")"
+  export PUBLISH_FROZEN_CHAIN
   # The source container's build is the committed pin, so the manifest's
   # core4_commit equals it and the joiner's version guard passes.
   PUBLISH_CORE4_REVISION="$(sed -n 's/^WRFCOIN_CUT_CORE4_COMMIT=//p' "${REPO}/testnet/cut-pins.env")" \
