@@ -494,13 +494,14 @@ test('audit is reader gated, contains exactly public fields, bounded to 100, bon
     out.anon = (await fetch(base+'/faucet/bond-grants')).status;
     out.wrong = (await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer wrong'}})).status;
     const read = await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer reader-token'}});
+    out.operator = (await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer operator-token'}})).status;
     out.status = read.status; out.body = await read.json();
     const raw = {...out.body.grants[0], ip:'private', token:'secret', body:{private:true}};
     // Exercise bounded read even if an old/manual writer leaves a longer list.
     for (let n=0;n<120;n++) await reader.eval(server.BOND_GRANT_PUBLISH_LUA, {keys:['a','b','c',process.env.FAUCET_BOND_GRANT_PREFIX+'audit'],arguments:['{}',JSON.stringify(raw),'200']});
     out.bounded = await (await fetch(base+'/faucet/bond-grants', {headers:{authorization:'Bearer reader-token'}})).json();
   `, { FAUCET_READER_TOKEN: 'reader-token' });
-  assert.equal(out.anon, 401); assert.equal(out.wrong, 403); assert.equal(out.status, 200);
+  assert.equal(out.anon, 401); assert.equal(out.wrong, 403); assert.equal(out.status, 200); assert.equal(out.operator, 200);
   const row = out.body.grants[0];
   assert.deepEqual(Object.keys(row).sort(), ['bonded','ownerAddress','peerId','serverKey','time','txHash']);
   assert.equal(row.ownerAddress, OWNER(1)); assert.equal(row.bonded, null);

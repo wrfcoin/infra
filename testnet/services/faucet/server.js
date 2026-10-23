@@ -2729,7 +2729,7 @@ app.post('/faucet/request', (req, res) => {
 app.get('/faucet/bond-grants', async (req, res) => {
   if (!FAUCET_BOND_GRANT_PUBLIC) {
     const auth = checkBearerToken(req, FAUCET_READER_TOKEN);
-    if (!auth.ok) return res.status(auth.status).end();
+    if (!auth.ok && !checkBearerToken(req, FAUCET_API_TOKEN).ok) return res.status(auth.status).end();
   }
   res.set('Cache-Control', 'no-store');
   try {
