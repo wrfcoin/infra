@@ -218,6 +218,8 @@ start_node() {
   docker run -d \
     --name "$container_name" \
     --network "$NETWORK_NAME" \
+    -e WRFCOIN_CHAIN_ID=777 \
+    -e WRFCOIN_NETWORK_ID=testnet \
     -e WRFCOIN_P2P_ENABLED=true \
     -e WRFCOIN_P2P_PORT="$p2p_port" \
     -e WRFCOIN_P2P_BOOTSTRAP="$bootstrap" \
