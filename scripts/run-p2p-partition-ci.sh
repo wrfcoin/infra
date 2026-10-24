@@ -196,7 +196,7 @@ api_call() {
 }
 
 get_height() {
-  api_call "$1" GET "/metrics" | jq -r '.data.chain_height // 0'
+  api_call "$1" GET "/network/info" | jq -r '.chain_height // 0'
 }
 
 mine_block() {
@@ -213,7 +213,7 @@ wait_for_health() {
   while true; do
     local resp
     resp=$(api_call "$name" GET "/health" 2>/dev/null || echo '{"status":"down"}')
-    if [[ "$resp" == *"healthy"* ]]; then
+    if [[ "$resp" == *'"status":"ok"'* ]]; then
       log "$name is healthy"
       return 0
     fi
@@ -306,6 +306,8 @@ start_node() {
     -e WRFCOIN_OPERATOR_TOKEN="$OPERATOR_TOKEN" \
     -e WRFCOIN_GENESIS_PRODUCER_SET="$GENESIS_PRODUCER_SET" \
     -e WRFCOIN_REQUIRE_PRODUCER_AUTH=1 \
+    -e WRFCOIN_GENESIS_FAUCET_ADDRESS=0x2727272727272727272727272727272727272727 \
+    -e WRFCOIN_GENESIS_ORACLE_SET=none \
     -e RUST_LOG=info \
     --env-file "$PIN_FILE" \
     -v "$SCRATCH_DIR/$name:/app/data/hsm" \
