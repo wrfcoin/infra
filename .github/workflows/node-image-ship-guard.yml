@@ -87,9 +87,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Public core4 launch snapshot (tag v888-launch); its check_release_endpoints.py
+  # Public core4 h3000 gate release (core4#36; tag v888-h3000); its check_release_endpoints.py
   # carries the panic-drill feature list, --binary marker and --profile-file.
-  CHECKER_SHA: 52cca4b6234f0ed67a3b25e50066ae6103ce2b4a
+  CHECKER_SHA: de9d0d268e1a914109444c1d49b2dcfffe896d80
   # N4: upper bound on build runner's shared BuildKit cache after this job (most-recently-used kept).
   BUILDER_CACHE_KEEP: 20GB
 

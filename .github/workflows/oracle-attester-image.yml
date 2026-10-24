@@ -34,7 +34,7 @@ jobs:
           path: wrfcoin/infra
           persist-credentials: false
 
-      # Public core4 launch snapshot (tag v888-launch). It contains the
+      # Public core4 h3000 gate release (core4#36; tag v888-h3000). It contains the
       # attester crate and every attester fix up to the chain 888 launch tree.
       # This is a build compatibility fixture, not the genesis/cut pin in
       # cut-pins.env. The live attesters were built before launch from private
@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: wrfcoin/core4
-          ref: 52cca4b6234f0ed67a3b25e50066ae6103ce2b4a  # v888-launch
+          ref: de9d0d268e1a914109444c1d49b2dcfffe896d80  # h3000 gate (core4#36); tag v888-h3000
           path: wrfcoin/core4
           persist-credentials: false
 
