@@ -40,6 +40,7 @@ GENESIS_HASH=""
 # A dedicated network id: "testnet" would select core4's compiled-in testnet
 # genesis hash, which a throwaway chain can never match. Chain id stays 777.
 NETWORK_ID="${P2P_PARTITION_NETWORK_ID:-ci-p2p-partition}"
+NODE_RUST_LOG="${P2P_PARTITION_RUST_LOG:-info,wrfcoin_p2p=debug,libp2p_swarm=debug,libp2p_dns=debug,libp2p_tcp=debug}"
 
 usage() {
   cat <<'EOF'
@@ -138,8 +139,8 @@ cleanup() {
         [ -n "$container" ] || continue
         printf '\n--- docker inspect state: %s ---\n' "$container"
         docker inspect --format '{{json .State}}' "$container" 2>&1 || true
-        printf '\n--- docker logs --tail 200: %s ---\n' "$container"
-        docker logs --tail 200 "$container" 2>&1 || true
+        printf '\n--- docker logs --tail 400: %s ---\n' "$container"
+        docker logs --tail 400 "$container" 2>&1 || true
       done
     } | tee "$REPORT_DIR/node-logs.txt" || true
   fi
@@ -320,7 +321,8 @@ start_node() {
     -e WRFCOIN_REQUIRE_PRODUCER_AUTH=1 \
     -e WRFCOIN_GENESIS_FAUCET_ADDRESS=0x2727272727272727272727272727272727272727 \
     -e WRFCOIN_GENESIS_ORACLE_SET=none \
-    -e RUST_LOG=info \
+    -e RUST_LOG="$NODE_RUST_LOG" \
+    -e WRFCOIN_P2P_BOOTSTRAP_REDIAL_INTERVAL_SECS=5 \
     --env-file "$PIN_FILE" \
     -v "$SCRATCH_DIR/$name:/app/data/hsm" \
     "${extra[@]}" \
@@ -368,8 +370,11 @@ if ! [[ "$PEER_ID_A" =~ ^12D3KooW[A-Za-z0-9]+$ ]]; then
   LAST_ERROR="could not read node-a's peer id"
   exit 1
 fi
-BOOTSTRAP_A="/dns4/node-a/tcp/9000/p2p/$PEER_ID_A"
-log "node-a bootstrap address: $BOOTSTRAP_A"
+# WRFCOIN_P2P_BOOTSTRAP is comma-separated. Offer the container IP as well as the
+# DNS name, so a name-resolution problem cannot hide a dial problem.
+IP_A="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$NETWORK_NAME\").IPAddress}}" "${CONTAINER_PREFIX}-node-a")"
+BOOTSTRAP_A="/ip4/${IP_A}/tcp/9000/p2p/${PEER_ID_A},/dns4/node-a/tcp/9000/p2p/${PEER_ID_A}"
+log "node-a bootstrap addresses: $BOOTSTRAP_A"
 # Node B and node C both bootstrap from node-a, so isolating C leaves A-B intact.
 start_node node-b 9000 "$BOOTSTRAP_A"
 start_node node-c 9000 "$BOOTSTRAP_A"
