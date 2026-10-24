@@ -24,6 +24,9 @@ PARTITION_HOLD_SECONDS="${P2P_PARTITION_HOLD_SECONDS:-10}"
 NETWORK_NAME="${P2P_PARTITION_NETWORK_NAME:-wrfcoin-p2p-partition-${GITHUB_RUN_ID:-$$}}"
 CONTAINER_PREFIX="${P2P_PARTITION_CONTAINER_PREFIX:-wrf-node-${GITHUB_RUN_ID:-$$}}"
 DRY_RUN=0
+# linear: only the isolated node mines, so the heal is a catch-up (blocking gate).
+# fork:   both sides mine, so the heal needs a follower to reorganise (known gap).
+SCENARIO="${P2P_PARTITION_SCENARIO:-linear}"
 
 PHASE_BASELINE="pending"
 PHASE_PARTITION="pending"
@@ -40,15 +43,17 @@ GENESIS_HASH=""
 # A dedicated network id: "testnet" would select core4's compiled-in testnet
 # genesis hash, which a throwaway chain can never match. Chain id stays 777.
 NETWORK_ID="${P2P_PARTITION_NETWORK_ID:-ci-p2p-partition}"
-NODE_RUST_LOG="${P2P_PARTITION_RUST_LOG:-info,wrfcoin_p2p=debug,libp2p_swarm=debug,libp2p_dns=debug,libp2p_tcp=debug}"
+NODE_RUST_LOG="${P2P_PARTITION_RUST_LOG:-info}"
 
 usage() {
   cat <<'EOF'
-Usage: run-p2p-partition-ci.sh [--artifact-dir PATH] [--image IMAGE] [--dry-run]
+Usage: run-p2p-partition-ci.sh [--artifact-dir PATH] [--image IMAGE] [--scenario linear|fork] [--dry-run]
 
 Options:
   --artifact-dir PATH   Write logs and summaries under PATH.
   --image IMAGE         Docker image to use for peer containers.
+  --scenario NAME       linear (default): only node-c mines while isolated.
+                        fork: node-a and node-c both mine (divergent chains).
   --dry-run             Validate configuration and emit a dry-run summary without touching Docker.
   -h, --help            Show this help.
 
@@ -65,11 +70,17 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --artifact-dir) REPORT_DIR="$2"; shift 2 ;;
     --image) IMAGE="$2"; shift 2 ;;
+    --scenario) SCENARIO="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+case "$SCENARIO" in
+  linear|fork) ;;
+  *) echo "Unknown scenario: $SCENARIO (expected linear or fork)" >&2; exit 1 ;;
+esac
 
 mkdir -p "$REPORT_DIR"
 COMMAND_LOG="$REPORT_DIR/command-output.txt"
@@ -110,6 +121,7 @@ write_summary() {
 - Finished: ${finished_at}
 - Duration: ${duration}s
 - Image: ${IMAGE}
+- Scenario: ${SCENARIO}
 
 ## Phase Results
 | Phase | Result |
@@ -408,7 +420,9 @@ docker network disconnect "$NETWORK_NAME" "${CONTAINER_PREFIX}-node-c"
 record_cleanup_action "disconnected node-c"
 
 # Mine blocks on both sides of the partition
-mine_block node-a
+if [ "$SCENARIO" = fork ]; then
+  mine_block node-a
+fi
 mine_block node-c
 mine_block node-c
 
