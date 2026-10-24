@@ -199,9 +199,20 @@ get_height() {
   api_call "$1" GET "/network/info" | jq -r '.chain_height // 0'
 }
 
+# The coinbase must pay the producer's declared payout address (#2290), so the
+# miner address is the one provision_cluster put in the genesis set for the node.
+payout_address_for() {
+  case "$1" in
+    node-a) echo 0x0000000000000000000000000000000000000001 ;;
+    node-b) echo 0x0000000000000000000000000000000000000002 ;;
+    node-c) echo 0x0000000000000000000000000000000000000003 ;;
+    *) return 1 ;;
+  esac
+}
+
 mine_block() {
   log "Mining block on $1..."
-  api_call "$1" POST "/blocks/mine" '{"miner_address":"0x0000000000000000000000000000000000000000"}' > /dev/null
+  api_call "$1" POST "/blocks/mine" "{\"miner_address\":\"$(payout_address_for "$1")\"}" > /dev/null
 }
 
 wait_for_health() {
