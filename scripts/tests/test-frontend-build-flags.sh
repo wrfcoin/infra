@@ -23,6 +23,11 @@
 #    other value and any .env-file value is refused, compose passes it with an
 #    empty default and the image records it outside org.wrfcoin.frontend.*.
 #
+# 6. VITE_DISABLE_WALLET_SEND (frontend#552 S9, infra#1329): the web Send kill
+#    switch. Every build prints FRONTEND_DISABLE_WALLET_SEND=on|off; the public
+#    variant refuses `true` (web Send is ON for public, owner ruling 2026-10-15);
+#    staging may hide Send; garbage values and .env-file values are refused.
+#
 # The release-manifest side (a staging or flagged image is never FRESH) is in
 # test-render-release-manifest.sh (frontend_internal_surface_images_never_fresh).
 set -uo pipefail
@@ -158,6 +163,52 @@ fresh_app
 printf 'VITE_FAUCET_OPEN=true\n' > "$TMP/app/.env.example"
 guard_case faucet_file_example_ignored 0
 
+echo "guard: VITE_DISABLE_WALLET_SEND (web Send kill switch, infra#1329)"
+fresh_app
+# Unset and empty: Send visible, and the log says so explicitly.
+guard_case wallet_send_unset_off 0
+out_has wallet_send_unset_off 'FRONTEND_DISABLE_WALLET_SEND=off (web Send visible)'
+guard_case wallet_send_empty_off 0 VITE_DISABLE_WALLET_SEND=
+out_has wallet_send_empty_off 'FRONTEND_DISABLE_WALLET_SEND=off (web Send visible)'
+# Public + exact `true` would silently hide Send on the public build: refused,
+# and no state line is printed for a refused build.
+guard_case wallet_send_true_public_red 1 WRFCOIN_FRONTEND_BUILD_VARIANT=public VITE_DISABLE_WALLET_SEND=true
+out_has wallet_send_true_public_red 'VITE_DISABLE_WALLET_SEND=true'
+guard_case wallet_send_true_default_variant_red 1 VITE_DISABLE_WALLET_SEND=true
+if grep -Fq 'FRONTEND_DISABLE_WALLET_SEND=' "$TMP/wallet_send_true_default_variant_red.out"; then
+  fail wallet_send_true_default_variant_red "a refused build printed a Send state line"
+fi
+# Staging may hide Send, and says so.
+guard_case wallet_send_true_staging_on 0 WRFCOIN_FRONTEND_BUILD_VARIANT=staging VITE_DISABLE_WALLET_SEND=true
+out_has wallet_send_true_staging_on 'FRONTEND_DISABLE_WALLET_SEND=on (web Send HIDDEN)'
+guard_case wallet_send_unset_staging_off 0 WRFCOIN_FRONTEND_BUILD_VARIANT=staging
+out_has wallet_send_unset_staging_off 'FRONTEND_DISABLE_WALLET_SEND=off (web Send visible)'
+# The frontend honors only the exact string `true`; "false" and every garbage
+# value would silently leave Send visible while the operator meant otherwise.
+for bad in false FALSE TRUE True 1 0 on off yes " true" "true " '"true"' garbage; do
+  case_name="wallet_send_value_$(printf '%s' "$bad" | tr -c 'A-Za-z0-9' '_')_red"
+  guard_case "${case_name}_public" 1 "VITE_DISABLE_WALLET_SEND=$bad"
+  out_has "${case_name}_public" 'FRONTEND_FLAGS=REFUSED VITE_DISABLE_WALLET_SEND'
+  guard_case "${case_name}_staging" 1 WRFCOIN_FRONTEND_BUILD_VARIANT=staging "VITE_DISABLE_WALLET_SEND=$bad"
+done
+# Independent of the other switches; it does not open the VITE_ENABLE_* gate.
+guard_case wallet_send_off_faucet_true_pass 0 VITE_FAUCET_OPEN=true
+out_has wallet_send_off_faucet_true_pass 'FRONTEND_DISABLE_WALLET_SEND=off'
+guard_case wallet_send_unset_with_enable_flag_red 1 VITE_ENABLE_FULL_STUDIO=true
+# The build arg is the one switch: an .env file may not set it.
+for file in .env .env.production .env.local; do
+  fresh_app
+  printf 'VITE_DISABLE_WALLET_SEND=true\n' > "$TMP/app/$file"
+  guard_case "wallet_send_file_${file//[.-]/_}_red" 1
+  out_has "wallet_send_file_${file//[.-]/_}_red" "VITE_DISABLE_WALLET_SEND is set in $TMP/app env files: $file"
+done
+fresh_app
+printf 'VITE_DISABLE_WALLET_SEND=\nVITE_DISABLE_WALLET_SEND=""  # off\n' > "$TMP/app/.env.production"
+guard_case wallet_send_file_empty_pass 0
+fresh_app
+printf 'VITE_DISABLE_WALLET_SEND=true\n' > "$TMP/app/.env.example"
+guard_case wallet_send_file_example_ignored 0
+
 echo "guard: every .env file vite could load (any mode)"
 # Review of #1048, non-blocking 2: every .env and .env.<mode>[.local] is
 # scanned, not only the production-mode files; only *.example is exempt.
@@ -256,6 +307,15 @@ assert re.search(r"^ARG VITE_FAUCET_OPEN=$", serve, re.M)
 assert 'LABEL org.wrfcoin.stage.faucet-open="$VITE_FAUCET_OPEN"' in serve
 assert "org.wrfcoin.frontend.faucet" not in serve
 assert not re.search(r"^ENV VITE_FAUCET_OPEN", serve, re.M)
+# infra#1329: VITE_DISABLE_WALLET_SEND defaults EMPTY, is declared before the
+# guard (an ARG after it would bypass it), reaches the build as ENV, and is
+# passed by compose with an empty default.
+ws = [i for i, line in enumerate(lines) if re.match(r"^ARG VITE_DISABLE_WALLET_SEND", line)]
+assert len(ws) == 1 and lines[ws[0]] == "ARG VITE_DISABLE_WALLET_SEND=", "build stage must declare ARG VITE_DISABLE_WALLET_SEND= (empty default) once"
+assert ws[0] < guard, "VITE_DISABLE_WALLET_SEND is declared after the guard"
+assert re.search(r"^ENV VITE_DISABLE_WALLET_SEND=\$VITE_DISABLE_WALLET_SEND$", build, re.M)
+assert "VITE_DISABLE_WALLET_SEND: ${VITE_DISABLE_WALLET_SEND:-}" in compose, "compose does not pass VITE_DISABLE_WALLET_SEND with an empty default"
+assert not re.search(r"^ENV VITE_DISABLE_WALLET_SEND", serve, re.M)
 print("  ok    guard after COPY frontend/ and before npm run build; ARGs, compose args and labels agree")
 PY
 
@@ -285,9 +345,9 @@ PY
     [[ " ${FAILED[*]-} " == *" $1 "* ]] || echo "  ok    $1"
   }
   if render "$TMP/default.json" -u VITE_ENABLE_OPERATOR_PREVIEW -u VITE_ENABLE_FULL_STUDIO \
-      -u VITE_ENABLE_DEMO_SURFACES -u WRFCOIN_FRONTEND_BUILD_VARIANT -u VITE_PUBLIC_READONLY_PATHS -u VITE_FAUCET_OPEN; then
+      -u VITE_ENABLE_DEMO_SURFACES -u WRFCOIN_FRONTEND_BUILD_VARIANT -u VITE_PUBLIC_READONLY_PATHS -u VITE_FAUCET_OPEN -u VITE_DISABLE_WALLET_SEND; then
     args_are render_default_public_empty "$TMP/default.json" \
-      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': ''}"
+      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': '', 'VITE_DISABLE_WALLET_SEND': ''}"
   else
     cat "$TMP/default.json.err" >&2; fail render_default_public_empty "compose render failed"
   fi

@@ -203,6 +203,7 @@ services:
         # Onboarding faucet claim step (frontend#437 W28). Empty = off (the step
         # says the faucet is not funded yet). Same rules as above; owner's call.
         VITE_FAUCET_OPEN: ${VITE_FAUCET_OPEN:-}
+        VITE_DISABLE_WALLET_SEND: ${VITE_DISABLE_WALLET_SEND:-}
 
   # ---------------------------------------------------------------------------
   # DB Migrate — override base image with local build (#238)

@@ -72,6 +72,11 @@ ENV VITE_PUBLIC_READONLY_PATHS=$VITE_PUBLIC_READONLY_PATHS
 # the owner's call once the faucet is funded.
 ARG VITE_FAUCET_OPEN=
 ENV VITE_FAUCET_OPEN=$VITE_FAUCET_OPEN
+# Web Send kill switch (frontend#552 S9, infra#1329): exactly `true` hides Send.
+# Web Send is ON for the public build (owner ruling 2026-10-15), so the guard
+# refuses `true` in the public variant and prints the state either way.
+ARG VITE_DISABLE_WALLET_SEND=
+ENV VITE_DISABLE_WALLET_SEND=$VITE_DISABLE_WALLET_SEND
 COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
 RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
     sh /usr/local/bin/frontend-build-flags-guard /app
