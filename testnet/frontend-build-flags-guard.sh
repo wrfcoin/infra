@@ -37,6 +37,15 @@
 # the default) or exactly `true`, never from a .env file. Turning it on is the
 # owner's call once the faucet is funded.
 #
+# VITE_DISABLE_WALLET_SEND (frontend#552 S9, infra#1329) is the web Send kill
+# switch: the exact string `true` hides Send entirely. Web Send is ON for the
+# public build (owner ruling 2026-10-15), so the PUBLIC variant refuses `true`
+# rather than ship with Send silently hidden. Staging may set it. The guard
+# always prints FRONTEND_DISABLE_WALLET_SEND=on (Send hidden) or =off (Send
+# visible), so the build log and the deploy receipt record Send's state. Same
+# value rules as the switches above: empty or exactly `true`, never from a
+# .env file.
+#
 # Exit 0 = allowed, 1 = refused.
 #
 # usage: frontend-build-flags-guard.sh [APP_DIR]   (default: .)
@@ -106,6 +115,17 @@ exact_true_switch VITE_PUBLIC_READONLY_PATHS "Stage 1.5" \
   "FRONTEND_PUBLIC_READONLY=on (Stage 1.5 read-only stage built in)" "FRONTEND_PUBLIC_READONLY=off"
 exact_true_switch VITE_FAUCET_OPEN "faucet claim" \
   "FRONTEND_FAUCET_OPEN=on (onboarding offers the faucet claim)" "FRONTEND_FAUCET_OPEN=off"
+
+# The public variant must not hide Send. Judged before the switch prints, so a
+# refused build never logs a state line.
+if [ "$variant" = public ] && [ "${VITE_DISABLE_WALLET_SEND-}" = true ]; then
+  echo "FRONTEND_FLAGS=REFUSED variant=public: VITE_DISABLE_WALLET_SEND=true would build the public image with web Send hidden." >&2
+  echo "  Web Send is ON for the public build (owner ruling 2026-10-15). Empty the build arg, or use" >&2
+  echo "  WRFCOIN_FRONTEND_BUILD_VARIANT=staging for an image that hides Send." >&2
+  exit 1
+fi
+exact_true_switch VITE_DISABLE_WALLET_SEND "web Send kill switch" \
+  "FRONTEND_DISABLE_WALLET_SEND=on (web Send HIDDEN)" "FRONTEND_DISABLE_WALLET_SEND=off (web Send visible)"
 
 case "$variant" in
   public)
