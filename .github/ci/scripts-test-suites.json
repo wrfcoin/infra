@@ -339,6 +339,10 @@
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
       {
+        "path": "scripts/tests/test-nginx-frontend-downloads.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
         "path": "scripts/tests/test-node-health-gate-liveness.sh",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
