@@ -18,7 +18,8 @@ HSM_TOKEN_LABEL="wrfcoin-validator"
 HSM_KEY_LABEL="wrfcoin-signing-key"
 OPERATOR_TOKEN="${WRFCOIN_OPERATOR_TOKEN:-dev-operator-token}"
 SETUP_TIMEOUT_SECONDS="${P2P_PARTITION_SETUP_TIMEOUT_SECONDS:-60}"
-RECOVERY_TIMEOUT_SECONDS="${P2P_PARTITION_RECOVERY_TIMEOUT_SECONDS:-60}"
+BASELINE_SYNC_TIMEOUT_SECONDS="${P2P_PARTITION_BASELINE_SYNC_TIMEOUT_SECONDS:-120}"
+RECOVERY_TIMEOUT_SECONDS="${P2P_PARTITION_RECOVERY_TIMEOUT_SECONDS:-120}"
 PARTITION_HOLD_SECONDS="${P2P_PARTITION_HOLD_SECONDS:-10}"
 NETWORK_NAME="${P2P_PARTITION_NETWORK_NAME:-wrfcoin-p2p-partition-${GITHUB_RUN_ID:-$$}}"
 CONTAINER_PREFIX="${P2P_PARTITION_CONTAINER_PREFIX:-wrf-node-${GITHUB_RUN_ID:-$$}}"
@@ -360,16 +361,40 @@ fi
 log "throwaway chain genesis hash (computed by node-a): $GENESIS_HASH"
 docker rm -f "${CONTAINER_PREFIX}-node-a" >/dev/null
 start_node node-a 9000 ""
-# Node B (connects to A)
-start_node node-b 9000 "/dns4/node-a/tcp/9000"
-# Node C (connects to B)
-start_node node-c 9000 "/dns4/node-b/tcp/9000"
+# libp2p only dials a bootstrap address that names the peer; node-a's identity
+# persists in its data dir across the restart above.
+PEER_ID_A="$(tr -d '[:space:]' < "$SCRATCH_DIR/node-a-data/peer_id.txt")"
+if ! [[ "$PEER_ID_A" =~ ^12D3KooW[A-Za-z0-9]+$ ]]; then
+  LAST_ERROR="could not read node-a's peer id"
+  exit 1
+fi
+BOOTSTRAP_A="/dns4/node-a/tcp/9000/p2p/$PEER_ID_A"
+log "node-a bootstrap address: $BOOTSTRAP_A"
+# Node B and node C both bootstrap from node-a, so isolating C leaves A-B intact.
+start_node node-b 9000 "$BOOTSTRAP_A"
+start_node node-c 9000 "$BOOTSTRAP_A"
 
 phase "baseline readiness"
 PHASE_BASELINE="running"
 wait_for_health node-a "$SETUP_TIMEOUT_SECONDS"
 wait_for_health node-b "$SETUP_TIMEOUT_SECONDS"
 wait_for_health node-c "$SETUP_TIMEOUT_SECONDS"
+# Partition only a cluster that already agrees on the chain; otherwise node-c
+# would mine its own block 1 and the "heal" would be a fork, not a re-sync.
+log "Waiting for node-b and node-c to sync node-a's chain..."
+started="$(date +%s)"
+while true; do
+  HEIGHT_A=$(get_height node-a)
+  if [ "$HEIGHT_A" -ge 1 ] && [ "$(get_height node-b)" -eq "$HEIGHT_A" ] && [ "$(get_height node-c)" -eq "$HEIGHT_A" ]; then
+    log "Baseline synced at height $HEIGHT_A"
+    break
+  fi
+  if [ $(( $(date +%s) - started )) -ge "$BASELINE_SYNC_TIMEOUT_SECONDS" ]; then
+    LAST_ERROR="node-b/node-c did not sync node-a's chain within ${BASELINE_SYNC_TIMEOUT_SECONDS}s"
+    exit 1
+  fi
+  sleep 5
+done
 PHASE_BASELINE="passed"
 
 phase "simulating partition (isolate node-c)"
