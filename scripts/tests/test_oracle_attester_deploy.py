@@ -298,7 +298,7 @@ def test_yubikey_overlays_select_transport_without_changing_custody_identity():
 def test_ci_builds_and_executes_the_explicit_attester_image_target():
     workflow = _without_comments(IMAGE_WORKFLOW.read_text())
     assert "repository: wrfcoin/core4" in workflow
-    assert "ref: 52cca4b6234f0ed67a3b25e50066ae6103ce2b4a" in workflow
+    assert "ref: de9d0d268e1a914109444c1d49b2dcfffe896d80" in workflow
     assert "target: oracle-attester-runtime" in workflow
     assert "load: true" in workflow
     assert "docker image inspect wrfcoin/oracle-attester:ci" in workflow
