@@ -13,6 +13,9 @@ REPORT_DIR="${REPORT_DIR:-$REPO_ROOT/artifacts/p2p-partition}"
 
 # Configuration
 IMAGE="${P2P_PARTITION_IMAGE:-wrfcoin/wrfcoin-node:latest}"
+HSM_MODULE="/usr/lib/softhsm/libsofthsm2.so"
+HSM_TOKEN_LABEL="wrfcoin-validator"
+HSM_KEY_LABEL="wrfcoin-signing-key"
 OPERATOR_TOKEN="${WRFCOIN_OPERATOR_TOKEN:-dev-operator-token}"
 SETUP_TIMEOUT_SECONDS="${P2P_PARTITION_SETUP_TIMEOUT_SECONDS:-60}"
 RECOVERY_TIMEOUT_SECONDS="${P2P_PARTITION_RECOVERY_TIMEOUT_SECONDS:-60}"
@@ -30,6 +33,8 @@ STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 CONTAINERS=()
 CLEANUP_ACTIONS=()
+SCRATCH_DIR=""
+GENESIS_PRODUCER_SET=""
 
 usage() {
   cat <<'EOF'
@@ -142,6 +147,15 @@ cleanup() {
   docker network rm "$NETWORK_NAME" >/dev/null 2>&1 || true
   record_cleanup_action "removed network ${NETWORK_NAME}"
 
+  if [ -n "$SCRATCH_DIR" ] && [ -d "$SCRATCH_DIR" ]; then
+    # The token dirs are chowned to the node user inside the image, so remove
+    # them through the image rather than needing host sudo.
+    docker run --rm --user 0 --entrypoint sh -v "$SCRATCH_DIR:/scratch" "$IMAGE" \
+      -c 'rm -rf /scratch/*' >/dev/null 2>&1 || true
+    rm -rf "$SCRATCH_DIR" 2>/dev/null || true
+    record_cleanup_action "removed throwaway HSM tokens"
+  fi
+
   PHASE_TEARDOWN="${LAST_ERROR:+completed-with-failure}"
   PHASE_TEARDOWN="${PHASE_TEARDOWN:-passed}"
   write_summary
@@ -208,6 +222,56 @@ wait_for_health() {
   done
 }
 
+# The release node signs blocks only through the PKCS#11 path (the key-file and
+# hex-env signers are debug_assertions-only). Each node therefore gets its own
+# throwaway SoftHSM2 token, created with the tooling inside the image under test
+# so the module and the token format are the ones the node will load. Only the
+# public key leaves the token; PINs are random per run and live in a 0600 file.
+provision_token() {
+  local name="$1"
+  local dir="$SCRATCH_DIR/$name"
+  mkdir -p "$dir"
+
+  docker run --rm --user 0 --entrypoint sh \
+    --env-file "$PIN_FILE" -v "$dir:/app/data/hsm" "$IMAGE" -c '
+      set -eu
+      mkdir -p /app/data/hsm/tokens
+      printf "directories.tokendir = /app/data/hsm/tokens\nobjectstore.backend = file\nlog.level = ERROR\n" \
+        > /app/data/hsm/softhsm2.conf
+      export SOFTHSM2_CONF=/app/data/hsm/softhsm2.conf
+      softhsm2-util --init-token --free --label "'"$HSM_TOKEN_LABEL"'" \
+        --pin "$WRFCOIN_HSM_PIN" --so-pin "$WRFCOIN_HSM_SO_PIN" >/dev/null
+      pkcs11-tool --module "'"$HSM_MODULE"'" --login --pin env:WRFCOIN_HSM_PIN \
+        --token-label "'"$HSM_TOKEN_LABEL"'" --keypairgen --key-type EC:edwards25519 \
+        --label "'"$HSM_KEY_LABEL"'" --id 01 >/dev/null
+      chown -R 1001:1001 /app/data/hsm
+      pkcs11-tool --module "'"$HSM_MODULE"'" --token-label "'"$HSM_TOKEN_LABEL"'" \
+        --read-object --type pubkey --label "'"$HSM_KEY_LABEL"'" | tail -c 32 | od -An -tx1 | tr -d " \n"
+    ' 2>"$dir.err" || { echo "token provisioning failed for $name (stderr below, no secrets):" >&2; sed 's/--pin [^ ]*/--pin ***/' "$dir.err" >&2; return 1; }
+}
+
+provision_cluster() {
+  SCRATCH_DIR="$(mktemp -d)"
+  PIN_FILE="$SCRATCH_DIR/pins.env"
+  ( umask 077
+    printf 'WRFCOIN_HSM_PIN=%s\nWRFCOIN_HSM_SO_PIN=%s\n' \
+      "$(od -An -N8 -tu8 /dev/urandom | tr -d ' \n')" "$(od -An -N8 -tu8 /dev/urandom | tr -d ' \n')" > "$PIN_FILE" )
+
+  local members="" idx=0 name pub
+  for name in node-a node-b node-c; do
+    idx=$((idx + 1))
+    pub="$(provision_token "$name")"
+    if ! [[ "$pub" =~ ^[0-9a-f]{64}$ ]]; then
+      LAST_ERROR="could not read a 32-byte ed25519 public key for $name from its SoftHSM token"
+      return 1
+    fi
+    log "$name producer public key: $pub"
+    members+="{\"producer_id\":\"ci-$name\",\"payout_address\":\"0x$(printf '%040x' "$idx")\",\"public_key\":\"$pub\"},"
+  done
+  GENESIS_PRODUCER_SET="{\"version\":1,\"members\":[${members%,}]}"
+  log "genesis producer set: $GENESIS_PRODUCER_SET"
+}
+
 start_node() {
   local name="$1"
   local p2p_port="$2"
@@ -225,7 +289,11 @@ start_node() {
     -e WRFCOIN_P2P_PORT="$p2p_port" \
     -e WRFCOIN_P2P_BOOTSTRAP="$bootstrap" \
     -e WRFCOIN_OPERATOR_TOKEN="$OPERATOR_TOKEN" \
+    -e WRFCOIN_GENESIS_PRODUCER_SET="$GENESIS_PRODUCER_SET" \
+    -e WRFCOIN_REQUIRE_PRODUCER_AUTH=1 \
     -e RUST_LOG=info \
+    --env-file "$PIN_FILE" \
+    -v "$SCRATCH_DIR/$name:/app/data/hsm" \
     "$IMAGE" > /dev/null
 
   CONTAINERS+=("$container_name")
@@ -241,6 +309,9 @@ fi
 
 docker network create "$NETWORK_NAME" >/dev/null
 record_cleanup_action "created network ${NETWORK_NAME}"
+
+phase "provisioning SoftHSM producer tokens"
+provision_cluster
 
 phase "starting cluster"
 # Node A (seed)

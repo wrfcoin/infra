@@ -1,9 +1,9 @@
 permissions:
   contents: read
 
-# NOTE: This gate requires core4#663 to merge first — the Docker build
-# depends on core4/native-chain/Dockerfile which is added in that PR.
-# Until core4#663 lands, the "Build wrfcoin-node image" step will fail.
+# The node image is infra's own shipped one (infra/docker/Dockerfile.core): the
+# release binary built with the `hsm` feature, plus SoftHSM2. The scenario signs
+# blocks through that HSM path with throwaway tokens; it never swaps the binary.
 
 name: P2P Partition Gate
 
@@ -36,8 +36,8 @@ jobs:
       - name: Build wrfcoin-node image
         uses: docker/build-push-action@v7
         with:
-          context: wrfcoin/core4
-          file: wrfcoin/core4/native-chain/Dockerfile
+          context: wrfcoin
+          file: wrfcoin/infra/infra/docker/Dockerfile.core
           push: false
           load: true
           tags: wrfcoin/wrfcoin-node:latest
