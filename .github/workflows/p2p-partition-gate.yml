@@ -11,6 +11,13 @@ on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch: {}
+  # Hosted runner + contents: read only, so a PR trigger is safe; scoped to the
+  # scenario files since the job builds the node image.
+  pull_request:
+    paths:
+      - ".github/workflows/p2p-partition-gate.yml"
+      - "scripts/run-p2p-partition-ci.sh"
+      - "infra/docker/Dockerfile.core"
 
 jobs:
   p2p-partition:
@@ -69,8 +76,10 @@ jobs:
           set -o pipefail
           mkdir -p artifacts/p2p-partition-fork
           if bash wrfcoin/infra/scripts/run-p2p-partition-ci.sh | tee artifacts/p2p-partition-fork/workflow-output.txt; then
+            echo "::notice title=Fork re-convergence passed::The known fork re-convergence gap may be fixed; the both-sides fork scenario converged."
             echo "### Fork re-convergence: PASSED (known gap appears closed)" >> "$GITHUB_STEP_SUMMARY"
           else
+            echo "::warning title=KNOWN RED: fork re-convergence::After a both-sides fork heals, the follower on the losing side does not re-converge (non-blocking, tracked privately)."
             echo "### Fork re-convergence: KNOWN RED (non-blocking, tracked privately)" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi

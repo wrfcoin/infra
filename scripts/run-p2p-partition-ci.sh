@@ -213,6 +213,20 @@ get_height() {
   api_call "$1" GET "/network/info" | jq -r '.chain_height // 0'
 }
 
+# Convergence evidence: the snapshot summary's height and state_root_hex, and
+# the hash of the block at that height. Prints "<height> <state_root> <hash>".
+get_tip_evidence() {
+  local snap h sr bh
+  snap="$(api_call "$1" GET "/state/snapshot")"
+  h="$(jq -r '.height // empty' <<<"$snap")"
+  sr="$(jq -r '.state_root_hex // empty' <<<"$snap")"
+  bh=""
+  if [ -n "$h" ]; then
+    bh="$(api_call "$1" GET "/chain/block/$h" | jq -r '.data.hash // empty')"
+  fi
+  echo "${h:-none} ${sr:-none} ${bh:-none}"
+}
+
 # The coinbase must pay the producer's declared payout address (#2290), so the
 # miner address is the one provision_cluster put in the genesis set for the node.
 payout_address_for() {
@@ -448,8 +462,20 @@ while true; do
   log "Current heights - A: $HEIGHT_A, B: $HEIGHT_B, C: $HEIGHT_C"
   
   if [ "$HEIGHT_A" -eq "$HEIGHT_C" ] && [ "$HEIGHT_A" -eq "$HEIGHT_B" ] && [ "$HEIGHT_A" -gt 0 ]; then
-    log "✅ Cluster re-synced at height $HEIGHT_A"
-    break
+    log "Heights agree at $HEIGHT_A; comparing state_root and tip hash"
+    EV_A="$(get_tip_evidence node-a)"
+    EV_B="$(get_tip_evidence node-b)"
+    EV_C="$(get_tip_evidence node-c)"
+    if [ "$EV_A" = "$EV_B" ] && [ "$EV_A" = "$EV_C" ] && [[ "$EV_A" != *none* ]]; then
+      log "✅ Cluster converged (height state_root tip_hash): $EV_A"
+      break
+    fi
+    log "Convergence mismatch (height state_root tip_hash):"
+    log "  node-a: $EV_A"
+    log "  node-b: $EV_B"
+    log "  node-c: $EV_C"
+    LAST_ERROR="Heights agree but state_root/tip hash differ across nodes"
+    exit 1
   fi
 
   if [ $(( $(date +%s) - started )) -ge "$RECOVERY_TIMEOUT_SECONDS" ]; then
