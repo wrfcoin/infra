@@ -35,6 +35,10 @@ CONTAINERS=()
 CLEANUP_ACTIONS=()
 SCRATCH_DIR=""
 GENESIS_PRODUCER_SET=""
+GENESIS_HASH=""
+# A dedicated network id: "testnet" would select core4's compiled-in testnet
+# genesis hash, which a throwaway chain can never match. Chain id stays 777.
+NETWORK_ID="${P2P_PARTITION_NETWORK_ID:-ci-p2p-partition}"
 
 usage() {
   cat <<'EOF'
@@ -246,7 +250,7 @@ provision_token() {
         --label "'"$HSM_KEY_LABEL"'" --id 01 >/dev/null
       chown -R 1001:1001 /app/data/hsm
       pkcs11-tool --module "'"$HSM_MODULE"'" --token-label "'"$HSM_TOKEN_LABEL"'" \
-        --read-object --type pubkey --label "'"$HSM_KEY_LABEL"'" | tail -c 32 | od -An -tx1 | tr -d " \n"
+        --read-object --type pubkey --label "'"$HSM_KEY_LABEL"'" | sed "/-----/d" | base64 -d | tail -c 32 | od -An -tx1 | tr -d " \n"
     ' 2>"$dir.err" || { echo "token provisioning failed for $name (stderr below, no secrets):" >&2; sed 's/--pin [^ ]*/--pin ***/' "$dir.err" >&2; return 1; }
 }
 
@@ -278,12 +282,23 @@ start_node() {
   local bootstrap="$3"
   local container_name="${CONTAINER_PREFIX}-${name}"
 
+  local extra=()
+  if [ -n "$GENESIS_HASH" ]; then
+    extra+=(-e "WRFCOIN_GENESIS_HASH=$GENESIS_HASH")
+  fi
+  if [ "$name" = node-a ]; then
+    # node-a's chain must survive the restart that pins its own genesis hash.
+    mkdir -p "$SCRATCH_DIR/node-a-data"
+    chmod 0777 "$SCRATCH_DIR/node-a-data"
+    extra+=(-v "$SCRATCH_DIR/node-a-data:/app/data")
+  fi
+
   log "Starting node $name..."
   docker run -d \
     --name "$container_name" \
     --network "$NETWORK_NAME" \
     -e WRFCOIN_CHAIN_ID=777 \
-    -e WRFCOIN_NETWORK_ID=testnet \
+    -e WRFCOIN_NETWORK_ID="$NETWORK_ID" \
     -e ALLOW_UNENCRYPTED_STORAGE=true \
     -e WRFCOIN_P2P_ENABLED=true \
     -e WRFCOIN_P2P_PORT="$p2p_port" \
@@ -294,6 +309,7 @@ start_node() {
     -e RUST_LOG=info \
     --env-file "$PIN_FILE" \
     -v "$SCRATCH_DIR/$name:/app/data/hsm" \
+    "${extra[@]}" \
     "$IMAGE" > /dev/null
 
   CONTAINERS+=("$container_name")
@@ -315,6 +331,21 @@ provision_cluster
 
 phase "starting cluster"
 # Node A (seed)
+start_node node-a 9000 ""
+# The genesis block (height 1) folds in a wall-clock timestamp, so the hash of
+# this throwaway chain only exists once its first block does. Let node-a build
+# it, read back the hash the node itself computed, then pin that hash on every
+# node. Pinning is what makes the P2P genesis handshake a real check here.
+wait_for_health node-a "$SETUP_TIMEOUT_SECONDS"
+mine_block node-a
+GENESIS_HASH="$(api_call node-a GET /network/info | jq -r '[.. | .genesis_hash? | strings] | first // empty')"
+GENESIS_HASH="${GENESIS_HASH#0x}"
+if ! [[ "$GENESIS_HASH" =~ ^[0-9a-f]{64}$ ]] || [[ "$GENESIS_HASH" =~ ^0+$ ]]; then
+  LAST_ERROR="node-a did not report a usable genesis hash after block 1"
+  exit 1
+fi
+log "throwaway chain genesis hash (computed by node-a): $GENESIS_HASH"
+docker rm -f "${CONTAINER_PREFIX}-node-a" >/dev/null
 start_node node-a 9000 ""
 # Node B (connects to A)
 start_node node-b 9000 "/dns4/node-a/tcp/9000"
