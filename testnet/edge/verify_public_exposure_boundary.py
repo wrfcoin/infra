@@ -175,6 +175,13 @@ EXPECTED = {
     # Own-wallet reads: wallet-routes.js requireAuth (l.29) + requireOwnAddress; the edge also demands a Bearer header.
     "public_wallet_send": ("POST", "path /api/wallet/send", ("request_body {", "max_size 4096", "}", *BACKEND)),
     "public_wallet_send_nonce": ("GET", "path_regexp ^/api/wallet/0x[0-9a-f]{40}/nonce$", BACKEND),
+    # backend#21 self-proving passkey transfer: NO bearer (the assertion is the authorization), exact paths, 32 KiB cap.
+    "public_wallet_send_passkey": (
+        "POST",
+        "path_regexp ^/api/wallet/send-passkey$",
+        ("request_body {", "max_size 32768", "}", *BACKEND),
+    ),
+    "public_wallet_send_passkey_nonce": ("GET", "path_regexp ^/api/wallet/send-passkey/nonce/0x[0-9a-f]{40}$", BACKEND),
     "public_readonly_wallet_info": ("GET", "path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}$", BACKEND),
     "public_readonly_wallet_transactions": ("GET", "path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}/transactions$", BACKEND),
     # governance-routes.ts l.231 / l.275 (PROPOSAL_ID_RE l.273) / l.564.
@@ -203,6 +210,8 @@ READONLY_GATE = "vars {env.PUBLIC_READONLY_API} on"
 GATED = frozenset({
     "public_wallet_send",
     "public_wallet_send_nonce",
+    "public_wallet_send_passkey",
+    "public_wallet_send_passkey_nonce",
     "public_readonly_stations",
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
@@ -244,6 +253,8 @@ EARNINGS_QUERY_LOCK = (
 READONLY_QUERY_LOCK = {
     "public_wallet_send": 'expression `{query} == ""`',
     "public_wallet_send_nonce": 'expression `{query} == ""`',
+    "public_wallet_send_passkey": 'expression `{query} == ""`',
+    "public_wallet_send_passkey_nonce": 'expression `{query} == ""`',
     "public_readonly_stations": 'expression `{query} == ""`',
     "public_readonly_station_detail": 'expression `{query} == "" || {query} == "limit=1"`',
     # earnings takes NO query (the frontend sends none; `limit` sizes a core4 read fan-out).
@@ -352,7 +363,7 @@ def verify(root: Path = ROOT) -> None:
         approved = [f"method {expected[0]}", expected[1]] + (
             [READONLY_GATE, READONLY_QUERY_LOCK[name]] if name in GATED else []
         ) + ([QUERY_LOCK[name]] if name in QUERY_LOCK else []) + ([BEARER_LOCK[name]] if name in BEARER_LOCK else [])
-        if name == "public_wallet_send":
+        if name in ("public_wallet_send", "public_wallet_send_passkey"):
             approved += ['header Content-Type application/json']
         if directives(block(policy, f"@{name}")) != approved:
             raise AssertionError(
@@ -764,6 +775,32 @@ def self_test() -> None:
         "S2b weather data/historical admitted": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("^/api/weather/current/-?", "^/api/weather/(current|data)/-?"),
+        ),
+        "backend#21 passkey send widened to a prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path_regexp ^/api/wallet/send-passkey$", "path_regexp ^/api/wallet/send-passkey"),
+        ),
+        "backend#21 passkey send body cap removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("\t\t\tmax_size 32768\n", "\t\t\tmax_size 4GiB\n"),
+        ),
+        "backend#21 passkey send acquires a bearer requirement": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/wallet/send-passkey$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "path_regexp ^/api/wallet/send-passkey$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+            ),
+        ),
+        "backend#21 passkey nonce accepts uppercase or any-length address": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("send-passkey/nonce/0x[0-9a-f]{40}$", "send-passkey/nonce/0x[0-9a-fA-F]+$"),
+        ),
+        "backend#21 passkey nonce widened beyond GET": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "@public_wallet_send_passkey_nonce {\n\t\tmethod GET",
+                "@public_wallet_send_passkey_nonce {\n\t\tmethod GET POST",
+            ),
         ),
         "infra#1095 owner-action relay widened beyond POST": (
             "testnet/edge/public_onboarding.caddy",

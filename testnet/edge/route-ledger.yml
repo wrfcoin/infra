@@ -86,6 +86,11 @@ services:
       with Bearer and no query. Both require PUBLIC_READONLY_API=on exactly;
       default OFF remains unchanged. Backend binds JWT sub to signed from and
       relays signed authorizations to core4 with its Contributor credential.
+      backend#21 adds POST /api/wallet/send-passkey (no bearer: the WebAuthn assertion
+      is the authorization; application/json, no query, 32KiB body cap) and
+      GET /api/wallet/send-passkey/nonce/<0x40 lowercase hex> (no bearer, no query),
+      both exact paths behind PUBLIC_READONLY_API=on. The backend route stays dormant
+      until WRFCOIN_ENABLE_PASSKEY_SEND=true, unset until after h3400 and the owner's go.
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still
