@@ -449,6 +449,33 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Self-proving passkey transfer (backend#21, owner ruling "transfer proves itself"): the
+	# WebAuthn assertion in the body is the authorization and core4 verifies it, so NO bearer.
+	# Backend route is dormant unless WRFCOIN_ENABLE_PASSKEY_SEND=true (stays unset until after
+	# h3400 and the owner's go). Exact paths only; 32 KiB covers three 4 KiB hex fields.
+	@public_wallet_send_passkey {
+		method POST
+		path_regexp ^/api/wallet/send-passkey$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_wallet_send_passkey {
+		request_body {
+			max_size 32768
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_wallet_send_passkey_nonce {
+		method GET
+		path_regexp ^/api/wallet/send-passkey/nonce/0x[0-9a-f]{40}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_wallet_send_passkey_nonce {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Website parity reads (S1 + S2, owner goal: public site matches the mobile app
 	# before GO). All five groups below share the PUBLIC_READONLY_API=on gate (OFF
 	# unless the edge env carries it exactly), GET only, EXACT paths, and a locked
