@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "js-yaml": "^5.4.3",
+    "js-yaml": "^5.5.0",
     "node-cron": "^4.6.0",
     "prom-client": "^15.1.0"
   },
@@ -21,7 +21,7 @@
     "@types/node": "^26.6.4",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "esbuild": ">=0.25.0"
