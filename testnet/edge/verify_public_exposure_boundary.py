@@ -218,6 +218,20 @@ EXPECTED = {
         r"path_regexp ^/api/weather/forecast/-?[0-9]{1,2}\.[0-9],-?[0-9]{1,3}\.[0-9]$",
         BACKEND,
     ),
+    # Weekly forecast competition (backend#251): the list, this week, or one ISO week; no query.
+    "public_readonly_competitions": (
+        "GET", "path_regexp ^/api/competitions(/(current|[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])))?$", BACKEND,
+    ),
+    # Payout notifications (backend#389): no email, no user URL. Config is public; subscription writes and
+    # reads need the wallet-login Bearer; unsubscribe is by possession of the endpoint or topic.
+    "public_notifications_config": ("GET", "path /api/notifications/config", BACKEND),
+    "public_notifications_subscribe": ("POST", "path /api/notifications/subscriptions", ("request_body {", "max_size 4096", "}", *BACKEND)),
+    "public_notifications_list": ("GET", "path_regexp ^/api/notifications/subscriptions/0x[0-9a-fA-F]{40}$", BACKEND),
+    "public_notifications_delete": ("DELETE", "path_regexp ^/api/notifications/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", BACKEND),
+    "public_notifications_test": (
+        "POST", "path_regexp ^/api/notifications/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/test$", ("request_body {", "max_size 1024", "}", *BACKEND),
+    ),
+    "public_notifications_unsubscribe": ("POST", "path /api/notifications/unsubscribe", ("request_body {", "max_size 4096", "}", *BACKEND)),
 }
 
 # infra#983: routes admitted ONLY while the edge container's environment
@@ -244,6 +258,13 @@ GATED = frozenset({
     "public_readonly_explorer_summary",
     "public_readonly_proof_card",
     "public_readonly_network_nodes",
+    "public_readonly_competitions",
+    "public_notifications_config",
+    "public_notifications_subscribe",
+    "public_notifications_list",
+    "public_notifications_delete",
+    "public_notifications_test",
+    "public_notifications_unsubscribe",
     "public_readonly_station_ownership",
     "public_readonly_wallet_info",
     "public_readonly_wallet_transactions",
@@ -260,7 +281,13 @@ BEARER_LOCK = {
     "public_wallet_send_nonce": 'header Authorization "Bearer *"',
     "public_readonly_wallet_info": 'header Authorization "Bearer *"',
     "public_readonly_wallet_transactions": 'header Authorization "Bearer *"',
+    "public_notifications_subscribe": 'header Authorization "Bearer *"',
+    "public_notifications_list": 'header Authorization "Bearer *"',
+    "public_notifications_delete": 'header Authorization "Bearer *"',
+    "public_notifications_test": 'header Authorization "Bearer *"',
 }
+# JSON-body writes: the matcher also pins Content-Type (last directive).
+JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_notifications_unsubscribe"})
 # The ONLY query the frontend sends (useWeatherLeaderboard / GlobalLeaderboard): metric, period, limit,
 # in that order, no geo (the backend 400s earnings+geo and anonymous geo is never admitted), limit 1..30.
 LEADERBOARD_QUERY_LOCK = (
@@ -301,6 +328,14 @@ READONLY_QUERY_LOCK = {
     # frontend proofCardPath(): no query, or exactly the share link's block height hint.
     "public_readonly_proof_card": PROOF_CARD_QUERY_LOCK,
     "public_readonly_network_nodes": 'expression `{query} == ""`',
+    # frontend COMPETITIONS_PATH / COMPETITION_CURRENT_PATH / competitionWeekPath(): never a query.
+    "public_readonly_competitions": 'expression `{query} == ""`',
+    "public_notifications_config": 'expression `{query} == ""`',
+    "public_notifications_subscribe": 'expression `{query} == ""`',
+    "public_notifications_list": 'expression `{query} == ""`',
+    "public_notifications_delete": 'expression `{query} == ""`',
+    "public_notifications_test": 'expression `{query} == ""`',
+    "public_notifications_unsubscribe": 'expression `{query} == ""`',
     "public_readonly_station_ownership": 'expression `{query} == ""`',
     "public_readonly_wallet_info": 'expression `{query} == ""`',
     # mobile walletTransactions shape: limit then offset; backend clamps 1..100, edge admits 1..50.
@@ -402,7 +437,7 @@ def verify(root: Path = ROOT) -> None:
         approved = [f"method {expected[0]}", expected[1]] + (
             [READONLY_GATE, READONLY_QUERY_LOCK[name]] if name in GATED else []
         ) + ([QUERY_LOCK[name]] if name in QUERY_LOCK else []) + ([BEARER_LOCK[name]] if name in BEARER_LOCK else [])
-        if name in ("public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check"):
+        if name in JSON_BODY:
             approved += ['header Content-Type application/json']
         if directives(block(policy, f"@{name}")) != approved:
             raise AssertionError(
@@ -465,7 +500,7 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
@@ -487,7 +522,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config",
             "}",
             "key {client_ip}",
             "events 30",
@@ -497,6 +532,15 @@ def verify(root: Path = ROOT) -> None:
         "weather_noaa": [
             "match {",
             "path /api/weather/current/* /api/weather/forecast/*",
+            "}",
+            "key {client_ip}",
+            "events 10",
+            "window 1m",
+        ],
+        # backend#389: payout-notification writes, 10/min per client.
+        "notify_write": [
+            "match {",
+            "path /api/notifications/subscriptions /api/notifications/subscriptions/* /api/notifications/unsubscribe",
             "}",
             "key {client_ip}",
             "events 10",
@@ -940,6 +984,37 @@ def self_test() -> None:
         "network nodes widened beyond GET": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("@public_readonly_network_nodes {\n\t\tmethod GET", "@public_readonly_network_nodes {\n\t\tmethod GET POST"),
+        ),
+        "competitions widened to any week segment": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("(current|[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3]))", "[^/]+"),
+        ),
+        "competitions ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("5[0-3])))?$\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "5[0-3])))?$\n"),
+        ),
+        "notification subscribe Bearer removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "notification subscribe body cap widened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("handle @public_notifications_subscribe {\n\t\trequest_body {\n\t\t\tmax_size 4096", "handle @public_notifications_subscribe {\n\t\trequest_body {\n\t\t\tmax_size 1MB"),
+        ),
+        "notification list widened to any segment": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("^/api/notifications/subscriptions/0x[0-9a-fA-F]{40}$", "^/api/notifications/subscriptions/.+$"),
+        ),
+        "notification delete widened to GET": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@public_notifications_delete {\n\t\tmethod DELETE", "@public_notifications_delete {\n\t\tmethod DELETE GET"),
+        ),
+        "notify_write zone removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: re.sub(r"\t\tzone notify_write \{.*?\n\t\t\}\n", "", s, count=1, flags=re.S),
         ),
         "proof card widened to any segment": (
             "testnet/edge/public_onboarding.caddy",
