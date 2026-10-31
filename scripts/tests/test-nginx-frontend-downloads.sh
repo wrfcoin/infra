@@ -10,6 +10,11 @@
 # Dockerfile serves with, bound to loopback only, over a fixture dist/:
 #   /downloads, /downloads/   200 and the SPA index.html
 #   /downloads/manifest.json  200 and the manifest JSON, byte for byte
+#   /downloads/<file>.<ext> and /downloads/SHA256SUMS* that are NOT on disk
+#                             404, not the SPA (a missing checksum, signature or
+#                             binary must not look like it exists)
+#   /downloads/<file> on disk 200 and the file
+#   /downloads/<no-extension> 200 SPA fallback (unchanged)
 #   /no-such-route            200 SPA fallback (unchanged)
 #   /assets/missing.js        404 (a missing asset is not the SPA)
 #   no Location header names :5000
@@ -38,6 +43,7 @@ mkdir -p "$TMP/dist/downloads" "$TMP/dist/assets"
 printf '<!doctype html><title>spa-index</title>\n' > "$TMP/dist/index.html"
 printf '{"releases":[]}\n' > "$TMP/dist/downloads/manifest.json"
 printf 'console.log(1)\n' > "$TMP/dist/assets/app.js"
+printf 'present-archive\n' > "$TMP/dist/downloads/present.tar.gz"
 
 # wrfcoin-backend only has to resolve for nginx to start; nothing is proxied.
 CID="$(docker run -d --add-host wrfcoin-backend:127.0.0.1 -p 127.0.0.1::5000 \
@@ -69,6 +75,15 @@ probe downloads_bare /downloads 200 spa-index
 probe downloads_slash /downloads/ 200 spa-index
 probe downloads_manifest /downloads/manifest.json 200 '"releases"'
 cmp -s "$TMP/downloads_manifest.body" "$TMP/dist/downloads/manifest.json" || fail downloads_manifest_bytes "manifest body differs from the file"
+probe downloads_present_file /downloads/present.tar.gz 200 present-archive
+for missing in SHA256SUMS SHA256SUMS.asc manifest.json.asc wrfcoin-node.exe \
+               wrfcoin-wallet.apk wrfcoin-cli.tar.gz wrfcoin-cli.zip nested/dir/file.bin; do
+  probe "downloads_missing_${missing//[^A-Za-z0-9]/_}" "/downloads/$missing" 404
+  if grep -Fq spa-index "$TMP/downloads_missing_${missing//[^A-Za-z0-9]/_}.body"; then
+    fail "downloads_missing_${missing//[^A-Za-z0-9]/_}_spa" "GET /downloads/$missing served the SPA index"
+  fi
+done
+probe downloads_spa_deep_link /downloads/no-extension 200 spa-index
 probe spa_fallback /no-such-route 200 spa-index
 probe missing_asset /assets/missing.js 404
 probe real_asset /assets/app.js 200 'console.log'
