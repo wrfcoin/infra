@@ -1275,6 +1275,23 @@ NETWORK_NODES_CASES = (
     ("GET", "/api/network/x/../nodes", (), 400),
 )
 
+# Owner ruling 2026-11-01: bring-your-own-key Wolfram reading check. POST + application/json only,
+# exact path, no query (the caller's AppID rides in the body, never in a logged URL).
+_WR = "/api/integrations/wolfram/reading-check"
+_JSON = ("Content-Type: application/json",)
+WOLFRAM_READING_CHECK_CASES = (
+    ("POST", _WR, _JSON, 502),  # exactly what the station page sends
+    ("POST", _WR, (), 404),
+    ("POST", _WR, ("Content-Type: text/plain",), 404),
+    ("POST", _WR + "?appid=x", _JSON, 404),
+    ("POST", _WR + "/", _JSON, 404),
+    ("POST", "/api/integrations/wolfram/query", _JSON, 404),
+    ("POST", "/api/integrations/wolfram/execute", _JSON, 404),
+    ("GET", "/api/integrations/wolfram/settings", (), 404),
+    ("GET", _WR, (), 404),
+    ("PUT", _WR, _JSON, 404),
+    ("POST", "/api/integrations/x/../wolfram/reading-check", _JSON, 400),
+)
 
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
@@ -1453,6 +1470,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-proof-card", text, port, "on", PROOF_CARD_CASES, 16)
         prove_parity_reads(f"{label}-network-nodes-gate", text, port, None, NETWORK_NODES_CASES[:1], 12)
         prove_parity_reads(f"{label}-network-nodes", text, port, "on", NETWORK_NODES_CASES, 12)
+        prove_parity_reads(f"{label}-wolfram-gate", text, port, None, WOLFRAM_READING_CHECK_CASES[:1], 6)
+        prove_parity_reads(f"{label}-wolfram", text, port, "on", WOLFRAM_READING_CHECK_CASES, 6)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1470,6 +1489,10 @@ def main() -> None:
         ),
         "weather coordinates widened to two decimals": (
             caddy_src.replace("current/-?[0-9]{1,2}\\.[0-9],", "current/-?[0-9]{1,2}\\.[0-9]+,"), PARITY_WEATHER_CASES,
+        ),
+        "wolfram reading check widened to the integrations prefix": (
+            caddy_src.replace("path /api/integrations/wolfram/reading-check\n\t\tvars", "path /api/integrations/*\n\t\tvars"),
+            WOLFRAM_READING_CHECK_CASES,
         ),
         "forecaster profile widened to any segment": (
             caddy_src.replace("^/api/forecasters/c_[0-9a-f]{24}$", "^/api/forecasters/[^/]+$"), FORECASTER_EXPLORER_CASES,
