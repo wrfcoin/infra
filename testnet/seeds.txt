@@ -27,6 +27,6 @@
 # dead peers. If this file is empty, there are no published seeds yet; coordinate
 # with the WRFCoin team or another operator for fresh peer addresses.
 
-# Public seed publication is pending operator verification. Do not copy a template
-# as a live address; obtain the published bootstrap multiaddr before joining.
-# /ip4/<N5_PUBLIC_IP>/tcp/9000/p2p/12D3KooWMM7ukbQrn4BH2SjSNvyvAW2SaKUkHmDRng9KnifgYeWr
+# Chain 888 public seed. Must equal WRFCOIN_CUT_BOOTSTRAP in cut-pins.env
+# (check-seeds.sh refuses a mismatch).
+/dns4/seed.wrfcoin.com/tcp/9000/p2p/12D3KooWMM7ukbQrn4BH2SjSNvyvAW2SaKUkHmDRng9KnifgYeWr

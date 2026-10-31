@@ -276,7 +276,8 @@ run_join() {
       E2E_NODE_NETWORK="${E2E_NODE_NETWORK:-${CUT_NETWORK}}" \
       WRFCOIN_MIN_WORK_FACTOR=71 \
       ${CORE4_PIN:+CORE4_PIN="${CORE4_PIN}"} \
-      BOOTSTRAP_PEERS="${TEST_BOOTSTRAP}" WRFCOIN_P2P_EXTERNAL_ADDR="${ADVERTISE}" \
+      BOOTSTRAP_PEERS="${E2E_BOOTSTRAP-${TEST_BOOTSTRAP}}" WRFCOIN_P2P_EXTERNAL_ADDR="${E2E_ADVERTISE-${ADVERTISE}}" \
+      ${E2E_SERVICE_ID:+WRFCOIN_SERVICE_ID="${E2E_SERVICE_ID}"} \
       bash "${ws}/infra/testnet/join.sh" "$@" ) > "${ws}/out.log" 2>&1
 }
 env_val() { sed -n "s/^$2=//p" "$1/infra/testnet/.env" | tail -1; }
@@ -479,6 +480,52 @@ no_snapshot_refused() {
 }
 check "brand-new node without a snapshot -> refused, names core4#2806" no_snapshot_refused
 
+echo "== e2e: outbound-only sync node (no inbound route, no snapshot, no flags) =="
+# The 2026-10-31 newcomer path: no BOOTSTRAP_PEERS, no advertise address, no
+# snapshot, no Tailscale. It must use the pinned public seed, sync chain 888
+# from genesis, start the node, and never dial its own address.
+sync_only_no_inbound() {
+  local ws; ws="$(make_ws no-inbound)"
+  E2E_BOOTSTRAP='' E2E_ADVERTISE='' run_join "${ws}" --yes || { tail -5 "${ws}/out.log" >&2; return 1; }
+  [ -e "${ws}/state/compose-up" ] || { echo "    (node not started)" >&2; return 1; }
+  grep -q 'Chain identity verified' "${ws}/out.log" || { echo "    (no identity verification)" >&2; return 1; }
+  grep -q 'syncing from genesis' "${ws}/out.log" || { echo "    (not a genesis sync)" >&2; return 1; }
+  grep -q 'outbound connections only' "${ws}/out.log" || { echo "    (outbound-only not announced)" >&2; return 1; }
+  [ "$(env_val "${ws}" BOOTSTRAP_PEERS)" = "${CUT_BOOTSTRAP}" ] || { echo "    (default bootstrap != pinned seed)" >&2; return 1; }
+  [ -z "$(env_val "${ws}" WRFCOIN_P2P_EXTERNAL_ADDR)" ] || { echo "    (an address was invented)" >&2; return 1; }
+  ! grep -q 'dialing ' "${ws}/out.log" || { echo "    (dialed an address with none advertised)" >&2; return 1; }
+  ! grep -q 'volume create' "${ws}/docker.log" || { echo "    (snapshot restore ran without a snapshot)" >&2; return 1; }
+}
+check "sync-only, no inbound address, no snapshot: pinned seed, genesis sync, node started" sync_only_no_inbound
+
+# An advertised address that does not answer is a WARNING for a sync-only
+# node, and the dial happens only AFTER the node was started.
+unreachable_advertise_warns() {
+  local ws; ws="$(make_ws unreachable-advertise)"
+  E2E_ADVERTISE='/ip4/127.0.0.1/tcp/1' run_join "${ws}" --yes || { tail -5 "${ws}/out.log" >&2; return 1; }
+  [ -e "${ws}/state/compose-up" ] || return 1
+  grep -q 'WARNING: /ip4/127.0.0.1/tcp/1 did not accept TCP' "${ws}/out.log" || return 1
+  [ "$(env_val "${ws}" WRFCOIN_P2P_EXTERNAL_ADDR)" = /ip4/127.0.0.1/tcp/1 ] || { echo "    (address not persisted)" >&2; return 1; }
+  local started dialed
+  started="$(grep -n 'Building + starting' "${ws}/out.log" | head -1 | cut -d: -f1)"
+  dialed="$(grep -n '^dialing ' "${ws}/out.log" | head -1 | cut -d: -f1)"
+  [ -n "${started}" ] && [ -n "${dialed}" ] && [ "${started}" -lt "${dialed}" ] || { echo "    (dial not after start)" >&2; return 1; }
+}
+check "sync-only with an unreachable advertised address: warns after start, still joins" unreachable_advertise_warns
+
+# A serving role (WRFCOIN_SERVICE_ID) is dialed by others: no address -> refused.
+serving_without_address_refused() {
+  local ws; ws="$(make_ws serving-no-addr)"
+  E2E_SERVICE_ID=node-ws E2E_ADVERTISE='' refused "${ws}" "marks a serving node" --yes && not_started "${ws}"
+}
+check "serving node (WRFCOIN_SERVICE_ID) without an advertised address -> refused before start" serving_without_address_refused
+
+serving_unreachable_refused() {
+  local ws; ws="$(make_ws serving-unreachable)"
+  E2E_SERVICE_ID=node-ws E2E_ADVERTISE='/ip4/127.0.0.1/tcp/1' refused "${ws}" "Other nodes cannot reach it" --yes
+}
+check "serving node with an unreachable advertised address -> exit nonzero after the check" serving_unreachable_refused
+
 echo "== e2e refusals: the core4 pin (join.sh) =="
 pin_unknown() {
   local ws; ws="$(make_ws pin-unknown)"
@@ -542,6 +589,17 @@ check "RED sync-node: stale persisted work factor survives without explicit writ
   red_control no-work-write join-testnet-sync-node.sh '^set_env WRFCOIN_MIN_WORK_FACTOR .*$' ':' '(.env work factor)'
 check "RED sync-node: stale exported work factor overrides Compose without explicit export" \
   red_control no-work-export join-testnet-sync-node.sh '^export WRFCOIN_MIN_WORK_FACTOR=0$' ':' 'testnet work-factor environment must be 0'
+red_prestart_dial() {
+  # The defect the 2026-10-31 dry run suspected: dialing this host's own
+  # advertised address BEFORE the node listens. Reinstated, the outbound-only
+  # newcomer path must go red (nothing to dial -> --require fails).
+  local ws; ws="$(make_ws red-prestart-dial)"
+  mutate "${ws}" join-testnet-sync-node.sh '^export WRFCOIN_ROOT$' \
+    'export WRFCOIN_ROOT\nbash "${SCRIPT_DIR}/check-p2p-external-addr.sh" --env-file .env --require' || return 1
+  if E2E_BOOTSTRAP='' E2E_ADVERTISE='' run_join "${ws}" --yes; then echo "    (mutant survived)" >&2; return 1; fi
+  grep -q 'unset/empty but --require' "${ws}/out.log" && not_started "${ws}"
+}
+check "RED sync-node: pre-start --require dial reinstated -> the outbound-only join is refused" red_prestart_dial
 red_no_restore_777() {
   RED_WS=make_ws_777 E2E_NODE_CHAIN=777 red_control no-restore join-testnet-sync-node.sh '^  if \[ -n "\$\{SNAPSHOT_SOURCE\}" \]; then\n    echo "==> Brand-new node' '  if false; then\n    echo "==> Brand-new node' 'core4#2806'
 }

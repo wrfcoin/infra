@@ -2,15 +2,20 @@
 #
 # join-testnet-sync-node.sh — one-command join for the WRFCoin public testnet.
 #
-# Brings up a SYNC-ONLY full node (Postgres + Redis + wrfcoin-node) that peers
-# with the reference node over the public internet or Tailscale. It does NOT produce blocks: an
+# Brings up a SYNC-ONLY full node (Postgres + Redis + wrfcoin-node) that dials
+# the public seed (cut-pins.env WRFCOIN_CUT_BOOTSTRAP) over the internet and
+# syncs chain 888 from genesis. It does NOT produce blocks: an
 # external node is not in the chain's validator set, so the network never
 # accepts blocks from it — it only follows the chain and can submit txs.
 #
 # Prerequisites (see JOIN_TESTNET.md for the full walkthrough):
 #   1. Docker Desktop / Docker Engine with Compose v2 (`docker compose version`).
-#   2. Published bootstrap and your reachable P2P address (see JOIN_TESTNET.md).
-#      Tailscale is an optional fallback.
+#   2. Outbound internet access to the seed (TCP 9000). A sync-only node needs
+#      NO inbound route, port forward or Tailscale. Set WRFCOIN_P2P_EXTERNAL_ADDR
+#      only if you want peers to dial you back; it is then checked AFTER the
+#      node is listening and a failure is a warning. A serving role
+#      (WRFCOIN_SERVICE_ID set, e.g. a bonded snapshot server) MUST advertise a
+#      reachable address and is refused without one.
 #   3. Both repos checked out under ONE root dir (this is the build context):
 #         <root>/infra/      (this repo)
 #         <root>/core4/      (the Rust node sources)
@@ -30,20 +35,18 @@
 #   bash join-testnet-sync-node.sh [--root <WRFCOIN_ROOT>] [--bootstrap <multiaddr>] [--snapshot <url|dir>] [--emulate] [--yes] [--preflight]
 #
 #   --root       Dir containing infra/ and core4/. Default: parent of this repo.
-#   --bootstrap  Override the reference-node multiaddr (default awaits the published public address).
-#   --snapshot   Base URL (or local dir) of the published join snapshot
-#                (manifest.json + snapshot.tar.gz), e.g. https://<host>/join.
-#                Optional for a fresh chain; REQUIRED on legacy chain 777: core4#2806 means an empty node
-#                that full-syncs from genesis wedges PERMANENTLY at block
-#                11,016 — the canonical chain has a segment that fails
-#                consensus re-validation on replay. Also via
-#                WRFCOIN_JOIN_SNAPSHOT. Existing nodes (a non-empty data
-#                volume) never touch the snapshot path.
+#   --bootstrap  Override the bootstrap peer multiaddr. Default: the public seed
+#                pinned in cut-pins.env (WRFCOIN_CUT_BOOTSTRAP,
+#                /dns4/seed.wrfcoin.com/tcp/9000/p2p/...). Also via BOOTSTRAP_PEERS.
+#   --snapshot   OPTIONAL. Base URL (or local dir) of a join snapshot
+#                (manifest.json + snapshot.tar.gz) to start from instead of
+#                syncing chain 888 from genesis. Also via WRFCOIN_JOIN_SNAPSHOT.
+#                Existing nodes (a non-empty data volume) never touch it.
+#                (Retired chain 777 only: a snapshot was REQUIRED there,
+#                because full sync wedged at block 11,016, core4#2806.)
 #   --allow-full-sync
-#                Escape hatch: start a brand-new node WITHOUT a snapshot
-#                anyway. On today's chain this WILL wedge at 11,016; the flag
-#                exists for chains/futures where the segment is replayable,
-#                not as a workaround.
+#                Retired chain 777 only: start a brand-new 777 node without a
+#                snapshot anyway. Chain 888 syncs from genesis without it.
 #   --emulate    Force the x86_64 image under emulation instead of building
 #                natively (also via EMULATE=1). Only meaningful on arm64, where
 #                it is a deliberate fallback: slow (~30-60 min) and not the
@@ -82,7 +85,9 @@ fi
 : "${WRFCOIN_CUT_NETWORK_ID:?cut-pins.env does not define WRFCOIN_CUT_NETWORK_ID}"
 : "${WRFCOIN_CUT_BOOTSTRAP:?cut-pins.env does not define WRFCOIN_CUT_BOOTSTRAP}"
 
-DEFAULT_BOOTSTRAP="/ip4/<N5_PUBLIC_IP>/tcp/9000/p2p/12D3KooWMM7ukbQrn4BH2SjSNvyvAW2SaKUkHmDRng9KnifgYeWr"
+# The public seed, from cut-pins.env. Never a placeholder: a newcomer running
+# the one documented command with no flags must reach a real peer.
+DEFAULT_BOOTSTRAP="${WRFCOIN_CUT_BOOTSTRAP}"
 TESTNET_GENESIS_HASH="${WRFCOIN_CUT_GENESIS_HASH}"
 
 # --- Resolve paths ---
@@ -105,14 +110,21 @@ while [ $# -gt 0 ]; do
     --emulate)   EMULATE=1; shift ;;
     --yes|-y)    ASSUME_YES=1; shift ;;
     --preflight) PREFLIGHT=1; shift ;;
-    -h|--help)   grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '3,/^set -euo pipefail/p' "$0" | sed -n 's/^# \{0,1\}//p'; exit 0 ;;
     *)           echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 
 # Refuse template addresses before generating configuration or invoking Docker.
 if [ "${PREFLIGHT}" != "1" ] && [[ "${BOOTSTRAP_PEERS}" == *'<'* || "${BOOTSTRAP_PEERS}" == *'>'* ]]; then
-  echo "ERROR: replace the bootstrap placeholder with the published address via BOOTSTRAP_PEERS or --bootstrap." >&2
+  echo "ERROR: BOOTSTRAP_PEERS / --bootstrap still contains a <placeholder>." >&2
+  echo "       Unset it to use the pinned public seed (${WRFCOIN_CUT_BOOTSTRAP})," >&2
+  echo "       or replace the placeholder with a real multiaddr." >&2
+  exit 1
+fi
+if [ "${PREFLIGHT}" != "1" ] && [[ "${WRFCOIN_P2P_EXTERNAL_ADDR:-}" == *'<'* || "${WRFCOIN_P2P_EXTERNAL_ADDR:-}" == *'>'* ]]; then
+  echo "ERROR: WRFCOIN_P2P_EXTERNAL_ADDR still contains a <placeholder>." >&2
+  echo "       A sync-only node does not need it: unset it, or set your real address." >&2
   exit 1
 fi
 
@@ -253,17 +265,25 @@ if [ "${PREFLIGHT}" = "1" ] && { [ "${ARCH}" = "x86_64" ] || [ "${ARCH}" = "amd6
   probe_amd64_emulation
 fi
 
-# Only the explicit tailnet bootstrap selects automatic Tailscale advertising.
-# Public operators supply WRFCOIN_P2P_EXTERNAL_ADDR (or keep an existing value).
+# Only an explicit tailnet bootstrap (a 100.64.0.0/10 address or a *.ts.net
+# name) selects automatic Tailscale advertising. The default public seed never
+# does: a sync-only node over the internet needs no advertised address at all.
+bootstrap_is_tailnet() {
+  case "$1" in
+    /ip4/100.6[4-9].*|/ip4/100.[7-9][0-9].*|/ip4/100.1[01][0-9].*|/ip4/100.12[0-7].*) return 0 ;;
+    /dns4/*.ts.net/*|/dns/*.ts.net/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 TS_IP=""
-if [ "${BOOTSTRAP_PEERS}" = "${WRFCOIN_CUT_BOOTSTRAP}" ]; then
+if bootstrap_is_tailnet "${BOOTSTRAP_PEERS}"; then
   TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
 fi
 
 if [ "${PREFLIGHT}" = "1" ]; then
   echo "==> Preflight complete: no .env was generated and no services were started."
-  echo "    This proves only the local Docker amd64-emulation seam; it does not prove"
-  echo "    build success, Tailscale reachability, P2P peering, sync, or oracle participation."
+  echo "    This proves only the local Docker platform seam; it does not prove"
+  echo "    build success, P2P peering, sync, or oracle participation."
   exit 0
 fi
 
@@ -310,27 +330,43 @@ operator_external_addr="${WRFCOIN_P2P_EXTERNAL_ADDR:-}"
 if [ -z "${operator_external_addr}" ] && [ -f .env ]; then
   operator_external_addr="$(sed -n 's/^[[:space:]]*WRFCOIN_P2P_EXTERNAL_ADDR=//p' .env | tail -1 | tr -d '"' | tr -d "'")"
 fi
+# A serving role (WRFCOIN_SERVICE_ID, e.g. a bonded snapshot server) is dialed
+# by other nodes, so it must advertise a reachable address. A plain sync-only
+# node only dials out and may advertise nothing.
+service_id="${WRFCOIN_SERVICE_ID:-}"
+if [ -z "${service_id}" ] && [ -f .env ]; then
+  service_id="$(sed -n 's/^[[:space:]]*WRFCOIN_SERVICE_ID=//p' .env | tail -1 | tr -d '"' | tr -d "'")"
+fi
 if [ -n "${operator_external_addr}" ]; then
   echo "==> Preserving operator-supplied WRFCOIN_P2P_EXTERNAL_ADDR."
+  # Persist it, so a later plain `docker compose up` advertises the same address.
+  set_env WRFCOIN_P2P_EXTERNAL_ADDR "${operator_external_addr}"
 elif [ -n "${TS_IP}" ]; then
   set_env WRFCOIN_P2P_EXTERNAL_ADDR "/ip4/${TS_IP}/tcp/9000"
-else
-  echo "ERROR: no operator-supplied address and Tailscale IPv4 auto-detection is unavailable." >&2
-  echo "       Set WRFCOIN_P2P_EXTERNAL_ADDR explicitly before starting the sync node." >&2
+  operator_external_addr="/ip4/${TS_IP}/tcp/9000"
+elif [ -n "${service_id}" ]; then
+  echo "ERROR: WRFCOIN_SERVICE_ID='${service_id}' marks a serving node, which other nodes dial." >&2
+  echo "       It must advertise a reachable P2P address. Set WRFCOIN_P2P_EXTERNAL_ADDR" >&2
+  echo "       (e.g. /ip4/<your public IP>/tcp/9000) with TCP 9000 forwarded to this host." >&2
+  echo "       A plain sync-only node needs none of this: unset WRFCOIN_SERVICE_ID." >&2
   exit 1
+else
+  set_env WRFCOIN_P2P_EXTERNAL_ADDR ""
+  echo "==> Sync-only, outbound connections only: no advertised P2P address."
+  echo "    No port forwarding is needed to follow the chain. To let peers dial you"
+  echo "    back too, set WRFCOIN_P2P_EXTERNAL_ADDR and re-run (see JOIN_TESTNET.md)."
 fi
+export WRFCOIN_P2P_EXTERNAL_ADDR="${operator_external_addr}"
 export WRFCOIN_ROOT
 
-# Fail closed on a bounded reachability proof before Compose creates the node.
-if [ -n "${WRFCOIN_P2P_EXTERNAL_ADDR:-}" ]; then
-  bash "${SCRIPT_DIR}/check-p2p-external-addr.sh" --require "${WRFCOIN_P2P_EXTERNAL_ADDR}"
-else
-  bash "${SCRIPT_DIR}/check-p2p-external-addr.sh" --env-file .env --require
-fi
+# The advertised address, if any, is dialed only AFTER the node is up (below).
+# Before `compose up` nothing listens on it, so the pre-start dial this used
+# to do could never pass on a first join (it aborted every fresh join).
 
-# --- Snapshot join for brand-new nodes (infra#587 / core4#2806) -------------
-# A missing volume means a new node. New chains default to full sync.
-# Legacy chain 777 full-sync from genesis wedges PERMANENTLY at block
+# --- Optional snapshot for brand-new nodes (infra#587) ---------------------
+# A missing volume means a new node. Chain 888 syncs from genesis by default;
+# a snapshot, when given, is verified and restored instead.
+# Retired chain 777 only: full-sync from genesis wedged PERMANENTLY at block
 # 11,016 (core4#2806: canonical block 11,017 fails PoP quorum re-validation
 # on replay; core4#2807: the failure then graylists every peer until sync
 # starves). The only working bootstrap is a published snapshot taken above
@@ -366,7 +402,7 @@ if ! "${DOCKER_BIN}" volume inspect "${node_data_volume}" >/dev/null 2>&1; then
         --volume "${node_data_volume}"
     fi
   elif [ "${WRFCOIN_CUT_CHAIN_ID}" != "777" ]; then
-    echo "==> Fresh chain: syncing from genesis (snapshot optional)."
+    echo "==> Brand-new node: syncing from genesis on chain ${WRFCOIN_CUT_CHAIN_ID} (no snapshot needed)."
   elif [ "${ALLOW_FULL_SYNC}" = "1" ]; then
     echo "WARN: --allow-full-sync on a brand-new node. On the current chain this" >&2
     echo "      WILL wedge at block 11,016 (core4#2806). You asked; proceeding." >&2
@@ -520,6 +556,26 @@ if [ "${ready}" = "1" ]; then
   echo "height 0 shortly after joining is normal — blocks are up to 4h apart."
   echo "Watch sync:  watch -n5 'curl -s http://localhost:8556/network/info | jq .chain_height'"
   echo "Logs:        docker compose -f docker-compose.testnet.yml logs -f wrfcoin-node"
+
+  # Optional inbound check, now that the node is listening. A sync-only node
+  # does not need inbound reachability, so a failure here is a WARNING; only a
+  # serving role (WRFCOIN_SERVICE_ID) is refused.
+  if [ -n "${WRFCOIN_P2P_EXTERNAL_ADDR}" ]; then
+    echo ""
+    echo "==> Checking that your advertised address accepts TCP (optional for sync-only) ..."
+    p2p_rc=0
+    bash "${SCRIPT_DIR}/check-p2p-external-addr.sh" "${WRFCOIN_P2P_EXTERNAL_ADDR}" || p2p_rc=$?
+    if [ "${p2p_rc}" != "0" ]; then
+      if [ -n "${service_id}" ]; then
+        echo "ERROR: serving node '${service_id}' advertises ${WRFCOIN_P2P_EXTERNAL_ADDR}, which did not" >&2
+        echo "       accept TCP. Other nodes cannot reach it. Fix the address or port forward." >&2
+        exit 1
+      fi
+      echo "WARNING: ${WRFCOIN_P2P_EXTERNAL_ADDR} did not accept TCP from here (a NAT hairpin can" >&2
+      echo "         cause this). Syncing is unaffected: this node dials out to the seed." >&2
+      echo "         Peers just cannot dial you back. Fix it or unset WRFCOIN_P2P_EXTERNAL_ADDR." >&2
+    fi
+  fi
 else
   echo "Node API did not become ready in ~3 min. Check logs:" >&2
   echo "  docker compose -f docker-compose.testnet.yml logs --tail=80 wrfcoin-node" >&2

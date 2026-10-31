@@ -6,10 +6,14 @@
 # checks prerequisites, clones the two required repos side by side (skipping
 # anything already present), then hands off to join-testnet-sync-node.sh.
 #
-# Usage — after Tony's invite (repo read access + Tailscale auth key):
+# Usage — no invite, key or account needed (the repos are public):
 #
-#   git clone git@github.com:wrfcoin/infra.git wrfcoin/infra \
+#   git clone https://github.com/wrfcoin/infra.git wrfcoin/infra \
 #     && bash wrfcoin/infra/testnet/join.sh
+#
+# With no flags this starts a sync-only node that dials the public seed
+# pinned in cut-pins.env, syncs chain 888 from genesis (no snapshot), and needs
+# only outbound connections (no port forward, no Tailscale).
 #
 # Re-running is safe: existing clones and running services are left alone
 # (the underlying compose build reuses the Docker layer cache, so a re-run
@@ -20,10 +24,8 @@
 # <multiaddr> to override the reference node). Apple Silicon builds natively
 # by default and needs no flag.
 #
-# NOTE: the repos are private while the project is in stealth, so this cannot
-# yet be a public `curl | bash` one-liner and there are no prebuilt images to
-# pull (publishing images to a registry is deliberately prohibited). Both are
-# revisited when the repos go public.
+# NOTE: there are no prebuilt images to pull (publishing images to a registry
+# is deliberately prohibited); the node is built from source on this machine.
 #
 set -euo pipefail
 
@@ -37,7 +39,8 @@ for arg in "$@"; do
         'Options are forwarded to testnet/join-testnet-sync-node.sh.' \
         '  -h, --help              Print this help without starting setup.' \
         '  --emulate               Use the x86_64 emulation build.' \
-        '  --bootstrap <multiaddr> Override the bootstrap peer.' \
+        '  --bootstrap <multiaddr> Override the bootstrap peer (default: the pinned public seed).' \
+        '  --snapshot <url|dir>    Optional: start from a verified snapshot instead of genesis.' \
         'See testnet/JOIN_TESTNET.md for prerequisites and operator guidance.'
       exit 0
       ;;
@@ -120,10 +123,13 @@ clone_repo() {
     die "${target} exists but is not a git checkout. Move it aside and re-run."
   fi
   say "${label}: cloning into ${target} ..."
-  if ! git clone "${ssh_url}" "${target}" 2>/dev/null; then
-    say "${label}: SSH clone failed, retrying over HTTPS ..."
-    git clone "${https_url}" "${target}" \
-      || die "Could not clone ${label}. Do you have read access? (Ask Tony for an invite.)"
+  # HTTPS first: the repos are public, and a newcomer has no GitHub SSH key.
+  # An SSH-first clone could stop at an interactive host-key prompt. SSH stays
+  # as a non-interactive fallback (BatchMode) for networks that block HTTPS.
+  if ! git clone "${https_url}" "${target}"; then
+    say "${label}: HTTPS clone failed, retrying over SSH ..."
+    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}" git clone "${ssh_url}" "${target}" \
+      || die "Could not clone ${label} from ${https_url}. Check your internet connection and re-run."
   fi
 }
 
