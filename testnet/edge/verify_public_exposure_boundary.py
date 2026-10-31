@@ -171,6 +171,8 @@ EXPECTED = {
     "public_readonly_forecaster_profile": ("GET", "path_regexp ^/api/forecasters/c_[0-9a-f]{24}$", BACKEND),
     # Mobile explorer summary (explorer-routes.js): one cached aggregate, exact path, no query.
     "public_readonly_explorer_summary": ("GET", "path /api/explorer/summary", BACKEND),
+    # Proof card for one station reading (backend#229): commit id only, optional height hint.
+    "public_readonly_proof_card": ("GET", "path_regexp ^/api/proofs/[0-9a-f]{64}$", BACKEND),
     # Station theft protection (core4#3345/#3347, infra#1095). Both address a station by its public
     # ALIAS only (st_ + 12 lowercase hex), with no query string. The relay is a POST (the backend
     # authenticates per kind and never signs or alters the tx) behind an 8 KiB body cap and its own
@@ -230,6 +232,7 @@ GATED = frozenset({
     "public_readonly_forecasters",
     "public_readonly_forecaster_profile",
     "public_readonly_explorer_summary",
+    "public_readonly_proof_card",
     "public_readonly_station_ownership",
     "public_readonly_wallet_info",
     "public_readonly_wallet_transactions",
@@ -260,6 +263,7 @@ EARNINGS_QUERY_LOCK = (
 FORECASTERS_QUERY_LOCK = (
     "expression `{query}.matches('^period=(7d|30d|all)&limit=([1-9]|[1-9][0-9]|100)$')`"
 )
+PROOF_CARD_QUERY_LOCK = "expression `{query} == \"\" || {query}.matches('^h=[1-9][0-9]{0,11}$')`"
 # Query lock (stage15 readiness): every gated read also admits only the exact
 # query string the Stage 1.5 build sends. The station list takes none, because
 # `?lat=&lng=` (or `lat[]=`) switches weather-routes.js to the outbound NOAA
@@ -282,6 +286,8 @@ READONLY_QUERY_LOCK = {
     "public_readonly_forecasters": FORECASTERS_QUERY_LOCK,
     "public_readonly_forecaster_profile": 'expression `{query} == ""`',
     "public_readonly_explorer_summary": 'expression `{query} == ""`',
+    # frontend proofCardPath(): no query, or exactly the share link's block height hint.
+    "public_readonly_proof_card": PROOF_CARD_QUERY_LOCK,
     "public_readonly_station_ownership": 'expression `{query} == ""`',
     "public_readonly_wallet_info": 'expression `{query} == ""`',
     # mobile walletTransactions shape: limit then offset; backend clamps 1..100, edge admits 1..50.
@@ -468,7 +474,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/*",
             "}",
             "key {client_ip}",
             "events 30",
@@ -861,6 +867,27 @@ def self_test() -> None:
         "explorer summary widened to the explorer prefix": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("path /api/explorer/summary\n\t\tvars", "path /api/explorer/*\n\t\tvars"),
+        ),
+        "proof card widened to any segment": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path_regexp ^/api/proofs/[0-9a-f]{64}$", "path_regexp ^/api/proofs/[^/]+$"),
+        ),
+        "proof card query unlocked": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "expression `{query} == \"\" || {query}.matches('^h=[1-9][0-9]{0,11}$')`",
+                "expression `{query}.matches('^h=')`",
+            ),
+        ),
+        "proof card widened beyond GET": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@public_readonly_proof_card {\n\t\tmethod GET", "@public_readonly_proof_card {\n\t\tmethod GET POST"),
+        ),
+        "proof card ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/proofs/[0-9a-f]{64}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path_regexp ^/api/proofs/[0-9a-f]{64}$\n"
+            ),
         ),
         "explorer summary ungated": (
             "testnet/edge/public_onboarding.caddy",

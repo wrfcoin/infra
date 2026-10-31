@@ -449,6 +449,22 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Proof card for one station reading (backend#229 proof-card-routes.ts, frontend /proof/:commitId):
+	# GET /api/proofs/<core4 commit id: 64 lowercase hex>, with either no query or exactly the block
+	# height hint h=<1..12 digits, no leading zero> the share link carries. The backend builds the card
+	# from node reads (reward evidence, a bounded observation scan, one block), names the station by its
+	# public alias only, caps its node reads process-wide and applies its own 30/min limiter; it answers
+	# 404 until PROOF_CARDS_ENABLED=true. Same default-OFF gate and public_read limiter.
+	@public_readonly_proof_card {
+		method GET
+		path_regexp ^/api/proofs/[0-9a-f]{64}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == "" || {query}.matches('^h=[1-9][0-9]{0,11}$')`
+	}
+	handle @public_readonly_proof_card {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Station ownership state (backend GET /api/stations/:alias/ownership): owner nonce,
 	# frozen / deactivated, pending recovery with its notice window. Same gate as the other
 	# station reads (OFF unless PUBLIC_READONLY_API=on exactly), GET only, EXACT alias path
@@ -790,7 +806,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/*
 			}
 			key {client_ip}
 			events 30

@@ -1234,6 +1234,32 @@ FORECASTER_EXPLORER_CASES = (
     ("GET", f"{_FC}/x/../{_FK}", (), 400),
 )
 
+# Proof card for one station reading (backend#229; frontend proofCardPath).
+_PC = "/api/proofs"
+_PK = "c0" * 32
+PROOF_CARD_CASES = (
+    ("GET", f"{_PC}/{_PK}", (), 502),  # what the station page link sends without a height
+    ("GET", f"{_PC}/{_PK}?h=4890", (), 502),  # what a share link sends
+    ("GET", f"{_PC}/{_PK}?h=1", (), 502),
+    ("GET", f"{_PC}/{_PK}?h=999999999999", (), 502),
+    ("GET", f"{_PC}/{_PK}?h=0", (), 404),
+    ("GET", f"{_PC}/{_PK}?h=04890", (), 404),
+    ("GET", f"{_PC}/{_PK}?h=1234567890123", (), 404),
+    ("GET", f"{_PC}/{_PK}?h=", (), 404),
+    ("GET", f"{_PC}/{_PK}?h=1&x=1", (), 404),
+    ("GET", f"{_PC}/{_PK}?x=1", (), 404),
+    ("GET", f"{_PC}/{_PK.upper()}", (), 404),
+    ("GET", f"{_PC}/0x{_PK}", (), 404),
+    ("GET", f"{_PC}/{_PK[:-1]}", (), 404),
+    ("GET", f"{_PC}/{_PK}/badge.svg", (), 404),
+    ("GET", f"{_PC}/{_PK}/", (), 404),
+    ("GET", _PC, (), 404),
+    ("GET", _PC + "/", (), 404),
+    ("POST", f"{_PC}/{_PK}", (), 404),
+    ("DELETE", f"{_PC}/{_PK}", (), 404),
+    ("GET", f"{_PC}/x/../{_PK}", (), 400),
+)
+
 
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
@@ -1408,6 +1434,8 @@ def main() -> None:
         prove_weather_noaa_zone(f"{label}-weather-zone", text, port)
         prove_parity_reads(f"{label}-forecasters-gate", text, port, None, FORECASTER_EXPLORER_CASES[:5], 24)
         prove_parity_reads(f"{label}-forecasters", text, port, "on", FORECASTER_EXPLORER_CASES, 24)
+        prove_parity_reads(f"{label}-proof-card-gate", text, port, None, PROOF_CARD_CASES[:4], 16)
+        prove_parity_reads(f"{label}-proof-card", text, port, "on", PROOF_CARD_CASES, 16)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1428,6 +1456,12 @@ def main() -> None:
         ),
         "forecaster profile widened to any segment": (
             caddy_src.replace("^/api/forecasters/c_[0-9a-f]{24}$", "^/api/forecasters/[^/]+$"), FORECASTER_EXPLORER_CASES,
+        ),
+        "proof card widened to any segment": (
+            caddy_src.replace("^/api/proofs/[0-9a-f]{64}$", "^/api/proofs/[^/]+$"), PROOF_CARD_CASES,
+        ),
+        "proof card height hint loosened": (
+            caddy_src.replace("'^h=[1-9][0-9]{0,11}$'", "'^h=[0-9]+'"), PROOF_CARD_CASES,
         ),
         "forecasters list query lock loosened": (
             caddy_src.replace("&limit=([1-9]|[1-9][0-9]|100)$')`", "&limit=[0-9]+$')`"), FORECASTER_EXPLORER_CASES,
