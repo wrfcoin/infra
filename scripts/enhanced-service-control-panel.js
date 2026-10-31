@@ -13,21 +13,6 @@ const { corsMiddleware } = require('../backend/shared/middleware/cors-config.cjs
 
 // Extended service metadata including NAS storage services
 const SERVICE_METADATA = {
-  // Weather & Earnings Services (Protected)
-  'AcuRite Weather Station Collector': {
-    port: null,
-    category: 'earnings',
-    status: 'running',
-    priority: 'protected',
-    tags: ['@weather', '@earnings', '@protected'],
-    file: 'acurite-working-collector.js',
-    command: 'node acurite-working-collector.js',
-    dependencies: [],
-    autoStart: true,
-    protected: true,
-    description: 'Weather data collection earning 1.70 WRF',
-  },
-
   // Core Services
   'Frontend Application': {
     port: 5000,

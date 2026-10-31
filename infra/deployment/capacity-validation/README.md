@@ -1,5 +1,10 @@
 # Capacity Validation & Horizontal Scalability Framework
 
+> **Simulator, not measurements.** This framework generates simulated load against
+> configured targets. Its TPS figures are scenario settings, not measured throughput
+> of the chain 888 testnet, and it is not the testnet's deployment path. See the
+> [historical fix notes](commit-validation-summary.md).
+
 A comprehensive testing framework for validating Layer 2 scaling capacity, bottleneck detection, and
 horizontal scalability for the Wrfcoin blockchain platform.
 

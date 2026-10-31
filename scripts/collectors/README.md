@@ -1,32 +1,21 @@
-# Auto-Collectors
+# Legacy collector scripts (unsupported)
 
-This directory contains "set it and forget it" auto-collector scripts that continuously earn WRF
-tokens by contributing various resources to the network.
+These scripts come from an earlier design of WRFCoin. They do **not** submit to the
+chain 888 testnet, they are not part of any deployed service, and running them does
+not earn testnet WRF. They are kept for reference only.
 
-## Available Collectors
+- `acurite-auto-collector.js`: multi-source weather polling against the old API.
+- `compute-auto-collector.js`: compute-task client for an old API.
+- `nas-auto-collector.js`: NAS discovery and storage client for an old API.
 
-### Weather Data Collectors
+Any reward figure these scripts print comes from the server they talk to; none of
+those servers is part of the current testnet.
 
-- `acurite-working-collector.js` - Basic authenticated AcuRite weather station collector
-- `acurite-enhanced-collector.js` - Enhanced collector with IPFS and data-aware blocks
-- `acurite-auto-collector.js` - Fully automated multi-source weather collection
+## Supported ways to contribute weather data today
 
-### Compute Collectors
+- **Ambient Weather station:** connect it on the website's **Connect a station**
+  page at [wrfcoin.com](https://wrfcoin.com).
+- **Phone as a station:** the Android app, once its signed release is published.
 
-- `compute-auto-collector.js` - One-click computational power contribution
-
-### Storage Collectors
-
-- `nas-auto-collector.js` - Automatic NAS device discovery and storage contribution
-
-## Usage
-
-Each collector can be run independently:
-
-```bash
-node scripts/collectors/acurite-working-collector.js
-node scripts/collectors/compute-auto-collector.js
-node scripts/collectors/nas-auto-collector.js
-```
-
-All collectors follow the "weather station model" - simple setup with continuous automated earning.
+See the [docs quickstart](https://github.com/wrfcoin/docs/blob/main/testnet/quickstart.md).
+A registered station or uploaded observation is not proof of a reward payment.

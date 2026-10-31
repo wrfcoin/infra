@@ -1,93 +1,47 @@
-# Capacity Validation Framework - Commit Validation Summary
+# Capacity validation framework: fix notes (historical)
 
-## Commit: b3bbf727c9027fa59c602716a6f42fc691cd9dfc
+> **Historical, superseded.** This records a code fix to the capacity-validation
+> *simulator* in an earlier design of the project. It is not a measurement of the
+> current chain 888 testnet, and it makes no throughput or production-readiness
+> claim. No chain 888 throughput figure is published from this framework. A
+> throughput claim needs a reproducible workload, hardware, source revision,
+> measured results and failure limits; this document has none of those.
 
-### Validation Status: ✅ RESOLVED
+Original commit: `b3bbf727c9027fa59c602716a6f42fc691cd9dfc`
 
-## Issues Fixed
+## What was fixed
 
-### 1. Framework Initialization
+1. **Framework initialization.** `CapacityValidationFramework` called methods that
+   the workload generator did not have (`isConfigured`, `updateConfig`). The fix
+   added fallback checks so the framework starts with the existing components.
+2. **Method compatibility.** Calls to `workloadGenerator.updateConfig()` and
+   `startEnterpriseWorkload()` were replaced with direct config updates and
+   `startWorkloadGeneration()`.
+3. **Configuration validation.** An explicit `baselineCapacity` parameter was
+   added so the configuration's capacity hierarchy validates.
 
-- **Problem**: Missing method compatibility between CapacityValidationFramework and
-  EnterpriseWorkloadGenerator
-- **Solution**: Added graceful fallback checks for missing methods (`isConfigured`, `updateConfig`)
-- **Result**: Framework now initializes successfully with existing components
+## What was checked at the time
 
-### 2. Method Compatibility
+- The framework initialized and its four components (capacity validator,
+  scalability manager, bottleneck detector, workload generator) ran together.
+- The simulated workload mix was distributed as configured. That mix came from
+  an earlier design (climate data, cross-chain transfers, contract execution,
+  NFT operations, governance voting, mining rewards). The current testnet has no
+  cross-chain or NFT transactions; those remain planned.
+- The simulator's 5,000 TPS "baseline" scenario ran to completion. That number is
+  the scenario's configured target in a simulation, not a measured result.
 
-- **Problem**: `workloadGenerator.updateConfig()` and `workloadGenerator.startEnterpriseWorkload()`
-  not found
-- **Solution**:
-  - Added conditional method calls with fallbacks to direct config updates
-  - Updated method calls to use `startWorkloadGeneration()` instead of `startEnterpriseWorkload()`
-- **Result**: Workload generator integration now functional
+## Files changed by that commit
 
-### 3. Configuration Validation
+1. `capacity-validation-framework.js`: method compatibility.
+2. `capacity-validation-manager.js`: workload generator integration.
 
-- **Problem**: Baseline capacity validation failing due to incorrect parameter hierarchy
-- **Solution**: Added explicit `baselineCapacity` parameter to framework configuration
-- **Result**: Configuration validation passes with proper capacity hierarchy
-
-## Validation Results
-
-### Framework Capabilities Confirmed:
-
-1. **Initialization**: ✅ Framework initializes in ~5-10ms
-2. **Component Integration**: ✅ All 4 components (Capacity Validator, Scalability Manager,
-   Bottleneck Detector, Workload Generator) working
-3. **Workload Distribution**: ✅ Properly distributes load across 6 transaction types:
-   - Climate data ingestion: 40%
-   - Cross-chain transfers: 20%
-   - Smart contract execution: 15%
-   - NFT operations: 10%
-   - Governance voting: 10%
-   - Mining rewards: 5%
-
-### Performance Testing Confirmed:
-
-- **Baseline Testing**: ✅ Successfully runs 5,000 TPS baseline validation
-- **Progressive Scaling**: ✅ Framework supports incremental capacity testing
-- **Real-time Monitoring**: ✅ Monitoring intervals and progress tracking functional
-- **Enterprise Workload**: ✅ Multi-transaction type simulation working
-
-## Current Status
-
-The capacity validation framework is now **production-ready** and successfully:
-
-1. Initializes without errors
-2. Integrates with existing enterprise workload generator
-3. Executes baseline capacity validation
-4. Supports progressive scaling tests toward 100k+ TPS target
-5. Provides real-time monitoring and bottleneck detection
-
-## Next Steps Validated
-
-The framework is ready for:
-
-- Full 100k+ TPS validation testing
-- Horizontal scalability testing with multiple nodes
-- Production deployment validation
-- Integration with existing microservices architecture
-
-## Files Modified
-
-1. `infrastructure/capacity-validation/capacity-validation-framework.js` - Fixed method
-   compatibility
-2. `infrastructure/capacity-validation/capacity-validation-manager.js` - Updated workload generator
-   integration
-3. Created validation test files for ongoing testing
-
-## Test Commands
+## Running the simulator
 
 ```bash
-# Quick validation test (5k TPS)
-cd infrastructure/capacity-validation && node quick-validation-test.js
-
-# Full capacity validation demo
-cd infrastructure/capacity-validation && node demo-capacity-validation.js
-
-# 100k TPS validation test
-cd infrastructure/capacity-validation && node validate-100k-tps.js
+cd infra/deployment/capacity-validation
+node quick-validation-test.js
+node demo-capacity-validation.js
 ```
 
-All validation frameworks are now operational and ready for enterprise-grade performance testing.
+Output from these scripts describes simulated load only.
