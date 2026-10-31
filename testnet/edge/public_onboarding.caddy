@@ -406,6 +406,49 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Public forecaster pages (/forecasters, /forecasters/<c_ key>; frontend
+	# publicReadonlyApi.ts forecastersPath/forecasterPath, backend forecasters-routes.ts).
+	# The list admits only the grammar the frontend builds, in this order:
+	#   period=<7d|30d|all>&limit=<1..100>
+	# (backend accepts the same ranges and 400s anything else). The detail read admits
+	# only an opaque contributor key (c_ + 24 lowercase hex) and no query: the backend
+	# answers a raw 0x address with the unknown-key 404 for anonymous callers, and it
+	# never matches here. Backend projects short addresses and station aliases and
+	# applies its own 60/min limiter; both answer 503 while the chain-rewards index is
+	# off. Same default-OFF PUBLIC_READONLY_API gate and public_read limiter.
+	@public_readonly_forecasters {
+		method GET
+		path_regexp ^/api/forecasters$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query}.matches('^period=(7d|30d|all)&limit=([1-9]|[1-9][0-9]|100)$')`
+	}
+	handle @public_readonly_forecasters {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_readonly_forecaster_profile {
+		method GET
+		path_regexp ^/api/forecasters/c_[0-9a-f]{24}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_forecaster_profile {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Mobile chain explorer summary (mobile explorer_remote_datasource.dart, backend
+	# explorer-routes.js GET /api/explorer/summary): one cached, single-flight aggregate
+	# read with no addresses, operator detail or locations. EXACT path, GET only, no
+	# query; every other /api/explorer path still 404s. Same gate and public_read limiter.
+	@public_readonly_explorer_summary {
+		method GET
+		path /api/explorer/summary
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_explorer_summary {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Station ownership state (backend GET /api/stations/:alias/ownership): owner nonce,
 	# frozen / deactivated, pending recovery with its notice window. Same gate as the other
 	# station reads (OFF unless PUBLIC_READONLY_API=on exactly), GET only, EXACT alias path
@@ -747,7 +790,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/*
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary
 			}
 			key {client_ip}
 			events 30

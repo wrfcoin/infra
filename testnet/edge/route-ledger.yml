@@ -95,6 +95,12 @@ services:
       passkey wallet's balance, spendable only, read with the backend's own reader token.
       Exact path behind PUBLIC_READONLY_API=on, counted by the public_read rate zone. The
       backend route answers 404 until PUBLIC_BALANCE_READ_ENABLED=true (default off).
+      The public forecaster pages add GET /api/forecasters with the query locked to
+      `period=<7d|30d|all>&limit=<1..100>` in that order (the frontend's forecastersPath
+      grammar) and GET /api/forecasters/c_<24 lowercase hex> (opaque key only, no query;
+      raw addresses never match). The mobile explorer adds GET /api/explorer/summary
+      (exact path, no query; one cached aggregate with no addresses or locations). All
+      three are behind PUBLIC_READONLY_API=on and counted by the public_read rate zone.
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still

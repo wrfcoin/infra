@@ -1200,6 +1200,40 @@ PARITY_WEATHER_CASES = (
     ("GET", "/api/weather/x/../current/47.6,-122.3", (), 400),
 )
 
+# Public forecaster pages (frontend forecastersPath/forecasterPath) and the mobile explorer summary.
+_FC = "/api/forecasters"
+_FK = "c_0123456789abcdef01234567"
+_XS = "/api/explorer/summary"
+FORECASTER_EXPLORER_CASES = (
+    ("GET", _FC + "?period=7d&limit=25", (), 502),  # exactly what PublicForecastersPage sends
+    ("GET", _FC + "?period=30d&limit=100", (), 502),
+    ("GET", _FC + "?period=all&limit=1", (), 502),
+    ("GET", f"{_FC}/{_FK}", (), 502),
+    ("GET", _XS, (), 502),  # exactly what the mobile explorer sends
+    ("GET", _FC, (), 404),
+    ("GET", _FC + "?period=7d", (), 404),
+    ("GET", _FC + "?limit=25&period=7d", (), 404),
+    ("GET", _FC + "?period=7d&limit=0", (), 404),
+    ("GET", _FC + "?period=7d&limit=101", (), 404),
+    ("GET", _FC + "?period=7d&limit=025", (), 404),
+    ("GET", _FC + "?period=1y&limit=25", (), 404),
+    ("GET", _FC + "?period=7d&limit=25&x=1", (), 404),
+    ("GET", _FC + "/", (), 404),
+    ("GET", f"{_FC}/0x{'a' * 40}", (), 404),  # raw address lookups never reach the backend
+    ("GET", f"{_FC}/c_{'A' * 24}", (), 404),
+    ("GET", f"{_FC}/c_{'a' * 23}", (), 404),
+    ("GET", f"{_FC}/{_FK}?x=1", (), 404),
+    ("GET", f"{_FC}/{_FK}/x", (), 404),
+    ("GET", _XS + "?x=1", (), 404),
+    ("GET", _XS + "/", (), 404),
+    ("GET", "/api/explorer", (), 404),
+    ("GET", "/api/explorer/blocks", (), 404),
+    ("POST", _FC + "?period=7d&limit=25", (), 404),
+    ("POST", _XS, (), 404),
+    ("DELETE", f"{_FC}/{_FK}", (), 404),
+    ("GET", f"{_FC}/x/../{_FK}", (), 400),
+)
+
 
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
@@ -1372,6 +1406,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-weather-gate", text, port, None, PARITY_WEATHER_CASES[:6], 8)
         prove_parity_reads(f"{label}-weather", text, port, "on", PARITY_WEATHER_CASES, 8)
         prove_weather_noaa_zone(f"{label}-weather-zone", text, port)
+        prove_parity_reads(f"{label}-forecasters-gate", text, port, None, FORECASTER_EXPLORER_CASES[:5], 24)
+        prove_parity_reads(f"{label}-forecasters", text, port, "on", FORECASTER_EXPLORER_CASES, 24)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1389,6 +1425,12 @@ def main() -> None:
         ),
         "weather coordinates widened to two decimals": (
             caddy_src.replace("current/-?[0-9]{1,2}\\.[0-9],", "current/-?[0-9]{1,2}\\.[0-9]+,"), PARITY_WEATHER_CASES,
+        ),
+        "forecaster profile widened to any segment": (
+            caddy_src.replace("^/api/forecasters/c_[0-9a-f]{24}$", "^/api/forecasters/[^/]+$"), FORECASTER_EXPLORER_CASES,
+        ),
+        "forecasters list query lock loosened": (
+            caddy_src.replace("&limit=([1-9]|[1-9][0-9]|100)$')`", "&limit=[0-9]+$')`"), FORECASTER_EXPLORER_CASES,
         ),
         "governance proposal id widened to any segment": (
             caddy_src.replace("proposals/[A-Za-z0-9_-]{1,128}$", "proposals/[^/]+$"), PARITY_GOVERNANCE_CASES,
