@@ -105,6 +105,10 @@ services:
       exactly `h=<1..12 digits, no leading zero>` (the share link's block height hint); the
       backend builds it from node reads and answers 404 until PROOF_CARDS_ENABLED=true. Same
       PUBLIC_READONLY_API=on gate, counted by the public_read rate zone.
+      The producers and bonded nodes page adds GET /api/network/nodes (exact path, no query;
+      one cached snapshot of chain keys, bond aliases and payout addresses read from the node).
+      The backend answers 404 until NETWORK_NODES_READ_ENABLED=true. Same PUBLIC_READONLY_API=on
+      gate, counted by the public_read rate zone.
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still

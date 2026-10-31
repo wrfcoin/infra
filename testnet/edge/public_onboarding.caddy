@@ -449,6 +449,21 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Producers and bonded nodes page (frontend /nodes, backend network-nodes-routes.ts): one cached
+	# snapshot of who produces blocks, who is bonded and who attests, read from the node; public chain
+	# keys, aliases and payout addresses only. EXACT path, GET only, no query. The backend builds it at
+	# most once a minute for every caller, applies its own 30/min limiter and answers 404 until
+	# NETWORK_NODES_READ_ENABLED=true. Same default-OFF gate and public_read limiter.
+	@public_readonly_network_nodes {
+		method GET
+		path /api/network/nodes
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_network_nodes {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Proof card for one station reading (backend#229 proof-card-routes.ts, frontend /proof/:commitId):
 	# GET /api/proofs/<core4 commit id: 64 lowercase hex>, with either no query or exactly the block
 	# height hint h=<1..12 digits, no leading zero> the share link carries. The backend builds the card
@@ -806,7 +821,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/*
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes
 			}
 			key {client_ip}
 			events 30
