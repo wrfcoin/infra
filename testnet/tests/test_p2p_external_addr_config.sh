@@ -322,7 +322,7 @@ SUSTAINED_TEST="${SCRIPT_DIR}/scripts/sustained-operation-test.sh"
 # `:?`: a plain sync-only node may run outbound-only. Exercised for real below
 # (expect_node_runtime_guard).
 assert_contains "$COMPOSE" "WRFCOIN_P2P_EXTERNAL_ADDR: \${WRFCOIN_P2P_EXTERNAL_ADDR:-}"
-assert_contains "$COMPOSE" 'echo "FATAL: WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only node." >&2'
+assert_contains "$COMPOSE" 'echo "FATAL: WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only peer." >&2'
 # The seed's guard is a RUNTIME guard, not an interpolation-time `:?`
 # (infra#762, b58d27b): a `:?` there made every render fail, including the
 # documented join path that never starts the seed. The variable passes through

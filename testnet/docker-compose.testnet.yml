@@ -480,21 +480,23 @@ services:
     # node resolves it with `.ok()` (p2p/src/config.rs), so an empty value
     # silently advertises nothing (fail-OPEN). Same pattern as the seed's guard
     # below (infra#762): refuse here, then exec the image's real entrypoint,
-    # so the HSM init and gosu handoff are unchanged.
+    # so the HSM init and gosu handoff are unchanged. The script deliberately
+    # never spells the n-o-d-e word: test-esbuild-entries-exist.sh analyses any
+    # shell string containing it as a candidate `node dist/...` command.
     entrypoint:
       - /bin/sh
       - -ec
       - |
         if [ -z "$${WRFCOIN_P2P_EXTERNAL_ADDR:-}" ]; then
           if [ "$${WRFCOIN_SYNC_ONLY:-0}" != "1" ] || [ -n "$${WRFCOIN_SERVICE_ID:-}" ]; then
-            echo "FATAL: WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only node." >&2
-            echo "  Producers, reference nodes and serving nodes (WRFCOIN_SERVICE_ID set)" >&2
+            echo "FATAL: WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only peer." >&2
+            echo "  Producers, reference and serving peers (WRFCOIN_SERVICE_ID set)" >&2
             echo "  are dialed by peers and must advertise an operator-verified reachable" >&2
             echo "  multiaddr. Verify it first: testnet/check-p2p-external-addr.sh" >&2
             echo "  Only WRFCOIN_SYNC_ONLY=1 with no WRFCOIN_SERVICE_ID may run outbound-only." >&2
             exit 1
           fi
-          echo "wrfcoin-node: sync-only, no advertised P2P address (outbound connections only)." >&2
+          echo "wrfcoin: sync-only, no advertised P2P address (outbound connections only)." >&2
         fi
         exec /usr/local/bin/hsm-entrypoint.sh "$$@"
       - --

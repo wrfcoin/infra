@@ -192,7 +192,7 @@ fi
 # (2026-10-31): an outbound-only sync node may advertise nothing, every other
 # role must still advertise. It must not have been dropped outright.
 NODE_BLOCK="$(awk '/^  wrfcoin-node:/{f=1} f&&/^  [a-z]/&&!/^  wrfcoin-node:/{exit} f' "${COMPOSE_BASE}")"
-if grep -q 'WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only node' <<<"${NODE_BLOCK}" \
+if grep -q 'WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only peer' <<<"${NODE_BLOCK}" \
    && grep -q 'WRFCOIN_SYNC_ONLY:-0}" != "1" ] || \[ -n "\$\${WRFCOIN_SERVICE_ID' <<<"${NODE_BLOCK}"; then
   pass "node still refuses an empty advertise address for non-sync-only and serving roles"
 else
