@@ -77,6 +77,12 @@ ENV VITE_FAUCET_OPEN=$VITE_FAUCET_OPEN
 # refuses `true` in the public variant and prints the state either way.
 ARG VITE_DISABLE_WALLET_SEND=
 ENV VITE_DISABLE_WALLET_SEND=$VITE_DISABLE_WALLET_SEND
+# Passkey wallet page /wallet/passkey (frontend#16/#23, backend#21). Despite its
+# VITE_ENABLE_* name it is a public feature (owner go 2026-10-30), so the guard
+# exempts it from the VITE_ENABLE_* refusal and treats it like VITE_FAUCET_OPEN:
+# empty (off, the default) or exactly `true`, never from a .env file.
+ARG VITE_ENABLE_PASSKEY_WALLET=
+ENV VITE_ENABLE_PASSKEY_WALLET=$VITE_ENABLE_PASSKEY_WALLET
 COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
 RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
     sh /usr/local/bin/frontend-build-flags-guard /app
@@ -119,6 +125,9 @@ LABEL org.wrfcoin.stage.public-readonly="$VITE_PUBLIC_READONLY_PATHS"
 # Faucet claim provenance, outside org.wrfcoin.frontend.* for the same reason.
 ARG VITE_FAUCET_OPEN=
 LABEL org.wrfcoin.stage.faucet-open="$VITE_FAUCET_OPEN"
+# Passkey wallet provenance, outside org.wrfcoin.frontend.* for the same reason.
+ARG VITE_ENABLE_PASSKEY_WALLET=
+LABEL org.wrfcoin.stage.passkey-wallet="$VITE_ENABLE_PASSKEY_WALLET"
 
 # Install curl for healthcheck
 RUN apk add --no-cache curl

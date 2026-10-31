@@ -182,6 +182,8 @@ EXPECTED = {
         ("request_body {", "max_size 32768", "}", *BACKEND),
     ),
     "public_wallet_send_passkey_nonce": ("GET", "path_regexp ^/api/wallet/send-passkey/nonce/0x[0-9a-f]{40}$", BACKEND),
+    # backend#30 public balance read for the passkey wallet: no bearer, GET, exact path, no query.
+    "public_balance_read": ("GET", "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$", BACKEND),
     "public_readonly_wallet_info": ("GET", "path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}$", BACKEND),
     "public_readonly_wallet_transactions": ("GET", "path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}/transactions$", BACKEND),
     # governance-routes.ts l.231 / l.275 (PROPOSAL_ID_RE l.273) / l.564.
@@ -212,6 +214,7 @@ GATED = frozenset({
     "public_wallet_send_nonce",
     "public_wallet_send_passkey",
     "public_wallet_send_passkey_nonce",
+    "public_balance_read",
     "public_readonly_stations",
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
@@ -255,6 +258,7 @@ READONLY_QUERY_LOCK = {
     "public_wallet_send_nonce": 'expression `{query} == ""`',
     "public_wallet_send_passkey": 'expression `{query} == ""`',
     "public_wallet_send_passkey_nonce": 'expression `{query} == ""`',
+    "public_balance_read": 'expression `{query} == ""`',
     "public_readonly_stations": 'expression `{query} == ""`',
     "public_readonly_station_detail": 'expression `{query} == "" || {query} == "limit=1"`',
     # earnings takes NO query (the frontend sends none; `limit` sizes a core4 read fan-out).
@@ -448,7 +452,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/*",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/*",
             "}",
             "key {client_ip}",
             "events 30",
@@ -800,6 +804,21 @@ def self_test() -> None:
             lambda s: s.replace(
                 "@public_wallet_send_passkey_nonce {\n\t\tmethod GET",
                 "@public_wallet_send_passkey_nonce {\n\t\tmethod GET POST",
+            ),
+        ),
+        "backend#30 public balance widened to a prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$", "path_regexp ^/api/public/balance/"),
+        ),
+        "backend#30 public balance widened beyond GET": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@public_balance_read {\n\t\tmethod GET", "@public_balance_read {\n\t\tmethod GET POST"),
+        ),
+        "backend#30 public balance ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$\n",
             ),
         ),
         "infra#1095 owner-action relay widened beyond POST": (
