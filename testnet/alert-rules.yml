@@ -8,7 +8,7 @@ groups:
     rules:
       - alert: ServiceDown
         expr: |
-          up{job=~"wrfcoin-node|wrfcoin-backend|wrfcoin-weather-earnings|loki|node-exporter|cadvisor|postgres-exporter|wrfcoin-backend-health|wrfcoin-service-health"} == 0
+          up{job=~"wrfcoin-node|wrfcoin-backend|wrfcoin-weather-earnings|loki|node-exporter|cadvisor|postgres-exporter|wrfcoin-backend-health|wrfcoin-service-health|chain-ops-exporter"} == 0
         for: 2m
         labels:
           severity: critical
@@ -306,3 +306,94 @@ groups:
             These txs were admitted to mempool, then excluded when applied during
             block assembly. Investigate the first dropped tx and its log trace for
             #2056.
+
+  # ---------------------------------------------------------------------------
+  # Chain ops (2026-11-01): node-pay receipts and chain-rewards index freshness
+  # ---------------------------------------------------------------------------
+  # Source: testnet/services/chain-ops-exporter (job chain-ops-exporter).
+  # Both broke silently in Oct 2026: chain 888 epochs 4-18 paid no house bond
+  # because no service receipt was included, and the backend's chain-rewards
+  # index sat in db_error for days. The ws receipts cron alerts on its own
+  # failures; these rules are the independent Prometheus-side check.
+  - name: chain_ops
+    rules:
+      # A house bond's owner has no NodeServiceBatch included in this epoch and
+      # the epoch closes within 60 blocks (~77 min at ~77 s/block). Eligibility
+      # is fixed at the close, so after that the epoch pays this bond nothing.
+      # Held off while the exporter's block scan is behind (scan_lag), so a
+      # restarted exporter cannot page before it has read the epoch.
+      - alert: NodePayReceiptMissingBeforeClose
+        expr: |
+          (wrfcoin_node_pay_receipt_batch_included == 0)
+          and on (job, instance) (wrfcoin_node_pay_blocks_to_epoch_close <= 60)
+          and on (job, instance) (wrfcoin_node_pay_scan_lag_blocks <= 2)
+        for: 5m
+        labels:
+          severity: critical
+          service: node-pay
+        annotations:
+          summary: "Node-pay receipt for {{ $labels.bond }} not included; the epoch closes within 60 blocks"
+          description: "No NodeServiceBatch from the {{ $labels.bond }} house bond owner is in this epoch's blocks. Run receipts.sh cycle on ws now (log ~/r888/receipts/logs/cycle.log) or this epoch pays the bond nothing."
+
+      # The consensus answer for the epoch that just closed: fewer house bonds
+      # in the settlement's eligible set than are registered. Not recoverable
+      # for that epoch; fix the receipts cycle before the current one closes.
+      - alert: NodePayLastEpochUnderpaid
+        expr: |
+          wrfcoin_node_pay_last_closed_epoch_eligible_house_bonds
+          < on (job, instance) wrfcoin_node_pay_house_bonds_registered
+        for: 10m
+        labels:
+          severity: critical
+          service: node-pay
+        annotations:
+          summary: "Last closed node-pay epoch pays only {{ $value }} house bond(s)"
+          description: "The settlement for the last closed epoch has fewer eligible house bonds than are registered (see wrfcoin_node_pay_last_closed_epoch_bond_eligible). That epoch is lost for the missing bonds; check the ws receipts cycle before the current epoch closes."
+
+      - alert: NodePayHouseBondNotActive
+        expr: wrfcoin_node_pay_bond_registered == 0 or wrfcoin_node_pay_bond_jailed == 1
+        for: 10m
+        labels:
+          severity: critical
+          service: node-pay
+        annotations:
+          summary: "House bond {{ $labels.bond }} is not registered or is jailed"
+          description: "/node/bonds for the {{ $labels.bond }} house bond reports it unregistered or jailed, so it cannot earn node pay."
+
+      - alert: NodePayScanLagging
+        expr: wrfcoin_node_pay_scan_lag_blocks > 20
+        for: 30m
+        labels:
+          severity: warning
+          service: node-pay
+        annotations:
+          summary: "chain-ops-exporter block scan is {{ $value }} blocks behind"
+          description: "NodePayReceiptMissingBeforeClose is held off until the scan catches up. Check the exporter log and the node's /chain/block reads."
+
+      # The exporter starts this clock at process start, so one that never
+      # succeeds pages too. Without it every NodePay*/ChainRewardIndex* rule is
+      # blind (their gauges are dropped on a failed collection).
+      - alert: ChainOpsExporterStale
+        expr: time() - wrfcoin_chain_ops_exporter_last_success_timestamp_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+          service: chain-ops
+        annotations:
+          summary: "chain-ops-exporter {{ $labels.check }} check has not succeeded for 15+ minutes"
+          description: "Node-pay and index alerts are blind while this fires. Check docker logs wrfcoin-testnet-chain-ops-exporter (node token file, node and backend reachability)."
+
+      # The public earnings/forecaster reads answer 200 only while the backend
+      # index is `ok` and was checked in the last 10 minutes; lag is the node
+      # tip minus the index's asOf height (~25 blocks = ~32 min).
+      - alert: ChainRewardIndexNotCurrent
+        expr: |
+          (wrfcoin_chain_index_available == 0 and wrfcoin_chain_index_enabled == 1)
+          or wrfcoin_chain_index_lag_blocks > 25
+        for: 30m
+        labels:
+          severity: critical
+          service: chain-rewards-index
+        annotations:
+          summary: "Chain-rewards index behind or unavailable for {{ $labels.surface }}"
+          description: "/api/{{ $labels.surface }} has not served a current index for 30+ minutes. Check the backend log for 'Chain reward index pass' and chain_reward_index_state.status (db_error = missing migration)."

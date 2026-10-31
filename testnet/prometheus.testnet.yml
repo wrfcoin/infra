@@ -117,6 +117,14 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 15s
 
+  # chain-ops-exporter (testnet/services/chain-ops-exporter): node-pay receipt
+  # and settlement gauges, chain-rewards index freshness. No auth (internal).
+  - job_name: chain-ops-exporter
+    static_configs:
+      - targets: ["chain-ops-exporter:9202"]
+    metrics_path: /metrics
+    scrape_interval: 30s
+
   # blackbox-exporter probes the backend health endpoint for probe_success.
   - job_name: wrfcoin-backend-health
     metrics_path: /probe

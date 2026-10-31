@@ -1,0 +1,210 @@
+# promtool rule unit tests for the chain_ops group (2026-11-01).
+# Run: promtool test rules testnet/alert-rules-chain-ops.test.yml
+# (alert-rules-gate.yml and scripts/tests/test-prometheus-scrape-config.sh run it).
+rule_files:
+  - alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Healthy epoch near its close: every house bond included, last epoch paid
+  # all three, index current, exporter succeeding. Nothing may fire.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_node_pay_receipt_batch_included{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="ws"}'
+        values: '1x40'
+      - series: 'wrfcoin_node_pay_receipt_batch_included{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="n5"}'
+        values: '1x40'
+      - series: 'wrfcoin_node_pay_receipt_batch_included{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="mango"}'
+        values: '1x40'
+      - series: 'wrfcoin_node_pay_blocks_to_epoch_close{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '30x40'
+      - series: 'wrfcoin_node_pay_scan_lag_blocks{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '0x40'
+      - series: 'wrfcoin_node_pay_last_closed_epoch_eligible_house_bonds{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '3x40'
+      - series: 'wrfcoin_node_pay_house_bonds_registered{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '3x40'
+      - series: 'wrfcoin_node_pay_bond_registered{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="ws"}'
+        values: '1x40'
+      - series: 'wrfcoin_node_pay_bond_jailed{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="ws"}'
+        values: '0x40'
+      - series: 'wrfcoin_chain_ops_exporter_last_success_timestamp_seconds{job="chain-ops-exporter", instance="chain-ops-exporter:9202", check="node_pay"}'
+        values: '0+60x40'
+      - series: 'wrfcoin_chain_index_enabled{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="earnings"}'
+        values: '1x40'
+      - series: 'wrfcoin_chain_index_available{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="earnings"}'
+        values: '1x40'
+      - series: 'wrfcoin_chain_index_lag_blocks{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="earnings"}'
+        values: '3x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: NodePayReceiptMissingBeforeClose
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: NodePayLastEpochUnderpaid
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: NodePayHouseBondNotActive
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ChainOpsExporterStale
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ChainRewardIndexNotCurrent
+        exp_alerts: []
+
+  # Mango's receipt is missing. Far from the close nothing pages; once the
+  # epoch is within 60 blocks of closing, mango (only) pages after 5m.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_node_pay_receipt_batch_included{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="ws"}'
+        values: '1x30'
+      - series: 'wrfcoin_node_pay_receipt_batch_included{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="mango"}'
+        values: '0x30'
+      # 300 blocks left for 10m, then 55 blocks left.
+      - series: 'wrfcoin_node_pay_blocks_to_epoch_close{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '300x10 55x20'
+      - series: 'wrfcoin_node_pay_scan_lag_blocks{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: NodePayReceiptMissingBeforeClose
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: NodePayReceiptMissingBeforeClose
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: node-pay
+              job: chain-ops-exporter
+              instance: chain-ops-exporter:9202
+              bond: mango
+            exp_annotations:
+              summary: "Node-pay receipt for mango not included; the epoch closes within 60 blocks"
+              description: "No NodeServiceBatch from the mango house bond owner is in this epoch's blocks. Run receipts.sh cycle on ws now (log ~/r888/receipts/logs/cycle.log) or this epoch pays the bond nothing."
+
+  # A restarted exporter still scanning the epoch must not page on its
+  # not-yet-seen batches.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_node_pay_receipt_batch_included{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="ws"}'
+        values: '0x20'
+      - series: 'wrfcoin_node_pay_blocks_to_epoch_close{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '40x20'
+      - series: 'wrfcoin_node_pay_scan_lag_blocks{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '300x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NodePayReceiptMissingBeforeClose
+        exp_alerts: []
+
+  # Epochs 4-18 on chain 888: the closed epoch's settlement has no eligible
+  # house bond while three are registered.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_node_pay_last_closed_epoch_eligible_house_bonds{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '0x20'
+      - series: 'wrfcoin_node_pay_house_bonds_registered{job="chain-ops-exporter", instance="chain-ops-exporter:9202"}'
+        values: '3x20'
+      - series: 'wrfcoin_node_pay_bond_jailed{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="n5"}'
+        values: '1x20'
+      - series: 'wrfcoin_node_pay_bond_registered{job="chain-ops-exporter", instance="chain-ops-exporter:9202", bond="n5"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: NodePayLastEpochUnderpaid
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: NodePayLastEpochUnderpaid
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: node-pay
+              job: chain-ops-exporter
+              instance: chain-ops-exporter:9202
+            exp_annotations:
+              summary: "Last closed node-pay epoch pays only 0 house bond(s)"
+              description: "The settlement for the last closed epoch has fewer eligible house bonds than are registered (see wrfcoin_node_pay_last_closed_epoch_bond_eligible). That epoch is lost for the missing bonds; check the ws receipts cycle before the current epoch closes."
+      - eval_time: 15m
+        alertname: NodePayHouseBondNotActive
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: node-pay
+              job: chain-ops-exporter
+              instance: chain-ops-exporter:9202
+              bond: n5
+            exp_annotations:
+              summary: "House bond n5 is not registered or is jailed"
+              description: "/node/bonds for the n5 house bond reports it unregistered or jailed, so it cannot earn node pay."
+
+  # The Oct 2026 index outage: the backend answers 503 EARNINGS_UNAVAILABLE
+  # (index in db_error). Pages after 30m. A disabled surface never pages, and
+  # a lagging-but-available one pages on lag.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_chain_index_enabled{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="earnings"}'
+        values: '1x45'
+      - series: 'wrfcoin_chain_index_available{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="earnings"}'
+        values: '0x45'
+      - series: 'wrfcoin_chain_index_enabled{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="forecasters"}'
+        values: '0x45'
+      - series: 'wrfcoin_chain_index_available{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="forecasters"}'
+        values: '0x45'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ChainRewardIndexNotCurrent
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: ChainRewardIndexNotCurrent
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: chain-rewards-index
+              job: chain-ops-exporter
+              instance: chain-ops-exporter:9202
+              surface: earnings
+            exp_annotations:
+              summary: "Chain-rewards index behind or unavailable for earnings"
+              description: "/api/earnings has not served a current index for 30+ minutes. Check the backend log for 'Chain reward index pass' and chain_reward_index_state.status (db_error = missing migration)."
+
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_chain_index_lag_blocks{job="chain-ops-exporter", instance="chain-ops-exporter:9202", surface="forecasters"}'
+        values: '40x45'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: ChainRewardIndexNotCurrent
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: chain-rewards-index
+              job: chain-ops-exporter
+              instance: chain-ops-exporter:9202
+              surface: forecasters
+            exp_annotations:
+              summary: "Chain-rewards index behind or unavailable for forecasters"
+              description: "/api/forecasters has not served a current index for 30+ minutes. Check the backend log for 'Chain reward index pass' and chain_reward_index_state.status (db_error = missing migration)."
+
+  # An exporter that never succeeds (its clock starts at process start, 0 here).
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_chain_ops_exporter_last_success_timestamp_seconds{job="chain-ops-exporter", instance="chain-ops-exporter:9202", check="node_pay"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ChainOpsExporterStale
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ChainOpsExporterStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: chain-ops
+              job: chain-ops-exporter
+              instance: chain-ops-exporter:9202
+              check: node_pay
+            exp_annotations:
+              summary: "chain-ops-exporter node_pay check has not succeeded for 15+ minutes"
+              description: "Node-pay and index alerts are blind while this fires. Check docker logs wrfcoin-testnet-chain-ops-exporter (node token file, node and backend reachability)."
