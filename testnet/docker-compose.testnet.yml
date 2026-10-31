@@ -2436,16 +2436,33 @@ services:
         max-file: "3"
 
   # Monitoring helpers for backend alerting, not application services.
+  # cAdvisor (2026-11-01): v0.49.1 exported only raw cgroup ids on CT101 (no
+  # `name`/`image` labels), so every ContainerRss* alert matched nothing. Two
+  # causes: it read the Docker root under /rootfs (only /rootfs/proc was
+  # mounted), and CT101's Docker 29 uses the containerd image store
+  # (Driver overlayfs, io.containerd.snapshotter.v1), which v0.49.1 cannot
+  # map to containers. v0.60.6 resolves those containers through the
+  # containerd socket. Set CADVISOR_DOCKER_ROOT to `docker info -f
+  # '{{.DockerRootDir}}'` when it is not /var/lib/docker (CT101:
+  # /mnt/tank-docker/docker-data). Disk metrics are off (google/cadvisor#3860,
+  # and no rule uses container_fs_*). CAdvisorContainerMetricsMissing pages if
+  # the labels disappear again.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ghcr.io/google/cadvisor:v0.60.6@sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a
     container_name: wrfcoin-testnet-cadvisor
     restart: unless-stopped
+    command:
+      - "--docker_only=true"
+      - "--housekeeping_interval=15s"
+      - "--store_container_labels=false"
+      - "--disable_metrics=disk"
     ports:
       - "127.0.0.1:8082:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
       - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
+      - ${CADVISOR_DOCKER_ROOT:-/var/lib/docker}:/rootfs${CADVISOR_DOCKER_ROOT:-/var/lib/docker}:ro
       - /dev/disk/:/dev/disk:ro
       - /proc:/rootfs/proc:ro
     devices:

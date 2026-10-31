@@ -29,7 +29,7 @@ service on its real port, every app job has a known `/metrics` route, the
 | `prometheus` | None | No | Yes | None | Self-scrape is omitted: the web UI is behind basic auth (see `prometheus.testnet.yml`). |
 | `loki` | `loki` | Yes | Yes | Generic `ServiceDown` | Internal metrics scrape. |
 | `node-exporter` | `node-exporter` | Yes, `node-exporter:9100` | Yes | `NodeExporterScrapeDown` | Active testnet and comprehensive monitoring compose files pin `prom/node-exporter:v1.8.0`. |
-| `cadvisor` | `cadvisor` | Yes, Docker-internal `cadvisor:8080` | Yes | `CAdvisorScrapeDown` | Host bind is `127.0.0.1:8082:8080`, so the faucet host-port conflict from infra#421 does not affect the Prometheus Docker-network target. |
+| `cadvisor` | `cadvisor` | Yes, Docker-internal `cadvisor:8080` | Yes | `CAdvisorScrapeDown`, `CAdvisorContainerMetricsMissing` | Host bind is `127.0.0.1:8082:8080`, so the faucet host-port conflict from infra#421 does not affect the Prometheus Docker-network target. v0.60.6 + containerd socket since 2026-11-01: v0.49.1 exported no container names under Docker 29's containerd image store, so `ContainerRss*` were blind. |
 | `postgres-exporter` | `postgres-exporter` | Yes | Yes | Generic `ServiceDown` | Provides `pg_up` / PostgreSQL exporter metrics. |
 | `blackbox-exporter` | `wrfcoin-backend-health`, `wrfcoin-service-health` | Yes, probe metrics | Yes | Generic `ServiceDown` (exporter reachability); `BackendHealthBlackbox` / `ServiceHealthProbeFailed` on `probe_success == 0` | Probes backend, governance, iot and faucet `/health` (anonymous, 200). |
 
