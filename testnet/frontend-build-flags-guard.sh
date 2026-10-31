@@ -46,6 +46,12 @@
 # value rules as the switches above: empty or exactly `true`, never from a
 # .env file.
 #
+# VITE_ENABLE_PASSKEY_WALLET (frontend#16/#23) is the passkey wallet page. Despite
+# the VITE_ENABLE_* name it is a PUBLIC switch (owner go 2026-10-30), so it is
+# excluded from the VITE_ENABLE_* pattern above and follows the
+# VITE_FAUCET_OPEN rules: empty (off) or exactly `true`, never from a .env file.
+# The guard prints FRONTEND_PASSKEY_WALLET=on or =off.
+#
 # Exit 0 = allowed, 1 = refused.
 #
 # usage: frontend-build-flags-guard.sh [APP_DIR]   (default: .)
@@ -54,7 +60,8 @@ set -u
 app_dir="${1:-.}"
 variant="${WRFCOIN_FRONTEND_BUILD_VARIANT-public}"
 
-all_flags=$(env | sed -n -E 's/^(VITE_ENABLE_[A-Za-z0-9_]*)=.*/\1/p' | sort -u)
+# VITE_ENABLE_PASSKEY_WALLET is a public switch (see below), not an internal surface.
+all_flags=$(env | sed -n -E 's/^(VITE_ENABLE_[A-Za-z0-9_]*)=.*/\1/p' | sed '/^VITE_ENABLE_PASSKEY_WALLET$/d' | sort -u)
 set_flags=""
 for name in $all_flags; do
   # Read the actual value, including newlines; env's line rendering alone
@@ -70,6 +77,7 @@ for file in "$app_dir"/.env "$app_dir"/.env.*; do
   # KEY=value or KEY: value (dotenv accepts both), optionally after `export`;
   # a value of "" or '' is empty.
   found=$(sed -n -E \
+    -e "/^[[:space:]]*(export[[:space:]]+)?VITE_ENABLE_PASSKEY_WALLET[[:space:]]*[:=]/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=][[:space:]]*(\"\"|'')?[[:space:]]*(#.*)?\$/EMPTY/" \
     -e "/^EMPTY\$/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=].*/\\2/p" "$file" | sort -u | tr '\n' ' ')
@@ -115,6 +123,8 @@ exact_true_switch VITE_PUBLIC_READONLY_PATHS "Stage 1.5" \
   "FRONTEND_PUBLIC_READONLY=on (Stage 1.5 read-only stage built in)" "FRONTEND_PUBLIC_READONLY=off"
 exact_true_switch VITE_FAUCET_OPEN "faucet claim" \
   "FRONTEND_FAUCET_OPEN=on (onboarding offers the faucet claim)" "FRONTEND_FAUCET_OPEN=off"
+exact_true_switch VITE_ENABLE_PASSKEY_WALLET "passkey wallet" \
+  "FRONTEND_PASSKEY_WALLET=on (/wallet/passkey built in)" "FRONTEND_PASSKEY_WALLET=off"
 
 # The public variant must not hide Send. Judged before the switch prints, so a
 # refused build never logs a state line.

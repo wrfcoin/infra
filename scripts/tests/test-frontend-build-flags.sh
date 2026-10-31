@@ -209,6 +209,26 @@ fresh_app
 printf 'VITE_DISABLE_WALLET_SEND=true\n' > "$TMP/app/.env.example"
 guard_case wallet_send_file_example_ignored 0
 
+echo "guard: VITE_ENABLE_PASSKEY_WALLET (public passkey wallet switch, frontend#16/#23)"
+guard_case passkey_default_off 0
+out_has passkey_default_off 'FRONTEND_PASSKEY_WALLET=off'
+guard_case passkey_true_public_pass 0 WRFCOIN_FRONTEND_BUILD_VARIANT=public VITE_ENABLE_PASSKEY_WALLET=true
+out_has passkey_true_public_pass 'FRONTEND_PASSKEY_WALLET=on'
+out_has passkey_true_public_pass 'FRONTEND_FLAGS=OK variant=public'
+guard_case passkey_true_staging_pass 0 WRFCOIN_FRONTEND_BUILD_VARIANT=staging VITE_ENABLE_PASSKEY_WALLET=true
+for bad in false TRUE 1 on " true"; do
+  case_name="passkey_value_$(printf '%s' "$bad" | tr -c 'A-Za-z0-9' '_')_red"
+  guard_case "$case_name" 1 "VITE_ENABLE_PASSKEY_WALLET=$bad"
+  out_has "$case_name" 'FRONTEND_FLAGS=REFUSED VITE_ENABLE_PASSKEY_WALLET'
+done
+# It does not open the internal VITE_ENABLE_* gate for the others.
+guard_case passkey_true_with_enable_flag_red 1 VITE_ENABLE_PASSKEY_WALLET=true VITE_ENABLE_FULL_STUDIO=true
+fresh_app
+printf 'VITE_ENABLE_PASSKEY_WALLET=true\n' > "$TMP/app/.env.production"
+guard_case passkey_file_red 1
+out_has passkey_file_red 'VITE_ENABLE_PASSKEY_WALLET is set in'
+fresh_app
+
 echo "guard: every .env file vite could load (any mode)"
 # Review of #1048, non-blocking 2: every .env and .env.<mode>[.local] is
 # scanned, not only the production-mode files; only *.example is exempt.
@@ -274,7 +294,8 @@ assert copy_src < guard < npm_build, (copy_src, guard, npm_build)
 # Every VITE_ENABLE_* ARG after the guard would bypass it.
 flag_args = [i for i, line in enumerate(lines) if re.match(r"^ARG VITE_ENABLE_", line)]
 assert flag_args and max(flag_args) < guard, "a VITE_ENABLE_* ARG is declared after the guard"
-names = sorted(re.findall(r"^ARG (VITE_ENABLE_[A-Z0-9_]+)=$", build, re.M))
+# VITE_ENABLE_PASSKEY_WALLET is a public switch with its own checks below.
+names = sorted(n for n in re.findall(r"^ARG (VITE_ENABLE_[A-Z0-9_]+)=$", build, re.M) if n != "VITE_ENABLE_PASSKEY_WALLET")
 assert names == ["VITE_ENABLE_CONTRACT_SURFACES", "VITE_ENABLE_DEMO_SURFACES", "VITE_ENABLE_FULL_STUDIO", "VITE_ENABLE_OPERATOR_PREVIEW"], names
 assert re.search(r"^ARG WRFCOIN_FRONTEND_BUILD_VARIANT=public$", build, re.M)
 for name in names:
@@ -316,6 +337,13 @@ assert ws[0] < guard, "VITE_DISABLE_WALLET_SEND is declared after the guard"
 assert re.search(r"^ENV VITE_DISABLE_WALLET_SEND=\$VITE_DISABLE_WALLET_SEND$", build, re.M)
 assert "VITE_DISABLE_WALLET_SEND: ${VITE_DISABLE_WALLET_SEND:-}" in compose, "compose does not pass VITE_DISABLE_WALLET_SEND with an empty default"
 assert not re.search(r"^ENV VITE_DISABLE_WALLET_SEND", serve, re.M)
+pk = [i for i, line in enumerate(lines) if re.match(r"^ARG VITE_ENABLE_PASSKEY_WALLET", line)]
+assert len(pk) == 1 and lines[pk[0]] == "ARG VITE_ENABLE_PASSKEY_WALLET=", "build stage must declare ARG VITE_ENABLE_PASSKEY_WALLET= (empty default) once"
+assert pk[0] < guard, "VITE_ENABLE_PASSKEY_WALLET is declared after the guard"
+assert re.search(r"^ENV VITE_ENABLE_PASSKEY_WALLET=\$VITE_ENABLE_PASSKEY_WALLET$", build, re.M)
+assert "VITE_ENABLE_PASSKEY_WALLET: ${VITE_ENABLE_PASSKEY_WALLET:-}" in compose
+assert 'LABEL org.wrfcoin.stage.passkey-wallet="$VITE_ENABLE_PASSKEY_WALLET"' in serve
+assert "org.wrfcoin.frontend.passkey" not in serve
 print("  ok    guard after COPY frontend/ and before npm run build; ARGs, compose args and labels agree")
 PY
 

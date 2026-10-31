@@ -204,6 +204,8 @@ services:
         # says the faucet is not funded yet). Same rules as above; owner's call.
         VITE_FAUCET_OPEN: ${VITE_FAUCET_OPEN:-}
         VITE_DISABLE_WALLET_SEND: ${VITE_DISABLE_WALLET_SEND:-}
+        # Passkey wallet page (frontend#16/#23). Public switch: empty = off, or exactly `true`.
+        VITE_ENABLE_PASSKEY_WALLET: ${VITE_ENABLE_PASSKEY_WALLET:-}
 
   # ---------------------------------------------------------------------------
   # DB Migrate — override base image with local build (#238)
