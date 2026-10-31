@@ -562,6 +562,27 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Bring-your-own-key Wolfram reading check (owner ruling 2026-11-01; backend
+	# wolfram-reading-check-routes.ts). The browser cannot call Wolfram|Alpha itself (its API
+	# sends no Access-Control-Allow-Origin), so the backend relays ONE fixed question ("is this
+	# reading unusual for this place and day?") with the caller's OWN AppID, which travels in
+	# the JSON body (never the URL, so no access log records it) and is never stored. POST only,
+	# exact path, no query, JSON only, 2 KiB body cap, its own tight rate zone below. Behind
+	# PUBLIC_READONLY_API=on; the backend route is 404 until WOLFRAM_READING_CHECK_ENABLED=true.
+	@wolfram_reading_check {
+		method POST
+		path /api/integrations/wolfram/reading-check
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @wolfram_reading_check {
+		request_body {
+			max_size 2KiB
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Website parity reads (S1 + S2, owner goal: public site matches the mobile app
 	# before GO). All five groups below share the PUBLIC_READONLY_API=on gate (OFF
 	# unless the edge env carries it exactly), GET only, EXACT paths, and a locked
@@ -854,6 +875,18 @@
 			key {client_ip}
 			events 10
 			window 10m
+		}
+		# Wolfram reading check (owner ruling 2026-11-01): each request spends the caller's own
+		# Wolfram|Alpha quota and one upstream call from this host, so it gets its own tight zone.
+		# The backend limits again (6/min per client, plus a process-wide upstream cap).
+		zone wolfram_reading_check {
+			match {
+				method POST
+				path /api/integrations/wolfram/reading-check
+			}
+			key {client_ip}
+			events 6
+			window 1m
 		}
 		# The snapshot archive is the one large object on this edge; a joiner
 		# needs it once. Manifest polls are cheap but bounded anyway.

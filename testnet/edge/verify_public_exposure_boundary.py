@@ -194,6 +194,13 @@ EXPECTED = {
     "public_wallet_send_passkey_nonce": ("GET", "path_regexp ^/api/wallet/send-passkey/nonce/0x[0-9a-f]{40}$", BACKEND),
     # backend#30 public balance read for the passkey wallet: no bearer, GET, exact path, no query.
     "public_balance_read": ("GET", "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$", BACKEND),
+    # Owner ruling 2026-11-01: bring-your-own-key Wolfram reading check. POST, exact path, JSON only,
+    # no query, 2 KiB body cap, its own rate zone; the caller's AppID rides in the body.
+    "wolfram_reading_check": (
+        "POST",
+        "path /api/integrations/wolfram/reading-check",
+        ("request_body {", "max_size 2KiB", "}", *BACKEND),
+    ),
     "public_readonly_wallet_info": ("GET", "path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}$", BACKEND),
     "public_readonly_wallet_transactions": ("GET", "path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}/transactions$", BACKEND),
     # governance-routes.ts l.231 / l.275 (PROPOSAL_ID_RE l.273) / l.564.
@@ -225,6 +232,7 @@ GATED = frozenset({
     "public_wallet_send_passkey",
     "public_wallet_send_passkey_nonce",
     "public_balance_read",
+    "wolfram_reading_check",
     "public_readonly_stations",
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
@@ -278,6 +286,7 @@ READONLY_QUERY_LOCK = {
     "public_wallet_send_passkey": 'expression `{query} == ""`',
     "public_wallet_send_passkey_nonce": 'expression `{query} == ""`',
     "public_balance_read": 'expression `{query} == ""`',
+    "wolfram_reading_check": 'expression `{query} == ""`',
     "public_readonly_stations": 'expression `{query} == ""`',
     "public_readonly_station_detail": 'expression `{query} == "" || {query} == "limit=1"`',
     # earnings takes NO query (the frontend sends none; `limit` sizes a core4 read fan-out).
@@ -393,7 +402,7 @@ def verify(root: Path = ROOT) -> None:
         approved = [f"method {expected[0]}", expected[1]] + (
             [READONLY_GATE, READONLY_QUERY_LOCK[name]] if name in GATED else []
         ) + ([QUERY_LOCK[name]] if name in QUERY_LOCK else []) + ([BEARER_LOCK[name]] if name in BEARER_LOCK else [])
-        if name in ("public_wallet_send", "public_wallet_send_passkey"):
+        if name in ("public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check"):
             approved += ['header Content-Type application/json']
         if directives(block(policy, f"@{name}")) != approved:
             raise AssertionError(
@@ -456,7 +465,7 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
@@ -491,6 +500,16 @@ def verify(root: Path = ROOT) -> None:
             "}",
             "key {client_ip}",
             "events 10",
+            "window 1m",
+        ],
+        # Owner ruling 2026-11-01: the Wolfram reading check's own tight per-IP zone.
+        "wolfram_reading_check": [
+            "match {",
+            "method POST",
+            "path /api/integrations/wolfram/reading-check",
+            "}",
+            "key {client_ip}",
+            "events 6",
             "window 1m",
         ],
         # infra#1095: the owner-action relay's own tight per-IP zone.
@@ -845,6 +864,44 @@ def self_test() -> None:
             lambda s: s.replace(
                 "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
                 "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$\n",
+            ),
+        ),
+        "wolfram reading check widened to the integrations prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/integrations/wolfram/reading-check\n\t\tvars", "path /api/integrations/*\n\t\tvars"
+            ),
+        ),
+        "wolfram reading check widened beyond POST": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@wolfram_reading_check {\n\t\tmethod POST", "@wolfram_reading_check {\n\t\tmethod POST GET"),
+        ),
+        "wolfram reading check ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/integrations/wolfram/reading-check\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "path /api/integrations/wolfram/reading-check\n",
+            ),
+        ),
+        "wolfram reading check admits a query (the AppID would reach access logs)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/integrations/wolfram/reading-check\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`",
+                "path /api/integrations/wolfram/reading-check\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `true`",
+            ),
+        ),
+        "wolfram reading check body cap removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @wolfram_reading_check {\n\t\trequest_body {\n\t\t\tmax_size 2KiB\n\t\t}\n",
+                "handle @wolfram_reading_check {\n",
+            ),
+        ),
+        "wolfram reading check rate zone loosened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/integrations/wolfram/reading-check\n\t\t\t}\n\t\t\tkey {client_ip}\n\t\t\tevents 6",
+                "path /api/integrations/wolfram/reading-check\n\t\t\t}\n\t\t\tkey {client_ip}\n\t\t\tevents 600",
             ),
         ),
         "forecasters list widened to a prefix": (

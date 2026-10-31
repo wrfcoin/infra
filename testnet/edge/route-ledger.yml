@@ -109,6 +109,12 @@ services:
       one cached snapshot of chain keys, bond aliases and payout addresses read from the node).
       The backend answers 404 until NETWORK_NODES_READ_ENABLED=true. Same PUBLIC_READONLY_API=on
       gate, counted by the public_read rate zone.
+      Owner ruling 2026-11-01 adds POST /api/integrations/wolfram/reading-check: the
+      bring-your-own-key Wolfram check (one fixed question, the caller's own AppID in the
+      JSON body, never stored or logged). Exact path, no query, application/json, 2KiB body
+      cap, its own wolfram_reading_check rate zone (6/min/client IP), behind
+      PUBLIC_READONLY_API=on. The backend route answers 404 until
+      WOLFRAM_READING_CHECK_ENABLED=true (default off).
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still

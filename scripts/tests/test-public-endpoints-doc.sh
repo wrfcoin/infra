@@ -27,8 +27,9 @@ gated_rows=$(grep -cF 'OFF unless the edge env has `PUBLIC_READONLY_API=on`' "${
 # The forecaster pages add two reads (list + c_ profile); the mobile explorer adds its summary.
 # backend#229 adds the proof card read.
 # The producers and bonded nodes page adds its one read.
-if [[ "$gated_rows" != 24 ]]; then
-  echo "FAIL: expected 24 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
+# Owner ruling 2026-11-01 adds the bring-your-own-key Wolfram reading check (POST).
+if [[ "$gated_rows" != 25 ]]; then
+  echo "FAIL: expected 25 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
   exit 1
 fi
 sed '/vars {env.PUBLIC_READONLY_API} on/d' "${ROOT}/testnet/edge/public_onboarding.caddy" >"$tmp/ungated.caddy"
