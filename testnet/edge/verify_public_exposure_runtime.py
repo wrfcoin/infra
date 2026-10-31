@@ -1370,6 +1370,67 @@ NOTIFICATION_CASES = (
     ("GET", f"{_N}/x/../config", (), 400),
 )
 
+# Demo items 7, 8 and 10 (forecast check, friend challenges, free-play duels): exactly what the
+# frontend publicReadonlyApi.ts / walletApi.ts and the phone's ApiConstants send.
+_FV = "/api/forecast-verification"
+_CK = "c0" * 32
+FORECAST_CHECK_CASES = (
+    ("GET", f"{_FV}/summary", (), 502),
+    ("GET", f"{_FV}/forecasts/{_CK}", (), 502),
+    ("POST", f"{_FV}/forecasts", _JSON, 502),  # no bearer: the record proves itself
+    ("GET", f"{_FV}/summary?x=1", (), 404),
+    ("GET", f"{_FV}/forecasts/{_CK.upper()}", (), 404),
+    ("GET", f"{_FV}/forecasts/{_CK[:-1]}", (), 404),
+    ("GET", f"{_FV}/forecasts", (), 404),
+    ("POST", f"{_FV}/forecasts", (), 404),  # JSON only
+    ("POST", f"{_FV}/forecasts?x=1", _JSON, 404),
+    ("POST", f"{_FV}/forecasts/{_CK}", _JSON, 404),
+    ("POST", f"{_FV}/compute/forecast/verify", _JSON, 404),  # the gridded bearer POST stays off the edge
+    ("PUT", f"{_FV}/forecasts", _JSON, 404),
+    ("GET", f"{_FV}/x/../summary", (), 400),
+)
+_CH = "/api/challenges"
+CHALLENGE_CASES = (
+    ("GET", f"{_CH}/code/RAIN-7K2Q", (), 502),
+    ("GET", _CH, PARITY_BEARER, 502),
+    ("POST", _CH, _BJ, 502),
+    ("POST", f"{_CH}/join", _BJ, 502),
+    ("POST", f"{_CH}/sync", _BJ, 502),
+    ("GET", _CH, (), 404),  # the caller's list needs the wallet bearer
+    ("POST", _CH, _JSON, 404),
+    ("POST", f"{_CH}/join", PARITY_BEARER, 404),  # JSON only
+    ("GET", f"{_CH}/code/rain-7k2q", (), 404),
+    ("GET", f"{_CH}/code/RAIN7K2Q", (), 404),
+    ("GET", f"{_CH}/code/RAIN-7K2Q?x=1", (), 404),
+    ("GET", f"{_CH}/active", (), 404),  # the 2026-04 routes stay unreachable
+    ("POST", f"{_CH}/x/claim", _BJ, 404),
+    ("POST", f"{_CH}/leave", _BJ, 404),
+    ("DELETE", _CH, PARITY_BEARER, 404),
+    ("GET", f"{_CH}/x/../code/RAIN-7K2Q", (), 400),
+)
+_DU = "/api/duels"
+_DID = "6f1d2c4e-8a8b-4c1e-9d6a-1f2e3d4c5b6a"
+DUEL_CASES = (
+    ("GET", _DU, (), 502),
+    ("GET", f"{_DU}/{_DID}", (), 502),
+    ("GET", f"{_DU}/mine", PARITY_BEARER, 502),
+    ("POST", _DU, _BJ, 502),
+    ("POST", f"{_DU}/{_DID}/accept", _BJ, 502),
+    ("POST", f"{_DU}/{_DID}/forecast", _BJ, 502),
+    ("POST", f"{_DU}/{_DID}/record", _JSON, 502),  # no bearer: the record proves itself
+    ("GET", f"{_DU}/mine", (), 404),
+    ("POST", f"{_DU}/{_DID}/accept", _JSON, 404),
+    ("POST", _DU, PARITY_BEARER, 404),
+    ("GET", f"{_DU}/{_DID.upper()}", (), 404),
+    ("GET", f"{_DU}/not-a-uuid", (), 404),
+    ("GET", f"{_DU}?x=1", (), 404),
+    ("POST", f"{_DU}/create", _BJ, 404),  # the 2026-04 stake routes stay unreachable
+    ("POST", f"{_DU}/{_DID}/join", _BJ, 404),
+    ("GET", f"{_DU}/{_DID}/result", (), 404),
+    ("POST", f"{_DU}/{_DID}/resolve", _BJ, 404),
+    ("GET", f"{_DU}/x/../{_DID}", (), 400),
+)
+
 
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
@@ -1557,6 +1618,12 @@ def main() -> None:
         prove_parity_reads(f"{label}-notifications", text, port, "on", NOTIFICATION_CASES, 8)
         prove_parity_reads(f"{label}-calibration-gate", text, port, None, CALIBRATION_CASES[:2], 16)
         prove_parity_reads(f"{label}-calibration", text, port, "on", CALIBRATION_CASES, 16)
+        prove_parity_reads(f"{label}-forecast-check-gate", text, port, None, FORECAST_CHECK_CASES[:3], 12)
+        prove_parity_reads(f"{label}-forecast-check", text, port, "on", FORECAST_CHECK_CASES, 16)
+        prove_parity_reads(f"{label}-challenges-gate", text, port, None, CHALLENGE_CASES[:5], 12)
+        prove_parity_reads(f"{label}-challenges", text, port, "on", CHALLENGE_CASES, 16)
+        prove_parity_reads(f"{label}-duels-gate", text, port, None, DUEL_CASES[:7], 12)
+        prove_parity_reads(f"{label}-duels", text, port, "on", DUEL_CASES, 16)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1584,6 +1651,17 @@ def main() -> None:
         ),
         "network nodes widened to the network prefix": (
             caddy_src.replace("path /api/network/nodes\n", "path /api/network/*\n"), NETWORK_NODES_CASES,
+        ),
+        "challenge board widened to any segment": (
+            caddy_src.replace("^/api/challenges/code/[A-Z0-9]{4}-[A-Z0-9]{4}$", "^/api/challenges/code/[^/]+$"), CHALLENGE_CASES,
+        ),
+        "duel writes widened to any action": (
+            caddy_src.replace("/(accept|forecast))?$", "/[a-z]+)?$"), DUEL_CASES,
+        ),
+        "forecast check hand-in admitted without JSON": (
+            caddy_src.replace("path /api/forecast-verification/forecasts\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Content-Type application/json\n",
+                              "path /api/forecast-verification/forecasts\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n"),
+            FORECAST_CHECK_CASES,
         ),
         "proof card widened to any segment": (
             caddy_src.replace("^/api/proofs/[0-9a-f]{64}$", "^/api/proofs/[^/]+$"), PROOF_CARD_CASES,
