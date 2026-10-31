@@ -177,11 +177,15 @@ cat >"$ROOT/bin/tailscale" <<'SH'
 if [[ "${1:-}" == "status" ]]; then echo wrfcoin-testnet; else echo 198.51.100.7; fi
 SH
 chmod +x "$ROOT/bin/tailscale"
-cat >"$ROOT/join-root/infra/testnet/check-p2p-external-addr.sh" <<'SH'
+# The mock seam is `docker` itself: every call exits 97, so the run stops at
+# its first Docker call (the volume probe, then `compose up`) and nothing can
+# reach a real daemon. This seam used to be a stubbed pre-start
+# check-p2p-external-addr.sh; the join no longer dials before the node starts.
+cat >"$ROOT/bin/docker" <<'SH'
 #!/usr/bin/env bash
 exit 97
 SH
-chmod +x "$ROOT/join-root/infra/testnet/check-p2p-external-addr.sh"
+chmod +x "$ROOT/bin/docker"
 
 run_join_fixture() {
   local name="$1" include_signer="$2"
@@ -200,7 +204,7 @@ EOF
   fi
   printf 'WRFCOIN_P2P_EXTERNAL_ADDR=/ip4/198.51.100.7/tcp/9000\n' >"$dir/infra/testnet/.env"
   set +e
-  BOOTSTRAP_PEERS=/ip4/198.51.100.8/tcp/9000/p2p/synthetic \
+  BOOTSTRAP_PEERS=/ip4/198.51.100.8/tcp/9000/p2p/synthetic ALLOW_FULL_SYNC=1 \
   PATH="$ROOT/bin:$PATH" CUT_PINS_FILE="$dir/pins.env" \
     bash "$dir/infra/testnet/join-testnet-sync-node.sh" --root "$dir" >"$dir/run.out" 2>&1
   rc=$?

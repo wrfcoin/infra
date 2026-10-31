@@ -146,6 +146,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 2b. Starting point C — a newcomer's outbound-only sync node (2026-10-31): no
+#     advertise address at all, as join-testnet-sync-node.sh now writes it
+#     when the operator sets none. The documented command must still render.
+# ---------------------------------------------------------------------------
+echo "== 2b. operator path C: outbound-only sync node, no advertise address =="
+rm -f .env
+WRFCOIN_TESTNET_RUNTIME_IMAGE='sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
+  bash setup-env.sh > /dev/null 2>&1 || { fail "setup-env.sh did not complete"; exit 1; }
+apply_join_script_env
+set_env "WRFCOIN_P2P_EXTERNAL_ADDR="
+if documented_command; then
+  rc=0
+else
+  rc=$?
+fi
+if [ "${rc}" -eq 0 ]; then
+  pass "documented command interpolates clean with no advertise address (exit 0)"
+else
+  fail "documented command exited ${rc} for an outbound-only sync node"
+  sed 's/^/      /' /tmp/jp.err | head -3 >&2
+fi
+
+# ---------------------------------------------------------------------------
 # 3. The fix must not have been achieved by weakening the seed.
 #    Static assertions, so a revert is caught even if step 1-2 still pass.
 # ---------------------------------------------------------------------------
@@ -165,13 +188,15 @@ else
   fail "  because p2p/src/config.rs resolves it with .ok() and starts anyway"
 fi
 
-# The NODE's guard is correct and must survive: the node IS the target of the
-# documented command, and the join script supplies its value.
+# The NODE's guard moved from interpolation to a role-scoped startup guard
+# (2026-10-31): an outbound-only sync node may advertise nothing, every other
+# role must still advertise. It must not have been dropped outright.
 NODE_BLOCK="$(awk '/^  wrfcoin-node:/{f=1} f&&/^  [a-z]/&&!/^  wrfcoin-node:/{exit} f' "${COMPOSE_BASE}")"
-if grep -q 'WRFCOIN_P2P_EXTERNAL_ADDR: \${WRFCOIN_P2P_EXTERNAL_ADDR:?' <<<"${NODE_BLOCK}"; then
-  pass "node keeps its own ':?' guard"
+if grep -q 'WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only peer' <<<"${NODE_BLOCK}" \
+   && grep -q 'WRFCOIN_SYNC_ONLY:-0}" != "1" ] || \[ -n "\$\${WRFCOIN_SERVICE_ID' <<<"${NODE_BLOCK}"; then
+  pass "node still refuses an empty advertise address for non-sync-only and serving roles"
 else
-  fail "the node's ':?' guard was removed — #762 must not be 'fixed' by loosening it"
+  fail "the node's role-scoped startup guard is gone — an unset address would fail OPEN"
 fi
 
 echo

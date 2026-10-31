@@ -466,11 +466,46 @@ services:
     env_file: bootstrap.${WRFCOIN_CHAIN_ID:-777}.env
     container_name: wrfcoin-testnet-node
     restart: unless-stopped
+    # The node's advertise-address requirement, enforced at NODE STARTUP and
+    # scoped by role (join path, 2026-10-31) instead of a `:?` at interpolation.
+    #
+    # A plain sync-only node (WRFCOIN_SYNC_ONLY=1 and no WRFCOIN_SERVICE_ID)
+    # only dials out to the seed; nobody needs to dial it, so it may advertise
+    # nothing and needs no port forward. The old `:?` made every newcomer
+    # behind a home router or CGNAT invent a reachable address before the
+    # documented join command would even render.
+    #
+    # Every other role (producer, reference node, bonded/serving node) must
+    # still advertise one, and an empty value cannot simply pass through: the
+    # node resolves it with `.ok()` (p2p/src/config.rs), so an empty value
+    # silently advertises nothing (fail-OPEN). Same pattern as the seed's guard
+    # below (infra#762): refuse here, then exec the image's real entrypoint,
+    # so the HSM init and gosu handoff are unchanged. The script deliberately
+    # never spells the n-o-d-e word: test-esbuild-entries-exist.sh analyses any
+    # shell string containing it as a candidate `node dist/...` command.
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -z "$${WRFCOIN_P2P_EXTERNAL_ADDR:-}" ]; then
+          if [ "$${WRFCOIN_SYNC_ONLY:-0}" != "1" ] || [ -n "$${WRFCOIN_SERVICE_ID:-}" ]; then
+            echo "FATAL: WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only peer." >&2
+            echo "  Producers, reference and serving peers (WRFCOIN_SERVICE_ID set)" >&2
+            echo "  are dialed by peers and must advertise an operator-verified reachable" >&2
+            echo "  multiaddr. Verify it first: testnet/check-p2p-external-addr.sh" >&2
+            echo "  Only WRFCOIN_SYNC_ONLY=1 with no WRFCOIN_SERVICE_ID may run outbound-only." >&2
+            exit 1
+          fi
+          echo "wrfcoin: sync-only, no advertised P2P address (outbound connections only)." >&2
+        fi
+        exec /usr/local/bin/hsm-entrypoint.sh "$$@"
+      - --
     ports:
       # Node API — loopback only for the June 17 tailnet launch (#557).
       # Publish the explorer, not the privileged node API, to testers.
       - "127.0.0.1:8556:8556"
-      # P2P — must be publicly reachable; forward this port in your firewall/router
+      # P2P — producers/serving nodes must be publicly reachable here (forward
+      # it in your router). A sync-only node works without any port forward.
       - "0.0.0.0:9000:9000"
     environment:
       WRFCOIN_API_HOST: "0.0.0.0"
@@ -547,7 +582,9 @@ services:
       # Optional relay multiaddresses used for NAT traversal.
       WRFCOIN_P2P_RELAY_ADDRESSES: ${WRFCOIN_P2P_RELAY_ADDRESSES:-}
       # Advertised P2P multiaddr for peers outside the Docker bridge (host LAN IP, NAT public IP).
-      WRFCOIN_P2P_EXTERNAL_ADDR: ${WRFCOIN_P2P_EXTERNAL_ADDR:?WRFCOIN_P2P_EXTERNAL_ADDR must be set to an operator-verified reachable multiaddr}
+      # NOT `:?`: required at startup for every role except a plain sync-only
+      # node; see this service's `entrypoint:` guard above.
+      WRFCOIN_P2P_EXTERNAL_ADDR: ${WRFCOIN_P2P_EXTERNAL_ADDR:-}
       # Snapshot signing key; leave empty to publish unsigned snapshots.
       WRFCOIN_SNAPSHOT_SIGNER_PRIVATE_KEY: ${WRFCOIN_SNAPSHOT_SIGNER_PRIVATE_KEY:-}
       # Comma-separated ed25519 public keys allowed to authorize snapshot ingest.

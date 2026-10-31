@@ -6,7 +6,7 @@ that runs the WRFCoin testnet on the node host (node container, `<WORKSTATION_LA
 ## Quick Start
 
 See [GETTING_STARTED.md](GETTING_STARTED.md) for setup prerequisites and
-[JOIN_TESTNET.md](JOIN_TESTNET.md) for the operator-assisted joining procedure.
+[JOIN_TESTNET.md](JOIN_TESTNET.md) to join as a sync-only node (no invite needed).
 Deployment requires operator-supplied paths, signer configuration and peer
 addresses. Public overlay examples and their required variables are documented in
 [PUBLIC_DEPLOYMENT_EXAMPLES.md](PUBLIC_DEPLOYMENT_EXAMPLES.md). Internal runbooks

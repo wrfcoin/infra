@@ -76,71 +76,6 @@ assert_workflow_step_has_fixture() {
   fi
 }
 
-expect_required_guard_rejected_when_weakened() {
-  local label="$1" required_guard="$2" weakened_guard="$3"
-  local mutated
-  if ! grep -Fxq -- "$required_guard" "$COMPOSE"; then
-    echo "FAIL: ${label} negative control cannot find the exact required Compose guard" >&2
-    exit 1
-  fi
-  mutated="$(mktemp)"
-  awk -v required_guard="$required_guard" -v weakened_guard="$weakened_guard" \
-    '{ if ($0 == required_guard) $0 = weakened_guard; print }' \
-    "$COMPOSE" > "$mutated"
-  if grep -Fq -- "$required_guard" "$mutated"; then
-    echo "FAIL: ${label} negative control did not weaken the required Compose guard" >&2
-    rm -f "$mutated"
-    exit 1
-  fi
-  rm -f "$mutated"
-}
-
-expect_compose_render_to_fail_when_p2p_fixture_is_omitted() {
-  local omitted="$1"
-  local -a compose_env=(
-    env -i
-    "PATH=${PATH}"
-    "HOME=${HOME:-/tmp}"
-    POSTGRES_PASSWORD=ci
-    REDIS_PASSWORD=ci
-    JWT_SECRET=ci
-    GRAFANA_ADMIN_PASSWORD=ci
-    OAUTH_STATE_SECRET=ci
-    RPC_API_KEY=ci
-    ADMIN_TOKEN=ci
-    N8N_WEBHOOK_SECRET=ci
-    WRFCOIN_OPERATOR_TOKEN=ci
-    WRFCOIN_CONTRIBUTOR_TOKEN=contributor-ci
-    WRFCOIN_HSM_PIN=ci
-    WRFCOIN_HSM_SO_PIN=ci
-  )
-
-  case "$omitted" in
-    node)
-      # compose-render-negative-control: p2p-node-fixture-omitted
-      if "${compose_env[@]}" \
-        WRFCOIN_SEED_P2P_EXTERNAL_ADDR=/ip4/203.0.113.9/tcp/9000 \
-        docker compose --profile seed -f "$COMPOSE" config >/dev/null 2>&1; then
-        echo "FAIL: Compose accepted a render with only WRFCOIN_P2P_EXTERNAL_ADDR omitted" >&2
-        exit 1
-      fi
-      ;;
-    seed)
-      # compose-render-negative-control: p2p-seed-fixture-omitted
-      if "${compose_env[@]}" \
-        WRFCOIN_P2P_EXTERNAL_ADDR=/ip4/198.51.100.7/tcp/9000 \
-        docker compose --profile seed -f "$COMPOSE" config >/dev/null 2>&1; then
-        echo "FAIL: Compose accepted a render with only WRFCOIN_SEED_P2P_EXTERNAL_ADDR omitted" >&2
-        exit 1
-      fi
-      ;;
-    *)
-      echo "FAIL: unknown required-fixture omission control ${omitted}" >&2
-      exit 1
-      ;;
-  esac
-}
-
 expect_render_inventory_mutation_rejected() {
   local label="$1" suffix="$2"
   shift 2
@@ -237,6 +172,81 @@ PY
   trap - RETURN
 }
 
+# expect_node_runtime_guard: the node's advertise-address guard is enforced at
+# NODE START and scoped by role (join path, 2026-10-31).
+# 1. A render with the node address omitted must succeed: the documented join
+#    command for an outbound-only sync node must not need an address.
+# 2. The RENDERED node entrypoint is executed:
+#      empty + not sync-only            -> exit 1, FATAL, never the real entrypoint
+#      empty + sync-only + service id   -> exit 1 (a serving role must advertise)
+#      empty + sync-only                -> hands over (outbound-only sync node)
+#      set (any role)                   -> hands over
+# 3. Negative control: the same script with its `exit 1` removed must reach the
+#    entrypoint for a non-sync-only node (so step 2 can tell the difference).
+expect_node_runtime_guard() {
+  local work rendered script stub out rc
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' RETURN
+  rendered="${work}/rendered.json"
+  # This unforced render tests the node's runtime guard, not fixture injection.
+  # raw-render-reviewed: node-runtime-guard-unforced-render
+  if ! env -i "PATH=${PATH}" "HOME=${HOME:-/tmp}" POSTGRES_PASSWORD=ci REDIS_PASSWORD=ci JWT_SECRET=ci \
+      GRAFANA_ADMIN_PASSWORD=ci OAUTH_STATE_SECRET=ci RPC_API_KEY=ci ADMIN_TOKEN=ci N8N_WEBHOOK_SECRET=ci \
+      WRFCOIN_OPERATOR_TOKEN=ci WRFCOIN_CONTRIBUTOR_TOKEN=contributor-ci WRFCOIN_HSM_PIN=ci WRFCOIN_HSM_SO_PIN=ci \
+      docker compose -f "$COMPOSE" config --format json > "$rendered" 2>"${work}/render.err"; then
+    echo "FAIL: a render with WRFCOIN_P2P_EXTERNAL_ADDR omitted must succeed (node runtime guard)" >&2
+    sed -n '1,5p' "${work}/render.err" >&2
+    exit 1
+  fi
+  script="${work}/node-entry.sh"
+  stub="${work}/hsm-entrypoint.sh"
+  printf '#!/bin/sh\necho REACHED_REAL_ENTRYPOINT\n' > "$stub"; chmod +x "$stub"
+  python3 - "$rendered" "$script" "$stub" <<'PY2'
+import json, sys
+svc = json.load(open(sys.argv[1]))["services"]["wrfcoin-node"]
+ep = svc["entrypoint"]
+assert ep[:2] == ["/bin/sh", "-ec"], ep[:2]
+assert ep[3:] == ["--"], ep[3:]
+body = ep[2].replace("$$", "$")
+assert "/usr/local/bin/hsm-entrypoint.sh" in body, "rendered node entrypoint no longer execs hsm-entrypoint.sh"
+open(sys.argv[2], "w").write(body.replace("/usr/local/bin/hsm-entrypoint.sh", sys.argv[3]))
+PY2
+  run_node_entry() { # run_node_entry <script> <addr> <sync_only> <service_id>
+    env -i "PATH=${PATH}" "WRFCOIN_P2P_EXTERNAL_ADDR=$2" "WRFCOIN_SYNC_ONLY=$3" "WRFCOIN_SERVICE_ID=$4" \
+      /bin/sh -ec "$(cat "$1")" -- 2>&1
+  }
+  refuses() { # refuses <label> <addr> <sync_only> <service_id>
+    rc=0; out="$(run_node_entry "$script" "$2" "$3" "$4")" || rc=$?
+    if [ "$rc" -ne 1 ] || ! grep -q 'FATAL: WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty' <<<"$out" \
+       || grep -q REACHED_REAL_ENTRYPOINT <<<"$out"; then
+      echo "FAIL: rendered node entrypoint did not refuse: $1 (rc=${rc})" >&2
+      exit 1
+    fi
+  }
+  hands_over() { # hands_over <label> <addr> <sync_only> <service_id>
+    rc=0; out="$(run_node_entry "$script" "$2" "$3" "$4")" || rc=$?
+    if [ "$rc" -ne 0 ] || ! grep -q REACHED_REAL_ENTRYPOINT <<<"$out"; then
+      echo "FAIL: rendered node entrypoint did not hand over: $1 (rc=${rc})" >&2
+      exit 1
+    fi
+  }
+  refuses "empty address on a producer/reference node" "" 0 ""
+  refuses "empty address on a sync-only SERVING node" "" 1 "node-ws"
+  hands_over "empty address on a plain sync-only node (outbound-only)" "" 1 ""
+  grep -q 'outbound connections only' <<<"$out" || { echo "FAIL: outbound-only start is not announced" >&2; exit 1; }
+  hands_over "producer with an address" "/ip4/203.0.113.9/tcp/9000" 0 ""
+  hands_over "serving node with an address" "/ip4/203.0.113.9/tcp/9000" 1 "node-ws"
+  grep -v '^[[:space:]]*exit 1$' "$script" > "${work}/weakened.sh"
+  rc=0; out="$(run_node_entry "${work}/weakened.sh" "" 0 "")" || rc=$?
+  if ! grep -q REACHED_REAL_ENTRYPOINT <<<"$out"; then
+    echo "FAIL: negative control: the node guard without 'exit 1' still did not reach the entrypoint; the check cannot discriminate" >&2
+    exit 1
+  fi
+  echo "Node runtime P2P guard: refuses empty for producer/serving roles, allows outbound-only sync; weakened guard is RED as expected"
+  rm -rf "$work"
+  trap - RETURN
+}
+
 # expect_executed_render_rejected <label> <snippet lines...>: codex round 62.
 # ARGV-PROVEN: the snippet is first EXECUTED by bash against a docker shim that
 # records its argv, and must really call `compose -f
@@ -308,7 +318,11 @@ RESTORE_DRILL="${SCRIPT_DIR}/scripts/backup-restore-verification.sh"
 PITR_RESTORE="${SCRIPT_DIR}/scripts/pg-restore-pitr.sh"
 SMOKE_FULL="${SCRIPT_DIR}/scripts/smoke-full.sh"
 SUSTAINED_TEST="${SCRIPT_DIR}/scripts/sustained-operation-test.sh"
-assert_contains "$COMPOSE" "WRFCOIN_P2P_EXTERNAL_ADDR: \${WRFCOIN_P2P_EXTERNAL_ADDR:?"
+# The node's guard is a role-scoped RUNTIME guard, not an interpolation-time
+# `:?`: a plain sync-only node may run outbound-only. Exercised for real below
+# (expect_node_runtime_guard).
+assert_contains "$COMPOSE" "WRFCOIN_P2P_EXTERNAL_ADDR: \${WRFCOIN_P2P_EXTERNAL_ADDR:-}"
+assert_contains "$COMPOSE" 'echo "FATAL: WRFCOIN_P2P_EXTERNAL_ADDR is unset or empty on a non-sync-only peer." >&2'
 # The seed's guard is a RUNTIME guard, not an interpolation-time `:?`
 # (infra#762, b58d27b): a `:?` there made every render fail, including the
 # documented join path that never starts the seed. The variable passes through
@@ -792,16 +806,20 @@ expect_render_inventory_mutation_rejected raw-marker-clears-only-one-render .sh 
   '# raw-render-reviewed: inventory-control-raw-two' \
   'docker compose -f "$COMPOSE_FILE" config; docker compose -f "$COMPOSE_FILE" config'
 python3 "$RENDER_INVENTORY"
-expect_required_guard_rejected_when_weakened \
-  "node external address" \
-  '      WRFCOIN_P2P_EXTERNAL_ADDR: ${WRFCOIN_P2P_EXTERNAL_ADDR:?WRFCOIN_P2P_EXTERNAL_ADDR must be set to an operator-verified reachable multiaddr}' \
-  '      WRFCOIN_P2P_EXTERNAL_ADDR: ${WRFCOIN_P2P_EXTERNAL_ADDR:-}'
-expect_compose_render_to_fail_when_p2p_fixture_is_omitted node
+expect_node_runtime_guard
 expect_seed_runtime_guard
 assert_contains "$BOOTSTRAP" 'post_start_p2p_validation'
 assert_contains "$BOOTSTRAP" 'run_p2p_config_validation'
 assert_contains "$SYNC_JOIN" 'Preserving operator-supplied WRFCOIN_P2P_EXTERNAL_ADDR.'
-assert_contains "$SYNC_JOIN" 'check-p2p-external-addr.sh" --require'
+# The join's own-address dial must run AFTER the node is started: before
+# `compose up` nothing listens there, so a pre-start dial aborted every fresh
+# join (2026-10-31 newcomer dry run).
+dial_line=$(grep -n 'check-p2p-external-addr.sh" "\${WRFCOIN_P2P_EXTERNAL_ADDR}"' "$SYNC_JOIN" | head -1 | cut -d: -f1)
+up_line=$(grep -n 'up -d --build postgres redis wrfcoin-node' "$SYNC_JOIN" | head -1 | cut -d: -f1)
+if [ -z "$dial_line" ] || [ -z "$up_line" ] || [ "$dial_line" -le "$up_line" ]; then
+  echo "FAIL: sync-node advertised-address dial must come after the node is started" >&2
+  exit 1
+fi
 assert_contains "$BOOT_HEAL" 'guard_external_address'
 assert_contains "$BOOT_HEAL" 'compose up -d --no-build --force-recreate'
 assert_contains "$RESET" 'require_p2p_guard'

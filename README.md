@@ -35,7 +35,7 @@ These are source capabilities. A rendered Compose file or passing local test doe
 
 ## Planned and current limitations
 
-Public internet peering without an invite is targeted for launch. The join guide on current main still documents the invite-based path; use only a bootstrap address published by the operators and check the latest guide before joining. Public peering is not claimed operational here.
+The join guide needs no invite: a sync-only node dials the public seed pinned in `testnet/cut-pins.env` and needs only outbound connections. Native Windows downloads are not available yet (WSL is not the intended Windows route). A passing local test does not prove that any particular join succeeded.
 
 Signed downloadable binaries are not yet published. Public deployment examples require operator configuration and do not provision signing keys or authorize a producer. Kubernetes and Terraform assets elsewhere in the tree are reference material, not the active testnet deployment path.
 
