@@ -1292,6 +1292,29 @@ WOLFRAM_READING_CHECK_CASES = (
     ("PUT", _WR, _JSON, 404),
     ("POST", "/api/integrations/x/../wolfram/reading-check", _JSON, 400),
 )
+# Station calibration certificate status (core4#388/#435; frontend CalibrationService). Alias only,
+# no query; the signed submit/revoke POSTs never pass the edge.
+_CC = "/api/calibration-certificates"
+_CA = "st_7d29a4c1e0b8"
+CALIBRATION_CASES = (
+    ("GET", f"{_CC}/station/{_CA}", (), 502),  # what the station page sends
+    ("GET", f"{_CC}/station/st_000000000000", (), 502),
+    ("GET", f"{_CC}/station/{_CA}?x=1", (), 404),
+    ("GET", f"{_CC}/station/{_CA.upper()}", (), 404),
+    ("GET", f"{_CC}/station/{_CA}0", (), 404),
+    ("GET", f"{_CC}/station/{_CA[:-1]}", (), 404),
+    ("GET", f"{_CC}/station/PWS-DULUTH-JANEDOE-01", (), 404),  # a raw station id never matches
+    ("GET", f"{_CC}/station/{_CA}/", (), 404),
+    ("GET", f"{_CC}/station/{_CA}/history", (), 404),
+    ("GET", f"{_CC}/station", (), 404),
+    ("GET", _CC, (), 404),
+    ("POST", _CC, (), 404),  # submit stays on the operator network
+    ("POST", f"{_CC}/revocations", (), 404),
+    ("POST", f"{_CC}/station/{_CA}", (), 404),
+    ("DELETE", f"{_CC}/station/{_CA}", (), 404),
+    ("GET", f"{_CC}/x/../station/{_CA}", (), 400),
+)
+
 
 # Weekly forecast competition (backend#251; frontend COMPETITIONS_PATH / competitionWeekPath).
 _CP = "/api/competitions"
@@ -1532,6 +1555,8 @@ def main() -> None:
         # notify_write counts every request on the subscription paths (10/min): small chunks.
         prove_parity_reads(f"{label}-notifications-gate", text, port, None, NOTIFICATION_CASES[:6], 8)
         prove_parity_reads(f"{label}-notifications", text, port, "on", NOTIFICATION_CASES, 8)
+        prove_parity_reads(f"{label}-calibration-gate", text, port, None, CALIBRATION_CASES[:2], 16)
+        prove_parity_reads(f"{label}-calibration", text, port, "on", CALIBRATION_CASES, 16)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1571,6 +1596,17 @@ def main() -> None:
                 'path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Authorization "Bearer *"\n',
                 'path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n',
             ), NOTIFICATION_CASES,
+        ),
+        "calibration certificate widened to any segment": (
+            caddy_src.replace("^/api/calibration-certificates/station/st_[0-9a-f]{12}$", "^/api/calibration-certificates/station/[^/]+$"),
+            CALIBRATION_CASES,
+        ),
+        "calibration certificate query unlocked": (
+            caddy_src.replace(
+                "station/st_[0-9a-f]{12}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`",
+                "station/st_[0-9a-f]{12}$\n\t\tvars {env.PUBLIC_READONLY_API} on",
+            ),
+            CALIBRATION_CASES,
         ),
         "proof card height hint loosened": (
             caddy_src.replace("'^h=[1-9][0-9]{0,11}$'", "'^h=[0-9]+'"), PROOF_CARD_CASES,
