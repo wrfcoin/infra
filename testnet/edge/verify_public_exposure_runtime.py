@@ -1260,6 +1260,21 @@ PROOF_CARD_CASES = (
     ("GET", f"{_PC}/x/../{_PK}", (), 400),
 )
 
+# Producers and bonded nodes page (frontend NETWORK_NODES_PATH).
+_NN = "/api/network/nodes"
+NETWORK_NODES_CASES = (
+    ("GET", _NN, (), 502),  # exactly what the /nodes page sends
+    ("GET", _NN + "?x=1", (), 404),
+    ("GET", _NN + "/", (), 404),
+    ("GET", _NN + "/extra", (), 404),
+    ("GET", "/api/network", (), 404),
+    ("GET", "/api/network/info", (), 404),
+    ("GET", "/api/network/peers", (), 404),
+    ("POST", _NN, (), 404),
+    ("DELETE", _NN, (), 404),
+    ("GET", "/api/network/x/../nodes", (), 400),
+)
+
 
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
@@ -1436,6 +1451,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-forecasters", text, port, "on", FORECASTER_EXPLORER_CASES, 24)
         prove_parity_reads(f"{label}-proof-card-gate", text, port, None, PROOF_CARD_CASES[:4], 16)
         prove_parity_reads(f"{label}-proof-card", text, port, "on", PROOF_CARD_CASES, 16)
+        prove_parity_reads(f"{label}-network-nodes-gate", text, port, None, NETWORK_NODES_CASES[:1], 12)
+        prove_parity_reads(f"{label}-network-nodes", text, port, "on", NETWORK_NODES_CASES, 12)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1456,6 +1473,9 @@ def main() -> None:
         ),
         "forecaster profile widened to any segment": (
             caddy_src.replace("^/api/forecasters/c_[0-9a-f]{24}$", "^/api/forecasters/[^/]+$"), FORECASTER_EXPLORER_CASES,
+        ),
+        "network nodes widened to the network prefix": (
+            caddy_src.replace("path /api/network/nodes\n", "path /api/network/*\n"), NETWORK_NODES_CASES,
         ),
         "proof card widened to any segment": (
             caddy_src.replace("^/api/proofs/[0-9a-f]{64}$", "^/api/proofs/[^/]+$"), PROOF_CARD_CASES,
