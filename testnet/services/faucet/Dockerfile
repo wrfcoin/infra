@@ -32,7 +32,7 @@ LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
       org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY --chown=wrfcoin:wrfcoin testnet/services/faucet/server.js ./
+COPY --chown=wrfcoin:wrfcoin testnet/services/faucet/server.js testnet/services/faucet/bond-grant-peer.js ./
 
 USER wrfcoin
 
