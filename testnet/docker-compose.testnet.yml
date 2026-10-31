@@ -2549,6 +2549,55 @@ services:
         max-size: "50m"
         max-file: "3"
 
+  # Chain-ops exporter (2026-11-01): node-pay receipt/settlement gauges and
+  # chain-rewards index freshness, read-only from this host's node and backend.
+  # Alerts: NodePay* and ChainRewardIndex* in alert-rules.yml. Stock python
+  # image with the script bind-mounted, so nothing is built on a node host.
+  # NODE_PAY_HOUSE_BONDS defaults to chain 888's three house bonds (public
+  # deployment ids); set it in .env for any other chain.
+  chain-ops-exporter:
+    image: python:3.11-slim
+    container_name: wrfcoin-testnet-chain-ops-exporter
+    restart: unless-stopped
+    command: ["python3", "-u", "/app/chain_ops_exporter.py"]
+    expose:
+      - "9202"
+    environment:
+      NODE_URL: http://wrfcoin-node:8556
+      BACKEND_URL: http://wrfcoin-backend:4001
+      NODE_READER_TOKEN_FILE: /run/secrets/node_reader_token
+      NODE_PAY_HOUSE_BONDS: ${NODE_PAY_HOUSE_BONDS:-ws=6d4e5c712682934c90f3ee02eddb10bceed8013e1e75b7377cfe92a7ed7df6e6,n5=d5833539f48c33946531e51d058c14e6605125cd95b1ece53a21470788b78aca,mango=fcf37851893d7c49bd2550f339e67619b158330273fd9d32f029e0616c109fff}
+      NODE_PAY_EPOCH_BLOCKS: ${NODE_PAY_EPOCH_BLOCKS:-512}
+      POLL_INTERVAL_SECS: "60"
+      EXPORTER_PORT: "9202"
+    volumes:
+      - ./services/chain-ops-exporter/chain_ops_exporter.py:/app/chain_ops_exporter.py:ro
+      - ./prometheus-bearer-token:/run/secrets/node_reader_token:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    user: "65534:65534"
+    networks:
+      - wrfcoin-testnet
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.2'
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9202/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
   # Independent reference data for the oracle trust bootstrap (infra#603).
   # This is intentionally internal-only: core4 consumes it over the compose
   # network, and no host port is published.

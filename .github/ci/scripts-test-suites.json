@@ -64,6 +64,10 @@
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
       {
+        "path": "scripts/tests/test_chain_ops_exporter.py",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
         "path": "scripts/tests/test_container_health_watch.py",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },

@@ -55,6 +55,7 @@ METRICS_SOURCES = {
     "postgres-exporter": ("external", "postgres-exporter image", None),
     "wrfcoin-backend-health": ("external", "prom/blackbox-exporter /probe", None),
     "wrfcoin-service-health": ("external", "prom/blackbox-exporter /probe", None),
+    "chain-ops-exporter": ("infra", "testnet/services/chain-ops-exporter/chain_ops_exporter.py", r"self\.path == ['\"]/metrics['\"]"),
 }
 # Jobs whose failed scrape is NOT an outage (the /metrics route is token-gated
 # and the token can drift). They are kept out of ServiceDown, must have their

@@ -231,3 +231,4 @@ services:
   cadvisor:            { exposure: decided-by-599 }
   postgres-exporter:   { exposure: decided-by-599 }
   blackbox-exporter:   { exposure: decided-by-599 }
+  chain-ops-exporter:  { exposure: never }   # internal scrape only (prometheus over the compose network); no host port
