@@ -24,8 +24,9 @@ gated_rows=$(grep -cF 'OFF unless the edge env has `PUBLIC_READONLY_API=on`' "${
 # S9 adds the signed-transfer submit (POST /api/wallet/send) and the own-wallet nonce read.
 # infra#46 adds the two passkey send routes (POST send-passkey and its nonce read).
 # backend#30 adds the public passkey-wallet balance read.
-if [[ "$gated_rows" != 19 ]]; then
-  echo "FAIL: expected 19 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
+# The forecaster pages add two reads (list + c_ profile); the mobile explorer adds its summary.
+if [[ "$gated_rows" != 22 ]]; then
+  echo "FAIL: expected 22 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
   exit 1
 fi
 sed '/vars {env.PUBLIC_READONLY_API} on/d' "${ROOT}/testnet/edge/public_onboarding.caddy" >"$tmp/ungated.caddy"

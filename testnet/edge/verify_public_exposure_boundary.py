@@ -165,6 +165,12 @@ EXPECTED = {
     # backend#1481 merged contract: public role amounts, opaque profiles only.
     "public_readonly_earnings_leaderboard": ("GET", "path_regexp ^/api/earnings/leaderboard$", BACKEND),
     "public_readonly_operator_profile": ("GET", "path_regexp ^/api/operators/c_[0-9a-f]{24}/profile$", BACKEND),
+    # Public forecaster pages (frontend publicReadonlyApi.ts, backend forecasters-routes.ts):
+    # the list with the frontend's exact period/limit grammar, the detail by opaque c_ key only.
+    "public_readonly_forecasters": ("GET", "path_regexp ^/api/forecasters$", BACKEND),
+    "public_readonly_forecaster_profile": ("GET", "path_regexp ^/api/forecasters/c_[0-9a-f]{24}$", BACKEND),
+    # Mobile explorer summary (explorer-routes.js): one cached aggregate, exact path, no query.
+    "public_readonly_explorer_summary": ("GET", "path /api/explorer/summary", BACKEND),
     # Station theft protection (core4#3345/#3347, infra#1095). Both address a station by its public
     # ALIAS only (st_ + 12 lowercase hex), with no query string. The relay is a POST (the backend
     # authenticates per kind and never signs or alters the tx) behind an 8 KiB body cap and its own
@@ -221,6 +227,9 @@ GATED = frozenset({
     "public_readonly_weather_leaderboard",
     "public_readonly_earnings_leaderboard",
     "public_readonly_operator_profile",
+    "public_readonly_forecasters",
+    "public_readonly_forecaster_profile",
+    "public_readonly_explorer_summary",
     "public_readonly_station_ownership",
     "public_readonly_wallet_info",
     "public_readonly_wallet_transactions",
@@ -248,6 +257,9 @@ EARNINGS_QUERY_LOCK = (
     "expression `{query}.matches('^role=(contribution|attester|producer|node|forecast)"
     "&period=(all|7d|30d)&limit=([1-9]|[12][0-9]|30)$')`"
 )
+FORECASTERS_QUERY_LOCK = (
+    "expression `{query}.matches('^period=(7d|30d|all)&limit=([1-9]|[1-9][0-9]|100)$')`"
+)
 # Query lock (stage15 readiness): every gated read also admits only the exact
 # query string the Stage 1.5 build sends. The station list takes none, because
 # `?lat=&lng=` (or `lat[]=`) switches weather-routes.js to the outbound NOAA
@@ -266,6 +278,10 @@ READONLY_QUERY_LOCK = {
     "public_readonly_weather_leaderboard": LEADERBOARD_QUERY_LOCK,
     "public_readonly_earnings_leaderboard": EARNINGS_QUERY_LOCK,
     "public_readonly_operator_profile": 'expression `{query} == ""`',
+    # frontend forecastersPath(): period then limit, limit clamped to 1..100 (backend MAX_LIMIT).
+    "public_readonly_forecasters": FORECASTERS_QUERY_LOCK,
+    "public_readonly_forecaster_profile": 'expression `{query} == ""`',
+    "public_readonly_explorer_summary": 'expression `{query} == ""`',
     "public_readonly_station_ownership": 'expression `{query} == ""`',
     "public_readonly_wallet_info": 'expression `{query} == ""`',
     # mobile walletTransactions shape: limit then offset; backend clamps 1..100, edge admits 1..50.
@@ -452,7 +468,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/*",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary",
             "}",
             "key {client_ip}",
             "events 30",
@@ -820,6 +836,35 @@ def self_test() -> None:
                 "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
                 "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$\n",
             ),
+        ),
+        "forecasters list widened to a prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path_regexp ^/api/forecasters$", "path_regexp ^/api/forecasters"),
+        ),
+        "forecaster profile admits a raw address": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/forecasters/c_[0-9a-f]{24}$", "path_regexp ^/api/forecasters/(c_[0-9a-f]{24}|0x[0-9a-fA-F]{40})$"
+            ),
+        ),
+        "forecasters list query unlocked": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "expression `{query}.matches('^period=(7d|30d|all)&limit=([1-9]|[1-9][0-9]|100)$')`",
+                "expression `{query}.matches('^period=')`",
+            ),
+        ),
+        "forecasters list widened beyond GET": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@public_readonly_forecasters {\n\t\tmethod GET", "@public_readonly_forecasters {\n\t\tmethod GET POST"),
+        ),
+        "explorer summary widened to the explorer prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/explorer/summary\n\t\tvars", "path /api/explorer/*\n\t\tvars"),
+        ),
+        "explorer summary ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/explorer/summary\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/explorer/summary\n"),
         ),
         "infra#1095 owner-action relay widened beyond POST": (
             "testnet/edge/public_onboarding.caddy",
