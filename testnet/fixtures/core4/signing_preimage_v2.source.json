@@ -1,8 +1,8 @@
 {
   "repository": "WRFCoin/core4",
   "pull_request": 102,
-  "ref": "feat/send-allowlist",
-  "commit": "13952e1ff94b7d8dc6bccb739b33fce5403544e6",
+  "ref": "main",
+  "commit": "4c3207c1e0e827b6447e2913668b9c55b1ae13a6",
   "path": "shared-protocol/tests/fixtures/golden/signing_preimage_v2.json",
   "schema": "wrfcoin.signing-preimage-v2.golden/4",
   "sha256": "fcf1943b8a5ff472ddc1578f9d3458b7c5448078850e6e161e1d0935f079fa25"
