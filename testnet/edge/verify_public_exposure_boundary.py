@@ -175,6 +175,11 @@ EXPECTED = {
     "public_readonly_network_nodes": ("GET", "path /api/network/nodes", BACKEND),
     # Proof card for one station reading (backend#229): commit id only, optional height hint.
     "public_readonly_proof_card": ("GET", "path_regexp ^/api/proofs/[0-9a-f]{64}$", BACKEND),
+    # Station calibration certificate status (core4#388/#435): public alias only, no query; the
+    # signed submit/revoke POSTs stay off the edge.
+    "public_readonly_calibration_certificate": (
+        "GET", "path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$", BACKEND,
+    ),
     # Station theft protection (core4#3345/#3347, infra#1095). Both address a station by its public
     # ALIAS only (st_ + 12 lowercase hex), with no query string. The relay is a POST (the backend
     # authenticates per kind and never signs or alters the tx) behind an 8 KiB body cap and its own
@@ -265,6 +270,7 @@ GATED = frozenset({
     "public_notifications_delete",
     "public_notifications_test",
     "public_notifications_unsubscribe",
+    "public_readonly_calibration_certificate",
     "public_readonly_station_ownership",
     "public_readonly_wallet_info",
     "public_readonly_wallet_transactions",
@@ -336,6 +342,7 @@ READONLY_QUERY_LOCK = {
     "public_notifications_delete": 'expression `{query} == ""`',
     "public_notifications_test": 'expression `{query} == ""`',
     "public_notifications_unsubscribe": 'expression `{query} == ""`',
+    "public_readonly_calibration_certificate": 'expression `{query} == ""`',
     "public_readonly_station_ownership": 'expression `{query} == ""`',
     "public_readonly_wallet_info": 'expression `{query} == ""`',
     # mobile walletTransactions shape: limit then offset; backend clamps 1..100, edge admits 1..50.
@@ -522,7 +529,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/*",
             "}",
             "key {client_ip}",
             "events 30",
@@ -1015,6 +1022,34 @@ def self_test() -> None:
         "notify_write zone removed": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: re.sub(r"\t\tzone notify_write \{.*?\n\t\t\}\n", "", s, count=1, flags=re.S),
+        ),
+        "calibration certificate widened to any segment": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$",
+                "path_regexp ^/api/calibration-certificates/station/[^/]+$",
+            ),
+        ),
+        "calibration certificate widened beyond GET": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "@public_readonly_calibration_certificate {\n\t\tmethod GET",
+                "@public_readonly_calibration_certificate {\n\t\tmethod GET POST",
+            ),
+        ),
+        "calibration certificate ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$\n",
+            ),
+        ),
+        "calibration certificate query unlocked": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`",
+                "path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$\n\t\tvars {env.PUBLIC_READONLY_API} on",
+            ),
         ),
         "proof card widened to any segment": (
             "testnet/edge/public_onboarding.caddy",

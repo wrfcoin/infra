@@ -128,6 +128,11 @@ services:
       /api/notifications/unsubscribe (JSON, 4 KiB, no Bearer: possession of the push endpoint
       or ntfy topic). Users never register a URL. The backend answers 503 until
       PAYOUT_NOTIFY_ENABLED=true. All behind PUBLIC_READONLY_API=on.
+      The station page's calibration badge adds GET
+      /api/calibration-certificates/station/st_<12 lowercase hex> (public alias only, no query);
+      the backend re-verifies the trust-root-signed certificate on every read and answers 404
+      until CALIBRATION_CERTIFICATES_ENABLED=true. The signed submit/revoke POSTs are not
+      admitted. Same PUBLIC_READONLY_API=on gate, counted by the public_read rate zone.
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still

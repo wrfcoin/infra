@@ -577,6 +577,23 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Station calibration certificate status (backend calibration-certificate-routes.ts, core4#388/#435,
+	# frontend station page badge): GET /api/calibration-certificates/station/<public alias: st_ + 12
+	# lowercase hex>, no query. The backend re-verifies the stored trust-root-signed certificate on every
+	# read and returns the alias, status, the signed certificate and the trust-root public keys; a raw
+	# station id never matches here and 404s at the backend. It answers 404 until
+	# CALIBRATION_CERTIFICATES_ENABLED=true. The two signed POSTs (submit, revoke) are NOT admitted: the
+	# trust root reaches them from the operator network. Same default-OFF gate and public_read limiter.
+	@public_readonly_calibration_certificate {
+		method GET
+		path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_calibration_certificate {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Station ownership state (backend GET /api/stations/:alias/ownership): owner nonce,
 	# frozen / deactivated, pending recovery with its notice window. Same gate as the other
 	# station reads (OFF unless PUBLIC_READONLY_API=on exactly), GET only, EXACT alias path
@@ -939,7 +956,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/*
 			}
 			key {client_ip}
 			events 30
