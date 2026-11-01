@@ -682,6 +682,62 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Account protections the chain enforces (core4 security_key_spend + send_allowlist; frontend#55,
+	# backend wallet-routes.js). Same shape as S9: wallet JWT Bearer required (the backend binds JWT sub
+	# to the address or the signed action's account), lowercase 0x address, exact paths, no query, JSON
+	# writes. The backend routes are 404 unless WALLET_CHAIN_PROTECTIONS_ENABLED=true, and the node
+	# refuses every action until the feature is scheduled. Bodies: a security-key action carries up to two
+	# WebAuthn assertions (32 KiB, the node's own limit); an allowlist action at most 64 addresses (16 KiB,
+	# the node's payload limit). Writes are counted by the wallet_protection_actions zone below.
+	@public_wallet_security_key {
+		method GET
+		path_regexp ^/api/wallet/0x[0-9a-f]{40}/security-key$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_wallet_security_key {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_wallet_send_allowlist {
+		method GET
+		path_regexp ^/api/wallet/0x[0-9a-f]{40}/send-allowlist$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_wallet_send_allowlist {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_wallet_security_key_actions {
+		method POST
+		path /api/wallet/security-key/actions
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_wallet_security_key_actions {
+		request_body {
+			max_size 32768
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_wallet_send_allowlist_actions {
+		method POST
+		path /api/wallet/send-allowlist/actions
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_wallet_send_allowlist_actions {
+		request_body {
+			max_size 16384
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Self-proving passkey transfer (backend#21, owner ruling "transfer proves itself"): the
 	# WebAuthn assertion in the body is the authorization and core4 verifies it, so NO bearer.
 	# Backend route is dormant unless WRFCOIN_ENABLE_PASSKEY_SEND=true (stays unset until after
@@ -1115,6 +1171,18 @@
 			match {
 				method POST
 				path /api/wallet/send
+			}
+			key {client_ip}
+			events 5
+			window 1m
+		}
+
+		# Account-protection actions (security-key and send-allowlist): owner-signed writes a person makes a
+		# handful of times. Same 5/min per IP as wallet_send, counted separately.
+		zone wallet_protection_actions {
+			match {
+				method POST
+				path /api/wallet/security-key/actions /api/wallet/send-allowlist/actions
 			}
 			key {client_ip}
 			events 5

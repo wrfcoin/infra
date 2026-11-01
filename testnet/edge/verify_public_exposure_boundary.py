@@ -265,6 +265,13 @@ EXPECTED = {
     "public_notifications_passkey_challenge": ("POST", "path /api/notifications/passkey/challenge", ("request_body {", "max_size 1024", "}", *BACKEND)),
     "public_notifications_passkey_subscribe": ("POST", "path /api/notifications/passkey/subscriptions", ("request_body {", "max_size 4096", "}", *BACKEND)),
     "public_notifications_passkey_unsubscribe": ("POST", "path /api/notifications/passkey/unsubscribe", ("request_body {", "max_size 4096", "}", *BACKEND)),
+    # Account protections (core4 security_key_spend + send_allowlist; frontend#55): own-wallet reads and
+    # owner-signed actions, wallet Bearer, lowercase address, no query, JSON writes (32 KiB for up to two
+    # WebAuthn assertions, 16 KiB for an allowlist action), wallet_protection_actions zone. Kept LAST.
+    "public_wallet_security_key": ("GET", "path_regexp ^/api/wallet/0x[0-9a-f]{40}/security-key$", BACKEND),
+    "public_wallet_send_allowlist": ("GET", "path_regexp ^/api/wallet/0x[0-9a-f]{40}/send-allowlist$", BACKEND),
+    "public_wallet_security_key_actions": ("POST", "path /api/wallet/security-key/actions", ("request_body {", "max_size 32768", "}", *BACKEND)),
+    "public_wallet_send_allowlist_actions": ("POST", "path /api/wallet/send-allowlist/actions", ("request_body {", "max_size 16384", "}", *BACKEND)),
 }
 
 # infra#983: routes admitted ONLY while the edge container's environment
@@ -276,6 +283,10 @@ READONLY_GATE = "vars {env.PUBLIC_READONLY_API} on"
 GATED = frozenset({
     "public_wallet_send",
     "public_wallet_send_nonce",
+    "public_wallet_security_key",
+    "public_wallet_send_allowlist",
+    "public_wallet_security_key_actions",
+    "public_wallet_send_allowlist_actions",
     "public_wallet_send_passkey",
     "public_wallet_send_passkey_nonce",
     "public_balance_read",
@@ -327,6 +338,10 @@ GATED = frozenset({
 BEARER_LOCK = {
     "public_wallet_send": 'header Authorization "Bearer *"',
     "public_wallet_send_nonce": 'header Authorization "Bearer *"',
+    "public_wallet_security_key": 'header Authorization "Bearer *"',
+    "public_wallet_send_allowlist": 'header Authorization "Bearer *"',
+    "public_wallet_security_key_actions": 'header Authorization "Bearer *"',
+    "public_wallet_send_allowlist_actions": 'header Authorization "Bearer *"',
     "public_readonly_wallet_info": 'header Authorization "Bearer *"',
     "public_readonly_wallet_transactions": 'header Authorization "Bearer *"',
     "public_notifications_subscribe": 'header Authorization "Bearer *"',
@@ -341,6 +356,7 @@ BEARER_LOCK = {
 # JSON-body writes: the matcher also pins Content-Type (last directive).
 JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_notifications_unsubscribe",
     "public_notifications_passkey_challenge", "public_notifications_passkey_subscribe", "public_notifications_passkey_unsubscribe",
+    "public_wallet_security_key_actions", "public_wallet_send_allowlist_actions",
 })
 # The ONLY query the frontend sends (useWeatherLeaderboard / GlobalLeaderboard): metric, period, limit,
 # in that order, no geo (the backend 400s earnings+geo and anonymous geo is never admitted), limit 1..30.
@@ -364,6 +380,10 @@ PROOF_CARD_QUERY_LOCK = "expression `{query} == \"\" || {query}.matches('^h=[1-9
 READONLY_QUERY_LOCK = {
     "public_wallet_send": 'expression `{query} == ""`',
     "public_wallet_send_nonce": 'expression `{query} == ""`',
+    "public_wallet_security_key": 'expression `{query} == ""`',
+    "public_wallet_send_allowlist": 'expression `{query} == ""`',
+    "public_wallet_security_key_actions": 'expression `{query} == ""`',
+    "public_wallet_send_allowlist_actions": 'expression `{query} == ""`',
     "public_wallet_send_passkey": 'expression `{query} == ""`',
     "public_wallet_send_passkey_nonce": 'expression `{query} == ""`',
     "public_balance_read": 'expression `{query} == ""`',
@@ -569,10 +589,15 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
+        # Account-protection actions (frontend#55): owner-signed writes, same 5/min per IP as wallet_send.
+        "wallet_protection_actions": [
+            "match {", "method POST", "path /api/wallet/security-key/actions /api/wallet/send-allowlist/actions", "}",
+            "key {client_ip}", "events 5", "window 1m",
+        ],
         "onboarding": [
             "match {",
             "path /api/auth/* /api/onboarding/* /api/weather/stations*",
@@ -1110,6 +1135,37 @@ def self_test() -> None:
         "passkey notification subscribe ungated": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("path /api/notifications/passkey/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/notifications/passkey/subscriptions\n"),
+        ),
+        "wallet security-key read path widened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("^/api/wallet/0x[0-9a-f]{40}/security-key$", "^/api/wallet/[^/]+/security-key$"),
+        ),
+        "wallet send-allowlist read Bearer removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                'path_regexp ^/api/wallet/0x[0-9a-f]{40}/send-allowlist$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Authorization "Bearer *"\n',
+                'path_regexp ^/api/wallet/0x[0-9a-f]{40}/send-allowlist$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n',
+            ),
+        ),
+        "wallet security-key actions body cap widened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("handle @public_wallet_security_key_actions {\n\t\trequest_body {\n\t\t\tmax_size 32768", "handle @public_wallet_security_key_actions {\n\t\trequest_body {\n\t\t\tmax_size 1MB"),
+        ),
+        "wallet send-allowlist actions widened to a prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/wallet/send-allowlist/actions\n\t\tvars", "path /api/wallet/send-allowlist/*\n\t\tvars"),
+        ),
+        "wallet send-allowlist actions ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/wallet/send-allowlist/actions\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/wallet/send-allowlist/actions\n"),
+        ),
+        "wallet protection actions zone removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("zone wallet_protection_actions {", "zone wallet_protection_actions_removed {"),
+        ),
+        "wallet security-key actions dropped from their zone": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/wallet/security-key/actions /api/wallet/send-allowlist/actions\n", "path /api/wallet/send-allowlist/actions\n"),
         ),
         "passkey notification routes dropped from notify_write": (
             "testnet/edge/public_onboarding.caddy",
