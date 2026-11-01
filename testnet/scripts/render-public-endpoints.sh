@@ -131,6 +131,16 @@ for matcher in matchers:
                     "wallet JWT (own address only); read-only; the edge proxies it only when the request carries "
                     "an `Authorization: Bearer` header"
                 )
+            # backend#389 payout notifications: wallet-login writes, no email or user URL, own rate zone.
+            if matcher["name"].startswith("public_notifications_") and matcher["name"] != "public_notifications_config":
+                auth = (
+                    "wallet JWT (own address only; the edge proxies it only with an `Authorization: Bearer` header); "
+                    "notification subscription for a browser push endpoint or an ntfy topic, never an email or URL; "
+                    "rate zone notify_write 10 per minute per IP"
+                    if matcher["bearer"] else
+                    "none (possession of the push endpoint or ntfy topic removes it); body at most 4 KiB; "
+                    "rate zone notify_write 10 per minute per IP"
+                )
             if matcher["gate"]:
                 name, value = matcher["gate"]
                 auth += f"; **OFF unless the edge env has `{name}={value}`** (compose default off)"

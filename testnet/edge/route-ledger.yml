@@ -115,6 +115,19 @@ services:
       cap, its own wolfram_reading_check rate zone (6/min/client IP), behind
       PUBLIC_READONLY_API=on. The backend route answers 404 until
       WOLFRAM_READING_CHECK_ENABLED=true (default off).
+      The weekly forecast competition page (backend#251, points only) adds GET
+      /api/competitions, /api/competitions/current and /api/competitions/<YYYY-Www, weeks
+      01..53>, no query; the backend answers 503 until the forecast index and
+      FORECAST_COMPETITIONS_ENABLED are on. Counted by the public_read rate zone.
+      Payout notifications (backend#389; owner ruling 2026-11-01: no email or personal data)
+      add GET /api/notifications/config (public, no query, public_read zone) and five writes
+      counted by their own notify_write zone (10 per minute per IP): POST
+      /api/notifications/subscriptions (Bearer + JSON, 4 KiB), GET
+      /api/notifications/subscriptions/<0x address> (Bearer), DELETE and POST .../test on
+      /api/notifications/subscriptions/<lowercase uuid> (Bearer; test body 1 KiB), and POST
+      /api/notifications/unsubscribe (JSON, 4 KiB, no Bearer: possession of the push endpoint
+      or ntfy topic). Users never register a URL. The backend answers 503 until
+      PAYOUT_NOTIFY_ENABLED=true. All behind PUBLIC_READONLY_API=on.
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still

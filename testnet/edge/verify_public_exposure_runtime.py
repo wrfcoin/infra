@@ -1293,6 +1293,61 @@ WOLFRAM_READING_CHECK_CASES = (
     ("POST", "/api/integrations/x/../wolfram/reading-check", _JSON, 400),
 )
 
+# Weekly forecast competition (backend#251; frontend COMPETITIONS_PATH / competitionWeekPath).
+_CP = "/api/competitions"
+COMPETITION_CASES = (
+    ("GET", _CP, (), 502),
+    ("GET", f"{_CP}/current", (), 502),
+    ("GET", f"{_CP}/2026-W45", (), 502),
+    ("GET", f"{_CP}/2026-W01", (), 502),
+    ("GET", f"{_CP}/2026-W53", (), 502),
+    ("GET", f"{_CP}/2026-W54", (), 404),
+    ("GET", f"{_CP}/2026-W00", (), 404),
+    ("GET", f"{_CP}/2026-w45", (), 404),
+    ("GET", f"{_CP}/2026-W5", (), 404),
+    ("GET", f"{_CP}/", (), 404),
+    ("GET", f"{_CP}/current/", (), 404),
+    ("GET", f"{_CP}/abc/leaderboard", (), 404),
+    ("GET", f"{_CP}?limit=5", (), 404),
+    ("GET", f"{_CP}/current?limit=5", (), 404),
+    ("POST", _CP, (), 404),
+    ("DELETE", f"{_CP}/2026-W45", (), 404),
+    ("GET", f"{_CP}/x/../current", (), 400),
+)
+
+# Payout notifications (backend#389): config public; Bearer for subscription routes; JSON for bodies.
+_N = "/api/notifications"
+_NID = "0b0b0b0b-1c1c-4d4d-8e8e-9f9f9f9f9f9f"
+_NADDR = "0x" + "a1" * 20
+_BJ = PARITY_BEARER + _JSON
+NOTIFICATION_CASES = (
+    ("GET", f"{_N}/config", (), 502),
+    ("POST", f"{_N}/subscriptions", _BJ, 502),
+    ("GET", f"{_N}/subscriptions/{_NADDR}", PARITY_BEARER, 502),
+    ("DELETE", f"{_N}/subscriptions/{_NID}", PARITY_BEARER, 502),
+    ("POST", f"{_N}/subscriptions/{_NID}/test", PARITY_BEARER, 502),
+    ("POST", f"{_N}/unsubscribe", _JSON, 502),
+    # Bearer missing: never proxied.
+    ("POST", f"{_N}/subscriptions", _JSON, 404),
+    ("GET", f"{_N}/subscriptions/{_NADDR}", (), 404),
+    ("DELETE", f"{_N}/subscriptions/{_NID}", (), 404),
+    ("POST", f"{_N}/subscriptions/{_NID}/test", (), 404),
+    # Wrong content type, method, shape or query.
+    ("POST", f"{_N}/subscriptions", PARITY_BEARER + ("Content-Type: text/plain",), 404),
+    ("POST", f"{_N}/unsubscribe", (), 404),
+    ("GET", f"{_N}/config?x=1", (), 404),
+    ("POST", f"{_N}/config", _JSON, 404),
+    ("GET", f"{_N}/subscriptions", PARITY_BEARER, 404),
+    ("GET", f"{_N}/subscriptions/{_NADDR[:-1]}", PARITY_BEARER, 404),
+    ("DELETE", f"{_N}/subscriptions/{_NID.upper()}", PARITY_BEARER, 404),
+    ("DELETE", f"{_N}/subscriptions/{_NADDR}", PARITY_BEARER, 404),
+    ("GET", f"{_N}/subscriptions/{_NID}/test", PARITY_BEARER, 404),
+    ("POST", f"{_N}/subscriptions?x=1", _BJ, 404),
+    ("POST", f"{_N}/webhooks", _BJ, 404),
+    ("GET", f"{_N}/x/../config", (), 400),
+)
+
+
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
     snippet_text: str | None = None,
@@ -1472,6 +1527,11 @@ def main() -> None:
         prove_parity_reads(f"{label}-network-nodes", text, port, "on", NETWORK_NODES_CASES, 12)
         prove_parity_reads(f"{label}-wolfram-gate", text, port, None, WOLFRAM_READING_CHECK_CASES[:1], 6)
         prove_parity_reads(f"{label}-wolfram", text, port, "on", WOLFRAM_READING_CHECK_CASES, 6)
+        prove_parity_reads(f"{label}-competitions-gate", text, port, None, COMPETITION_CASES[:5], 16)
+        prove_parity_reads(f"{label}-competitions", text, port, "on", COMPETITION_CASES, 16)
+        # notify_write counts every request on the subscription paths (10/min): small chunks.
+        prove_parity_reads(f"{label}-notifications-gate", text, port, None, NOTIFICATION_CASES[:6], 8)
+        prove_parity_reads(f"{label}-notifications", text, port, "on", NOTIFICATION_CASES, 8)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1502,6 +1562,15 @@ def main() -> None:
         ),
         "proof card widened to any segment": (
             caddy_src.replace("^/api/proofs/[0-9a-f]{64}$", "^/api/proofs/[^/]+$"), PROOF_CARD_CASES,
+        ),
+        "competition week widened to any segment": (
+            caddy_src.replace("(current|[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3]))", "[^/]+"), COMPETITION_CASES,
+        ),
+        "notification subscribe Bearer removed": (
+            caddy_src.replace(
+                'path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Authorization "Bearer *"\n',
+                'path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n',
+            ), NOTIFICATION_CASES,
         ),
         "proof card height hint loosened": (
             caddy_src.replace("'^h=[1-9][0-9]{0,11}$'", "'^h=[0-9]+'"), PROOF_CARD_CASES,

@@ -480,6 +480,103 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Weekly forecast competition (backend#251, points only; frontend /competitions,
+	# publicReadonlyApi.ts COMPETITIONS_PATH / COMPETITION_CURRENT_PATH / competitionWeekPath).
+	# The list, this week, or one ISO week (YYYY-Www, weeks 01..53); GET only, no query.
+	# Backend projects short addresses and c_ keys, applies its own 60/min limiter, and
+	# answers 503 until the forecast index and FORECAST_COMPETITIONS_ENABLED are on.
+	@public_readonly_competitions {
+		method GET
+		path_regexp ^/api/competitions(/(current|[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])))?$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_competitions {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Payout notifications (backend#389; frontend explore "Notify me"). Owner ruling 2026-11-01:
+	# no email or personal data, so the only channels are the browser's own Web Push
+	# subscription and an ntfy topic the user picks; users never register a URL. The backend
+	# answers 503 until PAYOUT_NOTIFY_ENABLED=true.
+	#   GET  /api/notifications/config                        public: which channels exist
+	#   POST /api/notifications/subscriptions                 wallet login (Bearer), JSON, 4 KiB
+	#   GET  /api/notifications/subscriptions/<0x address>    wallet login (Bearer)
+	#   DELETE /api/notifications/subscriptions/<uuid>        wallet login (Bearer)
+	#   POST /api/notifications/subscriptions/<uuid>/test     wallet login (Bearer), 1 KiB
+	#   POST /api/notifications/unsubscribe                   possession of the endpoint/topic, JSON, 4 KiB
+	# Bearer routes also need the backend's wallet-login check (JWT sub = the address); the
+	# edge only keeps anonymous probes off them. Writes are counted by the notify_write zone.
+	@public_notifications_config {
+		method GET
+		path /api/notifications/config
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_notifications_config {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_subscribe {
+		method POST
+		path /api/notifications/subscriptions
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_notifications_subscribe {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_list {
+		method GET
+		path_regexp ^/api/notifications/subscriptions/0x[0-9a-fA-F]{40}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_notifications_list {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_delete {
+		method DELETE
+		path_regexp ^/api/notifications/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_notifications_delete {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_test {
+		method POST
+		path_regexp ^/api/notifications/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/test$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_notifications_test {
+		request_body {
+			max_size 1024
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_unsubscribe {
+		method POST
+		path /api/notifications/unsubscribe
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_notifications_unsubscribe {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Station ownership state (backend GET /api/stations/:alias/ownership): owner nonce,
 	# frozen / deactivated, pending recovery with its notice window. Same gate as the other
 	# station reads (OFF unless PUBLIC_READONLY_API=on exactly), GET only, EXACT alias path
@@ -842,7 +939,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config
 			}
 			key {client_ip}
 			events 30
@@ -867,6 +964,16 @@
 		# addresses past THIS zone. The backend limiter (station-owner-routes.ts) keys IPv6 on the
 		# /64 and IPv4-mapped IPv6 as IPv4, and is the enforcement point; this zone is the coarse
 		# outer layer. The same applies to every other zone in this snippet.
+		# Payout notification writes (backend#389): subscribe, list, delete, test, unsubscribe.
+		# A person sets this up once per device; 10 a minute is generous.
+		zone notify_write {
+			match {
+				path /api/notifications/subscriptions /api/notifications/subscriptions/* /api/notifications/unsubscribe
+			}
+			key {client_ip}
+			events 10
+			window 1m
+		}
 		zone station_owner_actions {
 			match {
 				method POST
