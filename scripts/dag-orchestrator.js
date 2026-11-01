@@ -130,14 +130,6 @@ class DAGOrchestrator {
       },
 
       // Application Layer
-      acurite_collector: {
-        command: 'node acurite-working-collector.js',
-        port: null,
-        dependencies: ['weather_earnings_transfer'],
-        category: 'application',
-        healthCheck: 'process',
-      },
-
       frontend_application: {
         command: 'cd frontend && npm run dev -- --host 0.0.0.0 --port 5000',
         port: 5000,

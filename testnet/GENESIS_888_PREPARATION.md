@@ -1,8 +1,14 @@
-# Chain 888 preparation (owner-held)
+# Chain 888 preparation (historical)
 
-This is preparation source, not a deployment receipt. Testnet WRF has no monetary
-value. Keep the committed `cut-pins.env` and all runtime defaults on chain 777
-until the owner performs the cut. No script here initiates the cut.
+> **Historical.** The chain 888 cut has been performed and chain 888 is the public
+> testnet. This page records the preparation as it stood before the cut, so its
+> references to chain 777 describe the pre-cut state; they are not current
+> instructions. To join today, follow [JOIN_TESTNET.md](JOIN_TESTNET.md); the
+> current pins are in [`cut-pins.env`](cut-pins.env).
+
+This was preparation source, not a deployment receipt. Testnet WRF has no monetary
+value. Before the cut, the committed `cut-pins.env` and all runtime defaults stayed
+on chain 777 until the owner performed the cut. No script here initiates the cut.
 
 Use `WRFCOIN_CHAIN_ID=888` consistently for Compose, heartbeat, collectors,
 station activation, smoke and uptime probes. `setup-env.sh` reads and validates

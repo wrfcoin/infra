@@ -69,22 +69,6 @@ const SERVICE_METADATA = {
     description: '13 bridge protocols for cross-chain operations',
   },
 
-  // Weather Services (Revenue Critical - Protected)
-  'AcuRite Weather Station Collector': {
-    port: null,
-    category: 'weather',
-    status: 'running',
-    priority: 'revenue-critical',
-    tags: ['@weather', '@earnings', '@protected'],
-    file: 'acurite-working-collector.js',
-    command: 'node acurite-working-collector.js',
-    dependencies: [],
-    autoStart: true,
-    protected: true,
-    currentEarnings: '1.60+ WRF',
-    description: 'Your main revenue stream - 16 perfect collections',
-  },
-
   'Enhanced Weather Rewards': {
     port: 8001,
     category: 'weather',
@@ -93,7 +77,7 @@ const SERVICE_METADATA = {
     tags: ['@weather', '@rewards', '@achievements'],
     file: 'backend/server/enhanced_weather_rewards.js',
     command: 'node backend/server/enhanced_weather_rewards.js',
-    dependencies: ['AcuRite Weather Station Collector'],
+    dependencies: [],
     autoStart: true,
     description: 'Achievement system for weather data submission',
   },
@@ -485,11 +469,6 @@ class ServiceControlPanel {
                 <div class="status-value" id="criticalServices">Loading...</div>
                 <div class="status-label">Critical Services</div>
             </div>
-        </div>
-
-        <div class="earnings-panel">
-            <div class="earnings-title">💰 Earnings Protection Status</div>
-            <p>Your AcuRite Weather Station Collector is <strong>PROTECTED</strong> and earning <strong>1.60+ WRF</strong> from 16+ perfect collections. This service cannot be stopped to ensure continuous revenue generation.</p>
         </div>
 
         <div class="power-controls">
