@@ -1,9 +1,9 @@
 {
   "repository": "WRFCoin/core4",
-  "pull_request": 103,
-  "ref": "feat/security-key-wallets",
-  "commit": "8956d38ca6a6b725a648736bd7ed1436f99f39fa",
+  "pull_request": 102,
+  "ref": "feat/send-allowlist",
+  "commit": "13952e1ff94b7d8dc6bccb739b33fce5403544e6",
   "path": "shared-protocol/tests/fixtures/golden/signing_preimage_v2.json",
   "schema": "wrfcoin.signing-preimage-v2.golden/4",
-  "sha256": "933e9c7744df85a3e4ffbc3aa1e753cde2317a321b46912707607d0236e09bca"
+  "sha256": "fcf1943b8a5ff472ddc1578f9d3458b7c5448078850e6e161e1d0935f079fa25"
 }
