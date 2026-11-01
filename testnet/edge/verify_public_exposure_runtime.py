@@ -1431,6 +1431,32 @@ DUEL_CASES = (
     ("GET", f"{_DU}/x/../{_DID}", (), 400),
 )
 
+# Passkey-wallet payout notifications (backend feat/passkey-payout-subscribe): no JWT, so no Bearer; the
+# body carries a WebAuthn assertion over a single-use nonce. JSON only, exact paths, no query.
+_NP = f"{_N}/passkey"
+PASSKEY_NOTIFICATION_CASES = (
+    ("POST", f"{_NP}/challenge", _JSON, 502),
+    ("POST", f"{_NP}/subscriptions", _JSON, 502),
+    ("POST", f"{_NP}/unsubscribe", _JSON, 502),
+    # A stray Bearer header neither helps nor hurts.
+    ("POST", f"{_NP}/subscriptions", _BJ, 502),
+    # Content-Type missing or wrong: never proxied.
+    ("POST", f"{_NP}/challenge", (), 404),
+    ("POST", f"{_NP}/subscriptions", (), 404),
+    ("POST", f"{_NP}/unsubscribe", ("Content-Type: text/plain",), 404),
+    # Wrong method, shape or query.
+    ("GET", f"{_NP}/challenge", (), 404),
+    ("GET", f"{_NP}/subscriptions", (), 404),
+    ("DELETE", f"{_NP}/subscriptions", _JSON, 404),
+    ("POST", f"{_NP}/challenge?address=0x00", _JSON, 404),
+    ("POST", f"{_NP}/subscriptions?x=1", _JSON, 404),
+    ("POST", f"{_NP}/subscriptions/{_NID}", _JSON, 404),
+    ("POST", f"{_NP}/challenge/", _JSON, 404),
+    ("POST", f"{_NP}", _JSON, 404),
+    ("POST", f"{_NP}/test", _JSON, 404),
+    ("POST", f"{_NP}/x/../challenge", _JSON, 400),
+)
+
 
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
@@ -1616,6 +1642,8 @@ def main() -> None:
         # notify_write counts every request on the subscription paths (10/min): small chunks.
         prove_parity_reads(f"{label}-notifications-gate", text, port, None, NOTIFICATION_CASES[:6], 8)
         prove_parity_reads(f"{label}-notifications", text, port, "on", NOTIFICATION_CASES, 8)
+        prove_parity_reads(f"{label}-passkey-notifications-gate", text, port, None, PASSKEY_NOTIFICATION_CASES[:4], 8)
+        prove_parity_reads(f"{label}-passkey-notifications", text, port, "on", PASSKEY_NOTIFICATION_CASES, 8)
         prove_parity_reads(f"{label}-calibration-gate", text, port, None, CALIBRATION_CASES[:2], 16)
         prove_parity_reads(f"{label}-calibration", text, port, "on", CALIBRATION_CASES, 16)
         prove_parity_reads(f"{label}-forecast-check-gate", text, port, None, FORECAST_CHECK_CASES[:3], 12)
@@ -1674,6 +1702,16 @@ def main() -> None:
                 'path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Authorization "Bearer *"\n',
                 'path /api/notifications/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n',
             ), NOTIFICATION_CASES,
+        ),
+        "passkey notification challenge content type removed": (
+            caddy_src.replace(
+                'path /api/notifications/passkey/challenge\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Content-Type application/json\n',
+                'path /api/notifications/passkey/challenge\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n',
+            ), PASSKEY_NOTIFICATION_CASES,
+        ),
+        "passkey notification routes widened to the passkey prefix": (
+            caddy_src.replace("path /api/notifications/passkey/subscriptions\n", "path /api/notifications/passkey/*\n"),
+            PASSKEY_NOTIFICATION_CASES,
         ),
         "calibration certificate widened to any segment": (
             caddy_src.replace("^/api/calibration-certificates/station/st_[0-9a-f]{12}$", "^/api/calibration-certificates/station/[^/]+$"),

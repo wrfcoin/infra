@@ -505,8 +505,14 @@
 	#   DELETE /api/notifications/subscriptions/<uuid>        wallet login (Bearer)
 	#   POST /api/notifications/subscriptions/<uuid>/test     wallet login (Bearer), 1 KiB
 	#   POST /api/notifications/unsubscribe                   possession of the endpoint/topic, JSON, 4 KiB
+	#   POST /api/notifications/passkey/challenge             passkey wallet, no Bearer, JSON, 1 KiB
+	#   POST /api/notifications/passkey/subscriptions         passkey assertion in the body, JSON, 4 KiB
+	#   POST /api/notifications/passkey/unsubscribe           passkey assertion in the body, JSON, 4 KiB
 	# Bearer routes also need the backend's wallet-login check (JWT sub = the address); the
-	# edge only keeps anonymous probes off them. Writes are counted by the notify_write zone.
+	# edge only keeps anonymous probes off them. Passkey wallets have no JWT: the challenge
+	# returns a single-use nonce and the backend verifies the WebAuthn assertion itself
+	# (address derived from the P-256 key, single-use nonce, UV flag, low-s ECDSA), so those
+	# three carry NO Bearer. Writes are counted by the notify_write zone.
 	@public_notifications_config {
 		method GET
 		path /api/notifications/config
@@ -571,6 +577,45 @@
 		header Content-Type application/json
 	}
 	handle @public_notifications_unsubscribe {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_passkey_challenge {
+		method POST
+		path /api/notifications/passkey/challenge
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_notifications_passkey_challenge {
+		request_body {
+			max_size 1024
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_passkey_subscribe {
+		method POST
+		path /api/notifications/passkey/subscriptions
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_notifications_passkey_subscribe {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_notifications_passkey_unsubscribe {
+		method POST
+		path /api/notifications/passkey/unsubscribe
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_notifications_passkey_unsubscribe {
 		request_body {
 			max_size 4096
 		}
@@ -1124,11 +1169,12 @@
 		# addresses past THIS zone. The backend limiter (station-owner-routes.ts) keys IPv6 on the
 		# /64 and IPv4-mapped IPv6 as IPv4, and is the enforcement point; this zone is the coarse
 		# outer layer. The same applies to every other zone in this snippet.
-		# Payout notification writes (backend#389): subscribe, list, delete, test, unsubscribe.
+		# Payout notification writes (backend#389): subscribe, list, delete, test, unsubscribe,
+		# plus the passkey-wallet challenge, subscribe and unsubscribe (no JWT; WebAuthn assertion).
 		# A person sets this up once per device; 10 a minute is generous.
 		zone notify_write {
 			match {
-				path /api/notifications/subscriptions /api/notifications/subscriptions/* /api/notifications/unsubscribe
+				path /api/notifications/subscriptions /api/notifications/subscriptions/* /api/notifications/unsubscribe /api/notifications/passkey/*
 			}
 			key {client_ip}
 			events 10

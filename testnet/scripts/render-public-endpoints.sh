@@ -141,6 +141,15 @@ for matcher in matchers:
                     "none (possession of the push endpoint or ntfy topic removes it); body at most 4 KiB; "
                     "rate zone notify_write 10 per minute per IP"
                 )
+            # Passkey-wallet payout notifications: no JWT; the body's WebAuthn assertion is the authorization.
+            if matcher["name"].startswith("public_notifications_passkey_"):
+                auth = (
+                    "none at the edge (no Bearer; passkey wallet: the backend checks a WebAuthn assertion over a "
+                    "single-use nonce, address derived from the P-256 key); "
+                    + ("issues that nonce; body at most 1 KiB; " if matcher["name"].endswith("_challenge") else "body at most 4 KiB; ")
+                    + "notification subscription for a browser push endpoint or an ntfy topic, never an email or URL; "
+                    "rate zone notify_write 10 per minute per IP"
+                )
             if matcher["gate"]:
                 name, value = matcher["gate"]
                 auth += f"; **OFF unless the edge env has `{name}={value}`** (compose default off)"

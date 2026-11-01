@@ -128,6 +128,14 @@ services:
       /api/notifications/unsubscribe (JSON, 4 KiB, no Bearer: possession of the push endpoint
       or ntfy topic). Users never register a URL. The backend answers 503 until
       PAYOUT_NOTIFY_ENABLED=true. All behind PUBLIC_READONLY_API=on.
+      Passkey wallets have no JWT, so the passkey payout-notification flow (backend branch
+      feat/passkey-payout-subscribe) adds three POSTs with NO Bearer, application/json, no
+      query, counted by notify_write: /api/notifications/passkey/challenge (1 KiB; returns a
+      single-use nonce), /api/notifications/passkey/subscriptions and
+      /api/notifications/passkey/unsubscribe (4 KiB each; WebAuthn assertion over the nonce in
+      the body). The backend verifies the assertion itself (address derived from the P-256
+      key, single-use nonce, UV flag, low-s ECDSA) and answers 503 until
+      PAYOUT_NOTIFY_ENABLED=true. Same PUBLIC_READONLY_API=on gate.
       The station page's calibration badge adds GET
       /api/calibration-certificates/station/st_<12 lowercase hex> (public alias only, no query);
       the backend re-verifies the trust-root-signed certificate on every read and answers 404
