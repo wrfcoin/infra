@@ -53,7 +53,7 @@ x86_64-under-emulation build on an arm64 Mac).
 | **Linux x86_64** | ✅ Supported | Builds natively. |
 | **Intel Mac (x86_64)** | ✅ Supported | Builds natively. |
 | **Apple Silicon (M1/M2/M3, arm64)** | **Native build, join still unvalidated end-to-end** | The image builds **natively on arm64** — no emulation, no opt-in, same command as everyone else (infra#763). Optionally run `bash join-testnet-sync-node.sh --preflight` first: it refuses unless Docker actually runs a native `aarch64` container, without generating `.env` or starting services. Emulation remains available as `--emulate` if a native build ever fails. Run this from a **native arm64 terminal** — a Rosetta shell reports `x86_64` and would build the slow emulated image; the script detects that and stops. |
-| **Windows** | Preview installer | Not this Docker guide. Use the native [Windows node preview 3 installer](https://github.com/wrfcoin/core4/releases/tag/v888-windows-preview-3) (v0.3.0, unsigned, so SmartScreen warns; check its SHA-256 first) and the [Windows node guide](https://github.com/wrfcoin/core4/blob/main/docs/operator/windows-node.md). WSL is not the intended Windows route. |
+| **Windows** | Preview installer | Not this Docker guide. Use the native [Windows node preview 4 installer](https://github.com/wrfcoin/core4/releases/tag/v888-windows-preview-4) (v0.4.0, unsigned, so SmartScreen warns; check its SHA-256 first) and the [Windows node guide](https://github.com/wrfcoin/core4/blob/main/docs/operator/windows-node.md). WSL is not the intended Windows route. |
 
 > **Validation status:** this guide has been validated on Linux x86_64. The
 > Apple-Silicon preflight is an executable local environment check, but the
