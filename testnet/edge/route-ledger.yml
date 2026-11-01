@@ -133,6 +133,16 @@ services:
       the backend re-verifies the trust-root-signed certificate on every read and answers 404
       until CALIBRATION_CERTIFICATES_ENABLED=true. The signed submit/revoke POSTs are not
       admitted. Same PUBLIC_READONLY_API=on gate, counted by the public_read rate zone.
+      Demo items 7, 8 and 10 (owner demo queue 2026-11-01) add, all behind PUBLIC_READONLY_API=on
+      and counted by the public_read zone, exact paths, no query: the forecast check reads
+      (GET /api/forecast-verification/summary and /forecasts/<64 hex>) and its record hand-in
+      (POST /api/forecast-verification/forecasts, JSON, 8 KiB, no bearer: the record hashes to the
+      chain commit id); friend challenges (GET /api/challenges/code/<ABCD-2345> public; GET
+      /api/challenges and POST /api/challenges[/join|/sync] with a wallet Bearer, JSON, 4 KiB); and
+      free-play duels, no stakes (GET /api/duels and /api/duels/<uuid> public; GET /api/duels/mine and
+      POST /api/duels[/<uuid>/accept|forecast] with a wallet Bearer, 4 KiB; POST
+      /api/duels/<uuid>/record, JSON, 8 KiB, no bearer). Each backend route answers 404 until its
+      own flag (FORECAST_VERIFICATION_ENABLED, FRIEND_CHALLENGES_ENABLED, FORECAST_DUELS_ENABLED).
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still

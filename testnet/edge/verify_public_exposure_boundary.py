@@ -180,6 +180,28 @@ EXPECTED = {
     "public_readonly_calibration_certificate": (
         "GET", "path_regexp ^/api/calibration-certificates/station/st_[0-9a-f]{12}$", BACKEND,
     ),
+    # Demo item 7 forecast check: two reads and the self-proving record hand-in (no bearer, 8 KiB, JSON).
+    "public_readonly_forecast_check_summary": ("GET", "path /api/forecast-verification/summary", BACKEND),
+    "public_readonly_forecast_check_record": ("GET", "path_regexp ^/api/forecast-verification/forecasts/[0-9a-f]{64}$", BACKEND),
+    "public_forecast_check_submit": (
+        "POST", "path /api/forecast-verification/forecasts", ("request_body {", "max_size 8192", "}", *BACKEND),
+    ),
+    # Demo item 8 friend challenges: public board by invite code; list and writes need a wallet Bearer.
+    "public_readonly_challenge_board": ("GET", "path_regexp ^/api/challenges/code/[A-Z0-9]{4}-[A-Z0-9]{4}$", BACKEND),
+    "public_challenges_mine": ("GET", "path /api/challenges", BACKEND),
+    "public_challenges_write": (
+        "POST", "path_regexp ^/api/challenges(/join|/sync)?$", ("request_body {", "max_size 4096", "}", *BACKEND),
+    ),
+    # Demo item 10 free-play duels (no stakes): public board and duel; Bearer writes; self-proving record.
+    "public_readonly_duels": ("GET", "path /api/duels", BACKEND),
+    "public_readonly_duel": ("GET", "path_regexp ^/api/duels/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", BACKEND),
+    "public_duels_mine": ("GET", "path /api/duels/mine", BACKEND),
+    "public_duels_write": (
+        "POST", "path_regexp ^/api/duels(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(accept|forecast))?$", ("request_body {", "max_size 4096", "}", *BACKEND),
+    ),
+    "public_duel_record": (
+        "POST", "path_regexp ^/api/duels/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/record$", ("request_body {", "max_size 8192", "}", *BACKEND),
+    ),
     # Station theft protection (core4#3345/#3347, infra#1095). Both address a station by its public
     # ALIAS only (st_ + 12 lowercase hex), with no query string. The relay is a POST (the backend
     # authenticates per kind and never signs or alters the tx) behind an 8 KiB body cap and its own
@@ -262,6 +284,17 @@ GATED = frozenset({
     "public_readonly_forecaster_profile",
     "public_readonly_explorer_summary",
     "public_readonly_proof_card",
+    "public_readonly_forecast_check_summary",
+    "public_readonly_forecast_check_record",
+    "public_forecast_check_submit",
+    "public_readonly_challenge_board",
+    "public_challenges_mine",
+    "public_challenges_write",
+    "public_readonly_duels",
+    "public_readonly_duel",
+    "public_duels_mine",
+    "public_duels_write",
+    "public_duel_record",
     "public_readonly_network_nodes",
     "public_readonly_competitions",
     "public_notifications_config",
@@ -291,9 +324,13 @@ BEARER_LOCK = {
     "public_notifications_list": 'header Authorization "Bearer *"',
     "public_notifications_delete": 'header Authorization "Bearer *"',
     "public_notifications_test": 'header Authorization "Bearer *"',
+    "public_challenges_mine": 'header Authorization "Bearer *"',
+    "public_challenges_write": 'header Authorization "Bearer *"',
+    "public_duels_mine": 'header Authorization "Bearer *"',
+    "public_duels_write": 'header Authorization "Bearer *"',
 }
 # JSON-body writes: the matcher also pins Content-Type (last directive).
-JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_notifications_unsubscribe"})
+JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_notifications_unsubscribe"})
 # The ONLY query the frontend sends (useWeatherLeaderboard / GlobalLeaderboard): metric, period, limit,
 # in that order, no geo (the backend 400s earnings+geo and anonymous geo is never admitted), limit 1..30.
 LEADERBOARD_QUERY_LOCK = (
@@ -333,6 +370,17 @@ READONLY_QUERY_LOCK = {
     "public_readonly_explorer_summary": 'expression `{query} == ""`',
     # frontend proofCardPath(): no query, or exactly the share link's block height hint.
     "public_readonly_proof_card": PROOF_CARD_QUERY_LOCK,
+    "public_readonly_forecast_check_summary": 'expression `{query} == ""`',
+    "public_readonly_forecast_check_record": 'expression `{query} == ""`',
+    "public_forecast_check_submit": 'expression `{query} == ""`',
+    "public_readonly_challenge_board": 'expression `{query} == ""`',
+    "public_challenges_mine": 'expression `{query} == ""`',
+    "public_challenges_write": 'expression `{query} == ""`',
+    "public_readonly_duels": 'expression `{query} == ""`',
+    "public_readonly_duel": 'expression `{query} == ""`',
+    "public_duels_mine": 'expression `{query} == ""`',
+    "public_duels_write": 'expression `{query} == ""`',
+    "public_duel_record": 'expression `{query} == ""`',
     "public_readonly_network_nodes": 'expression `{query} == ""`',
     # frontend COMPETITIONS_PATH / COMPETITION_CURRENT_PATH / competitionWeekPath(): never a query.
     "public_readonly_competitions": 'expression `{query} == ""`',
@@ -529,7 +577,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/*",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/*",
             "}",
             "key {client_ip}",
             "events 30",
@@ -1071,6 +1119,32 @@ def self_test() -> None:
             lambda s: s.replace(
                 "path_regexp ^/api/proofs/[0-9a-f]{64}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path_regexp ^/api/proofs/[0-9a-f]{64}$\n"
             ),
+        ),
+        "challenge writes without a wallet bearer": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/challenges(/join|/sync)?$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "path_regexp ^/api/challenges(/join|/sync)?$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "challenge board widened to any segment": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("^/api/challenges/code/[A-Z0-9]{4}-[A-Z0-9]{4}$", "^/api/challenges/code/[^/]+$"),
+        ),
+        "duel writes widened to any duel action": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/(accept|forecast))?$", "/[a-z]+)?$"),
+        ),
+        "forecast check hand-in body cap raised": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 8192",
+                "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 1048576",
+            ),
+        ),
+        "duel record ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/record$\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "/record$\n"),
         ),
         "explorer summary ungated": (
             "testnet/edge/public_onboarding.caddy",

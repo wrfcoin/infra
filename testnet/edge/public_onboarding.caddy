@@ -856,6 +856,149 @@
 		respond "Not found" 404
 	}
 
+	# Forecast check (owner demo queue 2026-11-01 item 7; backend forecast-verification-routes.ts, frontend
+	# /forecast-check): on-chain forecasts scored against station readings and NOAA. Two reads (the 30-day
+	# summary, one record by its 64-hex commit id) and the record hand-in POST. The hand-in needs NO bearer:
+	# the record proves itself (its sha3 is the chain commit id) and the backend takes it only after the
+	# reveal, caps node checks process-wide and answers 404 until FORECAST_VERIFICATION_ENABLED=true.
+	@public_readonly_forecast_check_summary {
+		method GET
+		path /api/forecast-verification/summary
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_forecast_check_summary {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_forecast_check_record {
+		method GET
+		path_regexp ^/api/forecast-verification/forecasts/[0-9a-f]{64}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_forecast_check_record {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_forecast_check_submit {
+		method POST
+		path /api/forecast-verification/forecasts
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_forecast_check_submit {
+		request_body {
+			max_size 8192
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Friend challenges (demo item 8; backend#249 challenge-routes.ts, frontend /challenges, phone screen
+	# mobile#260). The board by invite code is public; the caller's list and every write need a wallet
+	# login Bearer (the backend verifies it and reads the acting wallet from it). Points only. Writes are
+	# POST /api/challenges, /join and /sync with a 4 KiB JSON body. 404 until FRIEND_CHALLENGES_ENABLED=true.
+	@public_readonly_challenge_board {
+		method GET
+		path_regexp ^/api/challenges/code/[A-Z0-9]{4}-[A-Z0-9]{4}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_challenge_board {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_challenges_mine {
+		method GET
+		path /api/challenges
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_challenges_mine {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_challenges_write {
+		method POST
+		path_regexp ^/api/challenges(/join|/sync)?$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_challenges_write {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Free-play forecast duels (demo item 10; backend#228/#1424 duel-routes.ts, frontend /duels). No stakes.
+	# Board and one duel (UUID) are public reads; the caller's list, open/accept/link are wallet-Bearer
+	# writes (4 KiB); the record hand-in proves itself (sha3 = linked commit id) and needs no bearer (8 KiB).
+	# 404 until FORECAST_DUELS_ENABLED=true.
+	@public_readonly_duels {
+		method GET
+		path /api/duels
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_duels {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_duel {
+		method GET
+		path_regexp ^/api/duels/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_duel {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_duels_mine {
+		method GET
+		path /api/duels/mine
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_duels_mine {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_duels_write {
+		method POST
+		path_regexp ^/api/duels(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(accept|forecast))?$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_duels_write {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_duel_record {
+		method POST
+		path_regexp ^/api/duels/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/record$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_duel_record {
+		request_body {
+			max_size 8192
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Direct submission, trusted operator families, and all future API routes
 	# fail closed before frontend nginx can proxy them to the backend.
 	handle /api/* {
@@ -956,7 +1099,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/*
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/*
 			}
 			key {client_ip}
 			events 30
