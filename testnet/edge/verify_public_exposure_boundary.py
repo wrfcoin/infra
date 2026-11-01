@@ -259,6 +259,12 @@ EXPECTED = {
         "POST", "path_regexp ^/api/notifications/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/test$", ("request_body {", "max_size 1024", "}", *BACKEND),
     ),
     "public_notifications_unsubscribe": ("POST", "path /api/notifications/unsubscribe", ("request_body {", "max_size 4096", "}", *BACKEND)),
+    # Passkey-wallet payout notifications (backend feat/passkey-payout-subscribe): no JWT, so NO Bearer;
+    # the body carries a WebAuthn assertion over a single-use nonce from the challenge, verified by the
+    # backend. JSON only, no query, notify_write zone. Kept LAST so existing mutation names still hold.
+    "public_notifications_passkey_challenge": ("POST", "path /api/notifications/passkey/challenge", ("request_body {", "max_size 1024", "}", *BACKEND)),
+    "public_notifications_passkey_subscribe": ("POST", "path /api/notifications/passkey/subscriptions", ("request_body {", "max_size 4096", "}", *BACKEND)),
+    "public_notifications_passkey_unsubscribe": ("POST", "path /api/notifications/passkey/unsubscribe", ("request_body {", "max_size 4096", "}", *BACKEND)),
 }
 
 # infra#983: routes admitted ONLY while the edge container's environment
@@ -303,6 +309,9 @@ GATED = frozenset({
     "public_notifications_delete",
     "public_notifications_test",
     "public_notifications_unsubscribe",
+    "public_notifications_passkey_challenge",
+    "public_notifications_passkey_subscribe",
+    "public_notifications_passkey_unsubscribe",
     "public_readonly_calibration_certificate",
     "public_readonly_station_ownership",
     "public_readonly_wallet_info",
@@ -330,7 +339,9 @@ BEARER_LOCK = {
     "public_duels_write": 'header Authorization "Bearer *"',
 }
 # JSON-body writes: the matcher also pins Content-Type (last directive).
-JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_notifications_unsubscribe"})
+JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_notifications_unsubscribe",
+    "public_notifications_passkey_challenge", "public_notifications_passkey_subscribe", "public_notifications_passkey_unsubscribe",
+})
 # The ONLY query the frontend sends (useWeatherLeaderboard / GlobalLeaderboard): metric, period, limit,
 # in that order, no geo (the backend 400s earnings+geo and anonymous geo is never admitted), limit 1..30.
 LEADERBOARD_QUERY_LOCK = (
@@ -390,6 +401,9 @@ READONLY_QUERY_LOCK = {
     "public_notifications_delete": 'expression `{query} == ""`',
     "public_notifications_test": 'expression `{query} == ""`',
     "public_notifications_unsubscribe": 'expression `{query} == ""`',
+    "public_notifications_passkey_challenge": 'expression `{query} == ""`',
+    "public_notifications_passkey_subscribe": 'expression `{query} == ""`',
+    "public_notifications_passkey_unsubscribe": 'expression `{query} == ""`',
     "public_readonly_calibration_certificate": 'expression `{query} == ""`',
     "public_readonly_station_ownership": 'expression `{query} == ""`',
     "public_readonly_wallet_info": 'expression `{query} == ""`',
@@ -592,10 +606,10 @@ def verify(root: Path = ROOT) -> None:
             "events 10",
             "window 1m",
         ],
-        # backend#389: payout-notification writes, 10/min per client.
+        # backend#389: payout-notification writes, 10/min per client; plus the passkey-wallet routes.
         "notify_write": [
             "match {",
-            "path /api/notifications/subscriptions /api/notifications/subscriptions/* /api/notifications/unsubscribe",
+            "path /api/notifications/subscriptions /api/notifications/subscriptions/* /api/notifications/unsubscribe /api/notifications/passkey/*",
             "}",
             "key {client_ip}",
             "events 10",
@@ -1070,6 +1084,36 @@ def self_test() -> None:
         "notify_write zone removed": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: re.sub(r"\t\tzone notify_write \{.*?\n\t\t\}\n", "", s, count=1, flags=re.S),
+        ),
+        "passkey notification challenge body cap widened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("handle @public_notifications_passkey_challenge {\n\t\trequest_body {\n\t\t\tmax_size 1024", "handle @public_notifications_passkey_challenge {\n\t\trequest_body {\n\t\t\tmax_size 4096"),
+        ),
+        "passkey notification subscribe content type removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/notifications/passkey/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Content-Type application/json\n",
+                "path /api/notifications/passkey/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "passkey notification unsubscribe query lock removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/notifications/passkey/unsubscribe\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "path /api/notifications/passkey/unsubscribe\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "passkey notification routes widened to a prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/notifications/passkey/challenge\n", "path /api/notifications/passkey/*\n"),
+        ),
+        "passkey notification subscribe ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/notifications/passkey/subscriptions\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/notifications/passkey/subscriptions\n"),
+        ),
+        "passkey notification routes dropped from notify_write": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(" /api/notifications/unsubscribe /api/notifications/passkey/*\n", " /api/notifications/unsubscribe\n"),
         ),
         "calibration certificate widened to any segment": (
             "testnet/edge/public_onboarding.caddy",
