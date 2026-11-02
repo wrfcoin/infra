@@ -52,6 +52,14 @@
 # VITE_FAUCET_OPEN rules: empty (off) or exactly `true`, never from a .env file.
 # The guard prints FRONTEND_PASSKEY_WALLET=on or =off.
 #
+# VITE_ENABLE_CHAIN_PROTECTIONS (the 12-word wallet protection screens; each
+# control shows only when the node reports its feature active) and
+# VITE_ENABLE_PASSKEY_BOND_PAYOUT (the link from the passkey wallet to the bond
+# payout approval) are public switches on the same rules: excluded from the
+# VITE_ENABLE_* pattern, empty (off) or exactly `true`, never from a .env file.
+# The guard prints FRONTEND_CHAIN_PROTECTIONS=on|off and
+# FRONTEND_PASSKEY_BOND_PAYOUT=on|off.
+#
 # Exit 0 = allowed, 1 = refused.
 #
 # usage: frontend-build-flags-guard.sh [APP_DIR]   (default: .)
@@ -60,8 +68,9 @@ set -u
 app_dir="${1:-.}"
 variant="${WRFCOIN_FRONTEND_BUILD_VARIANT-public}"
 
-# VITE_ENABLE_PASSKEY_WALLET is a public switch (see below), not an internal surface.
-all_flags=$(env | sed -n -E 's/^(VITE_ENABLE_[A-Za-z0-9_]*)=.*/\1/p' | sed '/^VITE_ENABLE_PASSKEY_WALLET$/d' | sort -u)
+# The three public switches (see above) are not internal surfaces.
+all_flags=$(env | sed -n -E 's/^(VITE_ENABLE_[A-Za-z0-9_]*)=.*/\1/p' \
+  | sed -E '/^VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT)$/d' | sort -u)
 set_flags=""
 for name in $all_flags; do
   # Read the actual value, including newlines; env's line rendering alone
@@ -77,7 +86,7 @@ for file in "$app_dir"/.env "$app_dir"/.env.*; do
   # KEY=value or KEY: value (dotenv accepts both), optionally after `export`;
   # a value of "" or '' is empty.
   found=$(sed -n -E \
-    -e "/^[[:space:]]*(export[[:space:]]+)?VITE_ENABLE_PASSKEY_WALLET[[:space:]]*[:=]/d" \
+    -e "/^[[:space:]]*(export[[:space:]]+)?VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT)[[:space:]]*[:=]/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=][[:space:]]*(\"\"|'')?[[:space:]]*(#.*)?\$/EMPTY/" \
     -e "/^EMPTY\$/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=].*/\\2/p" "$file" | sort -u | tr '\n' ' ')
@@ -125,6 +134,10 @@ exact_true_switch VITE_FAUCET_OPEN "faucet claim" \
   "FRONTEND_FAUCET_OPEN=on (onboarding offers the faucet claim)" "FRONTEND_FAUCET_OPEN=off"
 exact_true_switch VITE_ENABLE_PASSKEY_WALLET "passkey wallet" \
   "FRONTEND_PASSKEY_WALLET=on (/wallet/passkey built in)" "FRONTEND_PASSKEY_WALLET=off"
+exact_true_switch VITE_ENABLE_CHAIN_PROTECTIONS "chain protections" \
+  "FRONTEND_CHAIN_PROTECTIONS=on (12-word wallet protection screens built in)" "FRONTEND_CHAIN_PROTECTIONS=off"
+exact_true_switch VITE_ENABLE_PASSKEY_BOND_PAYOUT "passkey bond payout link" \
+  "FRONTEND_PASSKEY_BOND_PAYOUT=on (passkey wallet links to the bond payout approval)" "FRONTEND_PASSKEY_BOND_PAYOUT=off"
 
 # The public variant must not hide Send. Judged before the switch prints, so a
 # refused build never logs a state line.

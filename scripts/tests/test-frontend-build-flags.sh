@@ -229,6 +229,78 @@ guard_case passkey_file_red 1
 out_has passkey_file_red 'VITE_ENABLE_PASSKEY_WALLET is set in'
 fresh_app
 
+# wallet_switch_cases NAME STATE-LINE-PREFIX: the rules every public wallet switch shares.
+wallet_switch_cases() {
+  local switch="$1" state="$2" key bad case_name file internal
+  key=$(printf '%s' "$switch" | tr 'A-Z' 'a-z')
+  guard_case "${key}_default_off" 0
+  out_has "${key}_default_off" "$state=off"
+  guard_case "${key}_empty_off" 0 "$switch="
+  out_has "${key}_empty_off" "$state=off"
+  out_has "${key}_empty_off" 'FRONTEND_FLAGS=OK variant=public'
+  guard_case "${key}_true_public_pass" 0 WRFCOIN_FRONTEND_BUILD_VARIANT=public "$switch=true"
+  out_has "${key}_true_public_pass" "$state=on"
+  out_has "${key}_true_public_pass" 'FRONTEND_FLAGS=OK variant=public'
+  guard_case "${key}_true_staging_pass" 0 WRFCOIN_FRONTEND_BUILD_VARIANT=staging "$switch=true"
+  out_has "${key}_true_staging_pass" "$state=on"
+  for bad in false TRUE True 1 on yes " true" "true "; do
+    case_name="${key}_value_$(printf '%s' "$bad" | tr -c 'A-Za-z0-9' '_')_red"
+    guard_case "$case_name" 1 "$switch=$bad"
+    out_has "$case_name" "FRONTEND_FLAGS=REFUSED $switch"
+    guard_case "${case_name}_staging" 1 WRFCOIN_FRONTEND_BUILD_VARIANT=staging "$switch=$bad"
+    out_has "${case_name}_staging" "FRONTEND_FLAGS=REFUSED $switch"
+  done
+  # The build arg is the one switch: an .env file may not set it, even with the arg on.
+  for file in .env .env.production .env.local; do
+    fresh_app
+    printf '%s=true\n' "$switch" > "$TMP/app/$file"
+    case_name="${key}_file_${file//[.-]/_}_red"
+    guard_case "$case_name" 1
+    out_has "$case_name" "$switch is set in $TMP/app env files: $file"
+    guard_case "${case_name}_with_arg" 1 "$switch=true"
+    guard_case "${case_name}_staging" 1 WRFCOIN_FRONTEND_BUILD_VARIANT=staging
+  done
+  fresh_app
+  printf '%s=\n%s=""  # off\n' "$switch" "$switch" > "$TMP/app/.env.production"
+  guard_case "${key}_file_empty_pass" 0
+  fresh_app
+  printf '%s=true\n' "$switch" > "$TMP/app/.env.example"
+  guard_case "${key}_file_example_ignored" 0
+  fresh_app
+  # It does not open the internal VITE_ENABLE_* gate for the others, in the
+  # build environment or in a file.
+  for internal in VITE_ENABLE_FULL_STUDIO VITE_ENABLE_DEMO_SURFACES VITE_ENABLE_OPERATOR_PREVIEW VITE_ENABLE_CONTRACT_SURFACES; do
+    guard_case "${key}_true_with_${internal}_red" 1 "$switch=true" "$internal=true"
+    out_has "${key}_true_with_${internal}_red" "set in the build environment: $internal"
+    printf '%s=true\n' "$internal" > "$TMP/app/.env"
+    guard_case "${key}_true_with_${internal}_file_red" 1 "$switch=true"
+    out_has "${key}_true_with_${internal}_file_red" "set in $TMP/app env files: .env: $internal"
+    fresh_app
+  done
+  # The exemption is the exact name, not a prefix.
+  guard_case "${key}_suffixed_name_red" 1 "${switch}_X=true"
+  out_has "${key}_suffixed_name_red" "${switch}_X"
+  printf '%s_X=true\n' "$switch" > "$TMP/app/.env"
+  guard_case "${key}_suffixed_name_file_red" 1
+  fresh_app
+}
+
+echo "guard: VITE_ENABLE_CHAIN_PROTECTIONS (public 12-word wallet protections switch)"
+wallet_switch_cases VITE_ENABLE_CHAIN_PROTECTIONS FRONTEND_CHAIN_PROTECTIONS
+echo "guard: VITE_ENABLE_PASSKEY_BOND_PAYOUT (public passkey bond payout link switch)"
+wallet_switch_cases VITE_ENABLE_PASSKEY_BOND_PAYOUT FRONTEND_PASSKEY_BOND_PAYOUT
+
+echo "guard: all three public wallet switches together"
+guard_case wallet_switches_all_true_pass 0 VITE_ENABLE_PASSKEY_WALLET=true VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true
+out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_WALLET=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_CHAIN_PROTECTIONS=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_BOND_PAYOUT=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_FLAGS=OK variant=public'
+guard_case wallet_switches_independent_pass 0 VITE_ENABLE_CHAIN_PROTECTIONS=true
+out_has wallet_switches_independent_pass 'FRONTEND_CHAIN_PROTECTIONS=on'
+out_has wallet_switches_independent_pass 'FRONTEND_PASSKEY_WALLET=off'
+out_has wallet_switches_independent_pass 'FRONTEND_PASSKEY_BOND_PAYOUT=off'
+
 echo "guard: every .env file vite could load (any mode)"
 # Review of #1048, non-blocking 2: every .env and .env.<mode>[.local] is
 # scanned, not only the production-mode files; only *.example is exempt.
@@ -294,8 +366,13 @@ assert copy_src < guard < npm_build, (copy_src, guard, npm_build)
 # Every VITE_ENABLE_* ARG after the guard would bypass it.
 flag_args = [i for i, line in enumerate(lines) if re.match(r"^ARG VITE_ENABLE_", line)]
 assert flag_args and max(flag_args) < guard, "a VITE_ENABLE_* ARG is declared after the guard"
-# VITE_ENABLE_PASSKEY_WALLET is a public switch with its own checks below.
-names = sorted(n for n in re.findall(r"^ARG (VITE_ENABLE_[A-Z0-9_]+)=$", build, re.M) if n != "VITE_ENABLE_PASSKEY_WALLET")
+# The public wallet switches have their own checks below.
+PUBLIC_SWITCHES = {
+    "VITE_ENABLE_PASSKEY_WALLET": "passkey-wallet",
+    "VITE_ENABLE_CHAIN_PROTECTIONS": "chain-protections",
+    "VITE_ENABLE_PASSKEY_BOND_PAYOUT": "passkey-bond-payout",
+}
+names = sorted(n for n in re.findall(r"^ARG (VITE_ENABLE_[A-Z0-9_]+)=$", build, re.M) if n not in PUBLIC_SWITCHES)
 assert names == ["VITE_ENABLE_CONTRACT_SURFACES", "VITE_ENABLE_DEMO_SURFACES", "VITE_ENABLE_FULL_STUDIO", "VITE_ENABLE_OPERATOR_PREVIEW"], names
 assert re.search(r"^ARG WRFCOIN_FRONTEND_BUILD_VARIANT=public$", build, re.M)
 for name in names:
@@ -337,13 +414,16 @@ assert ws[0] < guard, "VITE_DISABLE_WALLET_SEND is declared after the guard"
 assert re.search(r"^ENV VITE_DISABLE_WALLET_SEND=\$VITE_DISABLE_WALLET_SEND$", build, re.M)
 assert "VITE_DISABLE_WALLET_SEND: ${VITE_DISABLE_WALLET_SEND:-}" in compose, "compose does not pass VITE_DISABLE_WALLET_SEND with an empty default"
 assert not re.search(r"^ENV VITE_DISABLE_WALLET_SEND", serve, re.M)
-pk = [i for i, line in enumerate(lines) if re.match(r"^ARG VITE_ENABLE_PASSKEY_WALLET", line)]
-assert len(pk) == 1 and lines[pk[0]] == "ARG VITE_ENABLE_PASSKEY_WALLET=", "build stage must declare ARG VITE_ENABLE_PASSKEY_WALLET= (empty default) once"
-assert pk[0] < guard, "VITE_ENABLE_PASSKEY_WALLET is declared after the guard"
-assert re.search(r"^ENV VITE_ENABLE_PASSKEY_WALLET=\$VITE_ENABLE_PASSKEY_WALLET$", build, re.M)
-assert "VITE_ENABLE_PASSKEY_WALLET: ${VITE_ENABLE_PASSKEY_WALLET:-}" in compose
-assert 'LABEL org.wrfcoin.stage.passkey-wallet="$VITE_ENABLE_PASSKEY_WALLET"' in serve
-assert "org.wrfcoin.frontend.passkey" not in serve
+for name, label in PUBLIC_SWITCHES.items():
+    declared = [i for i, line in enumerate(lines) if re.match(rf"^ARG {name}\b", line)]
+    assert len(declared) == 1 and lines[declared[0]] == f"ARG {name}=", f"build stage must declare ARG {name}= (empty default) once"
+    assert declared[0] < guard, f"{name} is declared after the guard"
+    assert re.search(rf"^ENV {name}=\${name}$", build, re.M)
+    assert f"{name}: ${{{name}:-}}" in compose, f"compose does not pass {name} with an empty default"
+    assert re.search(rf"^ARG {name}=$", serve, re.M)
+    assert f'LABEL org.wrfcoin.stage.{label}="${name}"' in serve
+    assert f"org.wrfcoin.frontend.{label}" not in serve
+    assert not re.search(rf"^ENV {name}", serve, re.M)
 print("  ok    guard after COPY frontend/ and before npm run build; ARGs, compose args and labels agree")
 PY
 
@@ -373,9 +453,10 @@ PY
     [[ " ${FAILED[*]-} " == *" $1 "* ]] || echo "  ok    $1"
   }
   if render "$TMP/default.json" -u VITE_ENABLE_OPERATOR_PREVIEW -u VITE_ENABLE_FULL_STUDIO \
-      -u VITE_ENABLE_DEMO_SURFACES -u WRFCOIN_FRONTEND_BUILD_VARIANT -u VITE_PUBLIC_READONLY_PATHS -u VITE_FAUCET_OPEN -u VITE_DISABLE_WALLET_SEND; then
+      -u VITE_ENABLE_DEMO_SURFACES -u WRFCOIN_FRONTEND_BUILD_VARIANT -u VITE_PUBLIC_READONLY_PATHS -u VITE_FAUCET_OPEN -u VITE_DISABLE_WALLET_SEND \
+      -u VITE_ENABLE_PASSKEY_WALLET -u VITE_ENABLE_CHAIN_PROTECTIONS -u VITE_ENABLE_PASSKEY_BOND_PAYOUT; then
     args_are render_default_public_empty "$TMP/default.json" \
-      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': '', 'VITE_DISABLE_WALLET_SEND': ''}"
+      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': '', 'VITE_DISABLE_WALLET_SEND': '', 'VITE_ENABLE_PASSKEY_WALLET': '', 'VITE_ENABLE_CHAIN_PROTECTIONS': '', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': ''}"
   else
     cat "$TMP/default.json.err" >&2; fail render_default_public_empty "compose render failed"
   fi
@@ -397,6 +478,12 @@ PY
       "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_FAUCET_OPEN': 'true'}"
   else
     cat "$TMP/faucet.json.err" >&2; fail render_public_faucet_open_true "compose render failed"
+  fi
+  if render "$TMP/wallet.json" -u WRFCOIN_FRONTEND_BUILD_VARIANT VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true; then
+    args_are render_public_wallet_switches_true "$TMP/wallet.json" \
+      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_CHAIN_PROTECTIONS': 'true', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': 'true'}"
+  else
+    cat "$TMP/wallet.json.err" >&2; fail render_public_wallet_switches_true "compose render failed"
   fi
 fi
 
