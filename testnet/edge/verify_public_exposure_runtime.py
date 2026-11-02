@@ -1457,6 +1457,49 @@ PASSKEY_NOTIFICATION_CASES = (
     ("POST", f"{_NP}/x/../challenge", _JSON, 400),
 )
 
+# Account protections (core4 security_key_spend + send_allowlist; frontend#55): own-wallet reads and
+# owner-signed actions, wallet Bearer, lowercase address, exact paths, no query, JSON writes. The two
+# action POSTs are also counted by wallet_protection_actions (5/min), so these run 5 to an edge.
+_SK = f"{_W}/security-key"
+_SA = f"{_W}/send-allowlist"
+_SKA = "/api/wallet/security-key/actions"
+_SAA = "/api/wallet/send-allowlist/actions"
+WALLET_PROTECTION_CASES = (
+    ("GET", _SK, PARITY_BEARER, 502),
+    ("GET", _SA, PARITY_BEARER, 502),
+    ("POST", _SKA, _BJ, 502),
+    ("POST", _SAA, _BJ, 502),
+    # No or wrong credential: never proxied.
+    ("GET", _SK, (), 404),
+    ("GET", _SA, ("Authorization: Basic dGVzdDp0ZXN0",), 404),
+    ("POST", _SKA, _JSON, 404),
+    ("POST", _SAA, _JSON, 404),
+    # Content-Type missing or wrong on the writes.
+    ("POST", _SKA, PARITY_BEARER, 404),
+    ("POST", _SAA, PARITY_BEARER + ("Content-Type: text/plain",), 404),
+    # Query lock.
+    ("GET", _SK + "?x=1", PARITY_BEARER, 404),
+    ("GET", _SA + "?at=1", PARITY_BEARER, 404),
+    ("POST", _SKA + "?x=1", _BJ, 404),
+    ("POST", _SAA + "?x=1", _BJ, 404),
+    # Address shape (lowercase 40 hex only), siblings, methods.
+    ("GET", f"/api/wallet/0x{'A1' * 20}/security-key", PARITY_BEARER, 404),
+    ("GET", f"/api/wallet/0x{'a1' * 19}a/send-allowlist", PARITY_BEARER, 404),
+    ("GET", f"/api/wallet/{'a1' * 20}/security-key", PARITY_BEARER, 404),
+    ("GET", _SK + "/", PARITY_BEARER, 404),
+    ("GET", _SA + "/x", PARITY_BEARER, 404),
+    ("GET", _SKA, PARITY_BEARER, 404),
+    ("GET", _SAA, PARITY_BEARER, 404),
+    ("POST", _SK, _BJ, 404),
+    ("POST", _SA, _BJ, 404),
+    ("PUT", _SKA, _BJ, 404),
+    ("POST", "/api/wallet/send-allowlist/submit", _BJ, 404),
+    ("POST", "/api/wallet/security-key", _BJ, 404),
+    ("POST", _SAA + "/", _BJ, 404),
+    ("GET", f"{_W}/x/../security-key", PARITY_BEARER, 400),
+    ("POST", "/api/wallet/x/../send-allowlist/actions", _BJ, 400),
+)
+
 
 def prove_parity_reads(
     label: str, config_text: str, container_port: str, gate_value: str | None, cases: tuple, budget: int,
@@ -1644,6 +1687,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-notifications", text, port, "on", NOTIFICATION_CASES, 8)
         prove_parity_reads(f"{label}-passkey-notifications-gate", text, port, None, PASSKEY_NOTIFICATION_CASES[:4], 8)
         prove_parity_reads(f"{label}-passkey-notifications", text, port, "on", PASSKEY_NOTIFICATION_CASES, 8)
+        prove_parity_reads(f"{label}-wallet-protections-gate", text, port, None, WALLET_PROTECTION_CASES[:4], 5)
+        prove_parity_reads(f"{label}-wallet-protections", text, port, "on", WALLET_PROTECTION_CASES, 5)
         prove_parity_reads(f"{label}-calibration-gate", text, port, None, CALIBRATION_CASES[:2], 16)
         prove_parity_reads(f"{label}-calibration", text, port, "on", CALIBRATION_CASES, 16)
         prove_parity_reads(f"{label}-forecast-check-gate", text, port, None, FORECAST_CHECK_CASES[:3], 12)
@@ -1713,6 +1758,18 @@ def main() -> None:
             caddy_src.replace("path /api/notifications/passkey/subscriptions\n", "path /api/notifications/passkey/*\n"),
             PASSKEY_NOTIFICATION_CASES,
         ),
+        "wallet send-allowlist actions content type removed": (
+            caddy_src.replace(
+                'path /api/wallet/send-allowlist/actions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Authorization "Bearer *"\n\t\theader Content-Type application/json\n',
+                'path /api/wallet/send-allowlist/actions\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Authorization "Bearer *"\n',
+            ), WALLET_PROTECTION_CASES, 5,
+        ),
+        "wallet security-key read Bearer removed": (
+            caddy_src.replace(
+                'path_regexp ^/api/wallet/0x[0-9a-f]{40}/security-key$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n\t\theader Authorization "Bearer *"\n',
+                'path_regexp ^/api/wallet/0x[0-9a-f]{40}/security-key$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == ""`\n',
+            ), WALLET_PROTECTION_CASES, 5,
+        ),
         "calibration certificate widened to any segment": (
             caddy_src.replace("^/api/calibration-certificates/station/st_[0-9a-f]{12}$", "^/api/calibration-certificates/station/[^/]+$"),
             CALIBRATION_CASES,
@@ -1734,11 +1791,12 @@ def main() -> None:
             caddy_src.replace("proposals/[A-Za-z0-9_-]{1,128}$", "proposals/[^/]+$"), PARITY_GOVERNANCE_CASES,
         ),
     }
-    for mutant, (mutated, cases) in parity_mutants.items():
+    for mutant, (mutated, cases, *budget) in parity_mutants.items():
         if mutated == caddy_src:
             raise AssertionError(f"RED control could not be built: parity mutant {mutant!r} changed nothing")
         try:
-            prove_parity_reads(f"RED-parity-{mutant}", funnel_text, "8444", "on", cases, 8, snippet_text=mutated)
+            # A mutant's budget stays inside its routes' tightest zone, so a 429 never fakes a failure.
+            prove_parity_reads(f"RED-parity-{mutant}", funnel_text, "8444", "on", cases, budget[0] if budget else 8, snippet_text=mutated)
         except AssertionError as error:
             print(f"PASS [RED control] parity mutant {mutant!r} correctly FAILS its proof: {error}")
         else:

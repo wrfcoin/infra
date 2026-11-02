@@ -150,6 +150,14 @@ for matcher in matchers:
                     + "notification subscription for a browser push endpoint or an ntfy topic, never an email or URL; "
                     "rate zone notify_write 10 per minute per IP"
                 )
+            # Account protections (core4 security_key_spend + send_allowlist): owner-signed actions.
+            if matcher["name"] in ("public_wallet_security_key_actions", "public_wallet_send_allowlist_actions"):
+                auth = (
+                    "wallet JWT (own account only; the edge proxies it only with an `Authorization: Bearer` header); "
+                    "an owner-signed account-protection action the backend relays to the node; body at most "
+                    + ("32 KiB" if matcher["name"] == "public_wallet_security_key_actions" else "16 KiB")
+                    + "; rate zone wallet_protection_actions 5 per minute per IP"
+                )
             if matcher["gate"]:
                 name, value = matcher["gate"]
                 auth += f"; **OFF unless the edge env has `{name}={value}`** (compose default off)"

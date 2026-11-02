@@ -86,6 +86,16 @@ services:
       with Bearer and no query. Both require PUBLIC_READONLY_API=on exactly;
       default OFF remains unchanged. Backend binds JWT sub to signed from and
       relays signed authorizations to core4 with its Contributor credential.
+      Account protections (core4 security_key_spend + send_allowlist; frontend#55) add four
+      wallet-Bearer routes, exact paths, no query: GET /api/wallet/<0x40 lowercase hex>/security-key
+      and /send-allowlist (own address only; the allowlist read uses the backend's Reader
+      token), and POST /api/wallet/security-key/actions (JSON, 32KiB) and
+      /api/wallet/send-allowlist/actions (JSON, 16KiB): owner-signed actions the backend relays
+      with its Contributor credential (the allowlist action is wrapped into its node
+      transaction exactly as the core4 CLI does; no new signature). Both POSTs share the
+      wallet_protection_actions zone, 5/minute/client IP. Backend routes 404 unless
+      WALLET_CHAIN_PROTECTIONS_ENABLED=true; the node refuses actions until the features are
+      scheduled. Same PUBLIC_READONLY_API=on gate.
       backend#21 adds POST /api/wallet/send-passkey (no bearer: the WebAuthn assertion
       is the authorization; application/json, no query, 32KiB body cap) and
       GET /api/wallet/send-passkey/nonce/<0x40 lowercase hex> (no bearer, no query),
