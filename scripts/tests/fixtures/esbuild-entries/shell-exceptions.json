@@ -30,6 +30,12 @@
     "reason": "node-exporter flags: the substring trigger matches \"node\" in node_exporter paths; this service runs prometheus node-exporter, not Node.js (exec form, key is the JSON argv)."
   },
   {
+    "file": "testnet/docker-compose.testnet.yml",
+    "service": "node-exporter",
+    "command": "[\"--path.rootfs=/host\", \"--collector.textfile.directory=/host/var/lib/node_exporter/textfile_collector\"]",
+    "reason": "node-exporter flags: the substring trigger matches \"node\" in node_exporter paths; this service runs prometheus node-exporter, not Node.js (exec form, key is the JSON argv)."
+  },
+  {
     "file": "infra/monitoring/docker-compose.gfs-fetcher-health.yml",
     "service": "node-exporter",
     "command": "[\"--collector.disable-defaults\", \"--collector.textfile\", \"--collector.textfile.directory=/etc/node-exporter\"]",
