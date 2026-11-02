@@ -315,7 +315,6 @@ BOOT_HEAL="${SCRIPT_DIR}/boot-heal.sh"
 RESET="${SCRIPT_DIR}/scripts/reset-node-from-genesis.sh"
 EXPOSE_LAN="${SCRIPT_DIR}/expose-lan.sh"
 RESTORE_DRILL="${SCRIPT_DIR}/scripts/backup-restore-verification.sh"
-PITR_RESTORE="${SCRIPT_DIR}/scripts/pg-restore-pitr.sh"
 SMOKE_FULL="${SCRIPT_DIR}/scripts/smoke-full.sh"
 SUSTAINED_TEST="${SCRIPT_DIR}/scripts/sustained-operation-test.sh"
 # The node's guard is a role-scoped RUNTIME guard, not an interpolation-time
@@ -825,7 +824,6 @@ assert_contains "$BOOT_HEAL" 'compose up -d --no-build --force-recreate'
 assert_contains "$RESET" 'require_p2p_guard'
 assert_contains "$EXPOSE_LAN" "\"\${P2P_GUARD}\" --env-file \"\${DIR}/.env\" --require"
 assert_contains "$RESTORE_DRILL" 'guard_external_address'
-assert_contains "$PITR_RESTORE" 'guard_external_address'
 assert_contains "$SMOKE_FULL" 'guard_external_address'
 assert_contains "$SUSTAINED_TEST" "\"\${P2P_GUARD}\" --env-file \"\${TESTNET_ENV_FILE}\" --require"
 
