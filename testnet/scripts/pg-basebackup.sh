@@ -5,11 +5,14 @@
 # What it does:
 #   1. Creates a physical base backup with pg_basebackup
 #   2. Keeps only the newest N base backups (default: 3)
-#   3. Prunes WAL archive files older than M days (default: 7)
+#   3. Prunes archived WAL older than the oldest kept base backup (pg-wal-prune.sh)
+#
+# The PITR window runs from the oldest kept base backup to now, so the keep count
+# and how often this runs set its length: nightly with 3 kept is about 3 days.
 #
 # Usage:
 #   bash testnet/scripts/pg-basebackup.sh
-#   BASE_BACKUP_KEEP_COUNT=5 WAL_RETENTION_DAYS=14 bash testnet/scripts/pg-basebackup.sh
+#   BASE_BACKUP_KEEP_COUNT=5 bash testnet/scripts/pg-basebackup.sh
 # =============================================================================
 set -euo pipefail
 
@@ -43,7 +46,6 @@ read_env_or_default() {
 
 POSTGRES_PASSWORD="$(read_env_or_default POSTGRES_PASSWORD "")"
 BASE_BACKUP_KEEP_COUNT="$(read_env_or_default BASE_BACKUP_KEEP_COUNT "$(read_env_or_default PG_BASEBACKUP_KEEP_COUNT 3)")"
-WAL_RETENTION_DAYS="$(read_env_or_default WAL_RETENTION_DAYS "$(read_env_or_default PG_WAL_RETENTION_DAYS 7)")"
 
 if [ -z "${POSTGRES_PASSWORD}" ]; then
   err "POSTGRES_PASSWORD is required (export it or set it in testnet/.env)."
@@ -51,15 +53,12 @@ if [ -z "${POSTGRES_PASSWORD}" ]; then
 fi
 
 case "${BASE_BACKUP_KEEP_COUNT}" in
-  ''|*[!0-9]*) err "BASE_BACKUP_KEEP_COUNT must be a positive integer"; exit 1 ;;
-esac
-case "${WAL_RETENTION_DAYS}" in
-  ''|*[!0-9]*) err "WAL_RETENTION_DAYS must be a non-negative integer"; exit 1 ;;
+  ''|*[!0-9]*|0|00*) err "BASE_BACKUP_KEEP_COUNT must be a positive integer"; exit 1 ;;
 esac
 
 log "=== PostgreSQL base backup start ==="
 log "Compose file: ${COMPOSE_FILE}"
-log "Retention: keep ${BASE_BACKUP_KEEP_COUNT} base backup(s), WAL ${WAL_RETENTION_DAYS} day(s)"
+log "Retention: keep ${BASE_BACKUP_KEEP_COUNT} base backup(s), WAL from the oldest of them"
 
 compose ps postgres >/dev/null
 
@@ -83,9 +82,8 @@ compose exec -T --user root postgres sh -ceu \
     | awk -v keep='${BASE_BACKUP_KEEP_COUNT}' 'NR>keep {print \$2}' \
     | xargs -r rm -rf"
 
-log "Pruning WAL archive files older than ${WAL_RETENTION_DAYS} day(s) ..."
-compose exec -T --user root postgres sh -ceu \
-  "find /var/lib/postgresql/data/backup/wal -mindepth 1 -maxdepth 1 -type f -mtime +${WAL_RETENTION_DAYS} -delete"
+log "Pruning WAL archive files older than the oldest kept base backup ..."
+COMPOSE_FILE="${COMPOSE_FILE}" sh "${SCRIPT_DIR}/pg-wal-prune.sh" --apply
 
 log "Current base backups:"
 compose exec -T postgres sh -ceu \

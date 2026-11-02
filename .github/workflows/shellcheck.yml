@@ -32,7 +32,12 @@ jobs:
             testnet/scripts/reset-node-from-genesis.sh \
             testnet/tests/test_reset_node_from_genesis.sh \
             testnet/tests/test_reset_node_from_genesis_archives.sh \
-            testnet/scripts/preflight-infra-snapshot-move.sh
+            testnet/scripts/preflight-infra-snapshot-move.sh \
+            testnet/scripts/pg-basebackup.sh \
+            scripts/tests/test-pg-wal-prune.sh
+
+      - name: Shellcheck WAL pruner (POSIX sh, blocking)
+        run: shellcheck --severity=warning --shell=sh testnet/scripts/pg-wal-prune.sh
 
       - name: Shellcheck oracle attester entrypoint (blocking)
         run: shellcheck --severity=warning --shell=sh infra/docker/hsm-service-entrypoint.sh
