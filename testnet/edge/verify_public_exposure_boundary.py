@@ -427,9 +427,10 @@ READONLY_QUERY_LOCK = {
     "public_readonly_calibration_certificate": 'expression `{query} == ""`',
     "public_readonly_station_ownership": 'expression `{query} == ""`',
     "public_readonly_wallet_info": 'expression `{query} == ""`',
-    # mobile walletTransactions shape: limit then offset; backend clamps 1..100, edge admits 1..50.
+    # mobile walletTransactions shape: limit then offset (edge admits 1..50; backend clamps 1..100), then
+    # optional reward paging: creditLimit 1..100, then creditAfter = a 64-hex commit ID.
     "public_readonly_wallet_transactions": (
-        "expression `{query}.matches('^limit=([1-9]|[1-4][0-9]|50)&offset=[0-9]{1,6}$')`"
+        "expression `{query}.matches('^limit=([1-9]|[1-4][0-9]|50)&offset=[0-9]{1,6}(&creditLimit=([1-9]|[1-9][0-9]|100))?(&creditAfter=[0-9a-f]{64})?$')`"
     ),
     "public_readonly_governance_proposals": (
         "expression `{query} == \"\" || {query}.matches('^limit=([1-9]|[1-9][0-9]|100)&offset=[0-9]{1,6}$')`"
@@ -923,6 +924,14 @@ def self_test() -> None:
         "S1 wallet address regex widened to any path segment": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("^/api/wallet/0x[0-9A-Fa-f]{40}$", "^/api/wallet/[^/]+$"),
+        ),
+        "wallet transactions credit cursor widened to any character": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("(&creditAfter=[0-9a-f]{64})?", "(&creditAfter=.*)?"),
+        ),
+        "wallet transactions creditLimit widened to any number": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("(&creditLimit=([1-9]|[1-9][0-9]|100))?", "(&creditLimit=[0-9]+)?"),
         ),
         "S1 wallet transactions limit widened to 100": (
             "testnet/edge/public_onboarding.caddy",

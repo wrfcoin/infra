@@ -212,7 +212,8 @@ services:
       default-OFF PUBLIC_READONLY_API gate, GET only, exact paths, locked query. Own wallet
       (wallet-routes.js requireAuth l.29 + requireOwnAddress): GET /api/wallet/0x<40 hex>
       (no query) and GET /api/wallet/0x<40 hex>/transactions
-      (`limit=<1..50>&offset=<digits>` in that order), proxied only when the request
+      (`limit=<1..50>&offset=<digits>`, then optional `creditLimit=<1..100>`, then optional
+      `creditAfter=<64 lowercase hex commit ID>`, in that order), proxied only when the request
       carries an `Authorization: Bearer ` header; send, mnemonic, nonce, nfts, data and
       other wallet subpaths and methods stay 404 except the S9 signed Send and nonce routes above. Governance (governance-routes.ts
       l.231/l.275/l.564): GET /api/governance/proposals (no query, or
