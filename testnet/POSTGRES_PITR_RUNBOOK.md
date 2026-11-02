@@ -39,7 +39,19 @@ The script will:
 
 - create a new physical backup directory under `.../backup/base/`
 - keep only the newest `PG_BASEBACKUP_KEEP_COUNT` backups (default `3`)
-- prune WAL files older than `PG_WAL_RETENTION_DAYS` (default `7`)
+- prune archived WAL older than the oldest kept base backup (`scripts/pg-wal-prune.sh`)
+
+The PITR window runs from the oldest kept base backup to now: nightly with 3 kept
+is about 3 days. To see what pruning would do without changing anything:
+
+```bash
+bash testnet/scripts/pg-wal-prune.sh            # dry run
+bash testnet/scripts/pg-wal-prune.sh --apply    # delete
+```
+
+Pruning deletes only WAL older than that backup. It deletes nothing and exits 3 when
+there is no base backup, any base backup fails `pg_verifybackup`, or the archive has
+a gap after the anchor segment.
 
 ## 3. Schedule nightly base backup (02:00)
 
@@ -51,7 +63,6 @@ Optional retention tuning in `testnet/.env`:
 
 ```bash
 PG_BASEBACKUP_KEEP_COUNT=3
-PG_WAL_RETENTION_DAYS=7
 ```
 
 ## 4. Perform PITR restore
