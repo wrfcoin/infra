@@ -478,6 +478,10 @@
         "reason": "Suite and private host notification/hook inputs excluded."
       },
       {
+        "path": "scripts/tests/test-pg-archive-command.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
         "path": "scripts/tests/test-pg-backup-restore.sh",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
