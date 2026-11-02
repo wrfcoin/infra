@@ -83,6 +83,14 @@ ENV VITE_DISABLE_WALLET_SEND=$VITE_DISABLE_WALLET_SEND
 # empty (off, the default) or exactly `true`, never from a .env file.
 ARG VITE_ENABLE_PASSKEY_WALLET=
 ENV VITE_ENABLE_PASSKEY_WALLET=$VITE_ENABLE_PASSKEY_WALLET
+# 12-word wallet protection screens; each control shows only when the node
+# reports its feature active. Public switch on the same rules as above.
+ARG VITE_ENABLE_CHAIN_PROTECTIONS=
+ENV VITE_ENABLE_CHAIN_PROTECTIONS=$VITE_ENABLE_CHAIN_PROTECTIONS
+# Link from the passkey wallet to the bond payout approval. Public switch on the
+# same rules as above.
+ARG VITE_ENABLE_PASSKEY_BOND_PAYOUT=
+ENV VITE_ENABLE_PASSKEY_BOND_PAYOUT=$VITE_ENABLE_PASSKEY_BOND_PAYOUT
 COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
 RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
     sh /usr/local/bin/frontend-build-flags-guard /app
@@ -128,6 +136,11 @@ LABEL org.wrfcoin.stage.faucet-open="$VITE_FAUCET_OPEN"
 # Passkey wallet provenance, outside org.wrfcoin.frontend.* for the same reason.
 ARG VITE_ENABLE_PASSKEY_WALLET=
 LABEL org.wrfcoin.stage.passkey-wallet="$VITE_ENABLE_PASSKEY_WALLET"
+# Chain protections and bond payout link provenance, outside for the same reason.
+ARG VITE_ENABLE_CHAIN_PROTECTIONS=
+LABEL org.wrfcoin.stage.chain-protections="$VITE_ENABLE_CHAIN_PROTECTIONS"
+ARG VITE_ENABLE_PASSKEY_BOND_PAYOUT=
+LABEL org.wrfcoin.stage.passkey-bond-payout="$VITE_ENABLE_PASSKEY_BOND_PAYOUT"
 
 # Install curl for healthcheck
 RUN apk add --no-cache curl
