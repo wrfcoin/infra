@@ -30,6 +30,13 @@ Expected:
 - `archive_command` points at `/var/lib/postgresql/data/backup/wal`
 - `failed_count` is not growing
 
+If `failed_count` keeps growing and the Postgres log shows `cmp` reporting a difference,
+the archive already holds a file with that segment's name and different bytes. Postgres
+retries that segment forever and archives nothing after it, and WAL piles up in `pg_wal`.
+Nothing overwrites the file, because it may be the good copy. Compare the two, then move
+the wrong one out of `backup/wal` by hand. An interrupted copy no longer causes this: it
+leaves only a hidden `.<segment>.tmp`, which the next attempt overwrites.
+
 A new `postgres-backup` volume is root-owned, and the archiver runs as `postgres`. Until
 the directory belongs to `postgres`, every attempt fails with `Permission denied`, and
 WAL piles up in `pg_wal`. `pg-basebackup.sh` fixes the ownership on each run, so run it

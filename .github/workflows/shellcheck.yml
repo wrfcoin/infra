@@ -36,6 +36,7 @@ jobs:
             testnet/scripts/pg-basebackup.sh \
             testnet/scripts/pg-restore-pitr.sh \
             scripts/tests/test-pg-wal-prune.sh \
+            scripts/tests/test-pg-archive-command.sh \
             scripts/tests/test-pg-backup-restore.sh \
             scripts/tests/drill-pg-backup-restore.sh
 
