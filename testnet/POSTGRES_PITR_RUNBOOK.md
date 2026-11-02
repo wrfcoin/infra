@@ -16,17 +16,24 @@ volume and supports physical base backups + point-in-time recovery (PITR).
 
 ## 1. Verify WAL archiving is enabled
 
+The postgres role is the compose file's `POSTGRES_USER`, read inside the container.
+
 ```bash
 cd /root/wrfcoin/infra/testnet
-docker compose -f docker-compose.testnet.yml up -d postgres
-docker compose -f docker-compose.testnet.yml exec -T postgres psql -U postgres -d postgres -c "SHOW archive_mode;"
-docker compose -f docker-compose.testnet.yml exec -T postgres psql -U postgres -d postgres -c "SHOW archive_command;"
+docker compose -f docker-compose.testnet.yml exec -T --user postgres postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -XAtc "SHOW archive_mode" -c "SHOW archive_command" -c "SELECT archived_count, failed_count, last_failed_time FROM pg_stat_archiver"'
 ```
 
 Expected:
 
 - `archive_mode` = `on`
 - `archive_command` points at `/var/lib/postgresql/data/backup/wal`
+- `failed_count` is not growing
+
+A new `postgres-backup` volume is root-owned, and the archiver runs as `postgres`. Until
+the directory belongs to `postgres`, every attempt fails with `Permission denied`, and
+WAL piles up in `pg_wal`. `pg-basebackup.sh` fixes the ownership on each run, so run it
+once after creating the volume.
 
 ## 2. Run a base backup manually
 
@@ -37,12 +44,17 @@ bash testnet/scripts/pg-basebackup.sh
 
 The script will:
 
-- create a new physical backup directory under `.../backup/base/`
+- create a new physical backup directory under `.../backup/base/`, without a restart or
+  a heavy lock
+- check it with `pg_verifybackup`, and on failure remove it and leave older backups alone
 - keep only the newest `PG_BASEBACKUP_KEEP_COUNT` backups (default `3`)
-- prune archived WAL older than the oldest kept base backup (`scripts/pg-wal-prune.sh`)
+- leave the WAL archive alone, unless you pass `--prune-wal`
 
-The PITR window runs from the oldest kept base backup to now: nightly with 3 kept
-is about 3 days. To see what pruning would do without changing anything:
+Pruning is opt-in, so that scheduling backups cannot start deleting WAL before a restore
+has been proven on that host. After that, `--prune-wal` runs `scripts/pg-wal-prune.sh
+--apply` after the backup. The PITR window then runs from the oldest kept base backup to
+now: nightly with 3 kept is about 3 days. To see what pruning would do without changing
+anything:
 
 ```bash
 bash testnet/scripts/pg-wal-prune.sh            # dry run
@@ -65,40 +77,61 @@ Optional retention tuning in `testnet/.env`:
 PG_BASEBACKUP_KEEP_COUNT=3
 ```
 
-## 4. Perform PITR restore
+## 4. Test a backup: restore into a scratch volume
 
-Warning: this is destructive to the current postgres-data volume.
+This doesn't touch or stop the live database. The copy runs in a new container with no
+network, the backup volume mounted read-only and archiving off.
 
 ```bash
 cd /root/wrfcoin/infra
-bash testnet/scripts/pg-restore-pitr.sh \
-  --target-time "2026-04-08 02:15:00+00" \
-  --confirm
+bash testnet/scripts/pg-restore-pitr.sh --scratch-volume pg-restore-scratch
 ```
 
-Optional:
+Optional: `--base-backup 20260408_020001` (default: the newest) and
+`--target-time "2026-04-08 02:15:00+00"` (default: all archived WAL).
+
+The scratch container `pg-restore-scratch-pg` stays up for checking. Remove it, by exact
+name, when done. Cleanup only removes a container and volume labelled as scratch:
 
 ```bash
-bash testnet/scripts/pg-restore-pitr.sh \
-  --base-backup 20260408_020001 \
-  --target-time "2026-04-08 02:15:00+00" \
-  --confirm
+bash testnet/scripts/pg-restore-pitr.sh --cleanup-scratch --scratch-volume pg-restore-scratch
 ```
 
-What restore does:
+## 5. Restore over the live database
 
-1. Stops the testnet stack.
-2. Restores `postgres-data` from the selected base backup.
-3. Writes recovery settings + `recovery.signal`.
-4. Starts postgres and replays WAL up to `--target-time`.
-5. Starts the full stack after promotion.
+Warning: this replaces the running database. With no target, or with a target or
+confirmation that doesn't match, the script changes nothing and exits 3.
 
-## 5. Post-restore checks
+First stop the services that write to the database. Then name the volume the postgres
+container runs on, twice:
+
+```bash
+cd /root/wrfcoin/infra
+docker volume ls --filter name=postgres-data
+bash testnet/scripts/pg-restore-pitr.sh --live \
+  --target-volume testnet_postgres-data \
+  --confirm-overwrite testnet_postgres-data \
+  --target-time "2026-04-08 02:15:00+00"
+```
+
+What it does:
+
+1. Verifies the base backup, before stopping anything.
+2. Stops only the postgres container.
+3. Copies the backup to `pgdata` on the volume and writes the recovery settings. The old
+   data stays beside it as `pgdata.pre-restore-<time>`.
+4. Starts the same container and waits until it has left recovery.
+
+It doesn't recreate any container or start other services. Start those through your normal
+deploy path, with the same compose file set they were created from. Delete
+`pgdata.pre-restore-<time>` once you are satisfied.
+
+## 6. Post-restore checks
 
 ```bash
 cd /root/wrfcoin/infra/testnet
-docker compose -f docker-compose.testnet.yml exec -T postgres psql -U postgres -d postgres -c "SELECT pg_is_in_recovery();"
-docker compose -f docker-compose.testnet.yml exec -T postgres psql -U postgres -d wrfcoin -c "SELECT now();"
+docker compose -f docker-compose.testnet.yml exec -T --user postgres postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -XAtc "SELECT pg_is_in_recovery()" -c "SELECT now()"'
 docker compose -f docker-compose.testnet.yml ps
 ```
 
