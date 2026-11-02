@@ -308,7 +308,6 @@ COMPOSE="${SCRIPT_DIR}/docker-compose.testnet.yml"
 RENDER_INVENTORY="${SCRIPT_DIR}/tests/check-compose-render-inventory.py"
 RENDER_HELPER="${SCRIPT_DIR}/tests/render-testnet-compose.sh"
 COMPOSE_WORKFLOW="${SCRIPT_DIR}/../.github/workflows/testnet-docker-validate.yml"
-SELF_HOSTED_WORKFLOW="${SCRIPT_DIR}/../.github/workflows/ci-self-hosted.yml"
 BOOTSTRAP="${SCRIPT_DIR}/bootstrap.sh"
 SYNC_JOIN="${SCRIPT_DIR}/join-testnet-sync-node.sh"
 BOOT_HEAL="${SCRIPT_DIR}/boot-heal.sh"
@@ -344,8 +343,6 @@ assert_workflow_step_has_fixture "$COMPOSE_WORKFLOW" 'Validate testnet compose' 
 assert_workflow_step_has_fixture "$COMPOSE_WORKFLOW" 'Validate testnet compose' 'WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000'
 assert_workflow_step_has_fixture "$COMPOSE_WORKFLOW" 'Verify PIN-free renders remain runtime fail-closed' 'WRFCOIN_P2P_EXTERNAL_ADDR: /ip4/198.51.100.7/tcp/9000'
 assert_workflow_step_has_fixture "$COMPOSE_WORKFLOW" 'Verify PIN-free renders remain runtime fail-closed' 'WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000'
-assert_workflow_step_has_fixture "$SELF_HOSTED_WORKFLOW" 'Validate testnet compose' 'WRFCOIN_P2P_EXTERNAL_ADDR: /ip4/198.51.100.7/tcp/9000'
-assert_workflow_step_has_fixture "$SELF_HOSTED_WORKFLOW" 'Validate testnet compose' 'WRFCOIN_SEED_P2P_EXTERNAL_ADDR: /ip4/203.0.113.9/tcp/9000'
 assert_contains "${SCRIPT_DIR}/../scripts/test-faucet-base-profile-smoke.sh" 'export WRFCOIN_P2P_EXTERNAL_ADDR="${WRFCOIN_P2P_EXTERNAL_ADDR:-/ip4/198.51.100.7/tcp/9000}"'
 assert_contains "${SCRIPT_DIR}/../scripts/test-faucet-base-profile-smoke.sh" 'export WRFCOIN_SEED_P2P_EXTERNAL_ADDR="${WRFCOIN_SEED_P2P_EXTERNAL_ADDR:-/ip4/203.0.113.9/tcp/9000}"'
 assert_contains "${SCRIPT_DIR}/../scripts/test-hsm-pin-render-guard.sh" 'export WRFCOIN_P2P_EXTERNAL_ADDR="${WRFCOIN_P2P_EXTERNAL_ADDR:-/ip4/198.51.100.7/tcp/9000}"'

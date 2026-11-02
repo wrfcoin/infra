@@ -60,26 +60,7 @@
 #
 # RUNNER
 # ------
-# `wrfcoin/infra` has one self-hosted runner registered, `n5pro-ct102-infra`
-# (`gh api repos/wrfcoin/infra/actions/runners`), online, on the same build runner
-# box that already hosts core4's and backend's runners. GitHub Actions
-# runner registration is PER-REPOSITORY: a job in this repo can only ever be
-# picked up by a runner registered to THIS repo, so there is no cross-repo
-# scheduling collision even though all three share the `n5pro` label and the
-# same physical box. This job needs nothing Docker touches, which is exactly
-# why it can run here while `gate`'s steps 0-3 cannot -- see
-# build-boot-gate.yml's own investigation of gh-runner's Docker access for
-# why those steps stay hosted.
-#
-# A self-hosted job with no available runner does not fail -- it sits
-# "Queued" until GitHub's own platform-level queued-job timeout eventually
-# cancels it (documented as up to 24h), which is a VOID of a different shape
-# than a hosted zero-step billing VOID: `gh pr checks` shows a
-# pending/queued state rather than a fast pass/fail, and
-# `gh api .../actions/runs/<id>/jobs` shows `"status": "queued",
-# "conclusion": null` rather than `"conclusion": "failure"` with 0 steps.
-# `n5pro-ct102-infra` is confirmed online right now, so this is not live,
-# but it is the failure mode to watch for if that runner ever drops offline.
+# GitHub-hosted, and free because this repo is public.
 
 name: Build/Boot Gate — Node probes
 

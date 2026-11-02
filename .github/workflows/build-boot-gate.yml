@@ -77,110 +77,14 @@
 # Dockerfile-touching PR was already unwatched); this split does not
 # introduce that gap, only narrows how often the sweep piggybacks on an
 # unrelated trigger. This is a real, if narrow, coverage change traded for a
-# real billing fix; it is not free.
+# smaller per-PR run; it is not free.
 #
-# `wrfcoin/infra` has one self-hosted runner registered, `n5pro-ct102-infra`
-# (`gh api repos/wrfcoin/infra/actions/runners`), online, on the same build runner box
-# that already hosts core4's and backend's runners. GitHub Actions runner
-# registration is PER-REPOSITORY: a job in this repo can only ever be picked
-# up by a runner registered to THIS repo, so there is no cross-repo scheduling
-# collision with core4's or backend's runner even though all three share the
-# `n5pro` label and the same physical box.
-#
-# What was actually checked before moving anything, not assumed:
-#   Docker daemon, as the runner's own OS user (`gh-runner`, uid 999) --
-#     *** CORRECTED 2026-09-25 (infra#1034 review N5): WORKS NOW. *** When
-#     this note was first written, `gh-runner` was not in the `docker` group
-#     and `docker ps` as that user failed with "permission denied". That is
-#     stale: after core4#2958, `gh-runner` is in `docker` (see the header of
-#     public-exposure-edge-gate.yml), and Node Image Ship-Feature Guard run
-#     36202173903 did a full `docker build` + `docker create/cp` on
-#     `n5pro-ct102-infra`. The same OS user serves core4's, backend's and
-#     infra's runner services, so all three can reach the socket.
-#     SECURITY NOTE: Docker-socket access is ROOT-EQUIVALENT on build runner. Any
-#     job that runs on that runner (including a PR-triggered one) can mount
-#     the host filesystem through a container. That is acceptable only
-#     because wrfcoin/infra is private and fork PR workflows are disabled
-#     (no outside contributor can make a PR run there). If either changes,
-#     revisit it before anything else.
-#   hadolint -- not installed on the runner (`which hadolint` empty). Step 2
-#     pulls it as a digest-pinned image via `docker run`; that was blocked by
-#     the same (now-fixed) socket permission.
-#   Node / npm / git / gh CLI -- present and working as `gh-runner`: node
-#     v24.20.0, npm 11.19.0, git 2.39.5, gh 2.98.0. `actions/setup-node@v7`
-#     still pins the exact same Node 22 this gate always used (see
-#     node-probes-gate.yml) -- the system Node is not what runs the probe.
-#   Network egress -- real. `curl` to registry.npmjs.org (200) and
-#     registry-1.docker.io/v2/ (401, i.e. reached and answered, not
-#     unreachable) both succeeded from the runner as `gh-runner`.
-#   Disk -- 50G free of 118G on build runner's root filesystem, from both `root` and
-#     `gh-runner`'s view.
-#   Concurrency -- build runner runs all three runner SERVICES on one box (16 CPUs,
-#     32GiB RAM), independently of which repo's job triggered them. Measured
-#     load average 5.2-7.27 (out of 16) while other lanes (core4 Rust
-#     compiles) were active -- headroom, not saturation. `node-probes`'
-#     actual cost (`npm ci` + `node --test`) measured under 5s locally; even a
-#     concurrent Rust build on core4's runner would slow it, not starve it,
-#     and it costs the owner nothing either way.
-#
-# So (as written before the correction above): steps 0-3 (Dockerfile parse,
-# hadolint, Caddy validate) all invoke `docker build`/`docker run` directly and
-# could not move then. The blocker is gone, but moving them is a separate change
-# that this correction does not make -- they stay here, on
-# `ubuntu-latest`, hosted, billed, unchanged in substance. The Node boot
-# probe and `node --test` need nothing Docker touches and live in
-# node-probes-gate.yml on `n5pro-ct102-infra`, unchanged in substance -- same
-# `if:` conditions, same commands, same exit-code contract, just a different
-# file with a different trigger.
-#
-# gh-runner's Docker access HAS since been fixed (core4#2958; see the corrected
-# note above), so steps 0-3 CAN now move to build runner. Doing so is a separate change
-# not made here: it needs its own run evidence, and it widens the set of jobs
-# holding a root-equivalent socket.
-#
-# A self-hosted job with no available runner does not fail -- it sits
-# "Queued" until GitHub's own platform-level queued-job timeout eventually
-# cancels it (documented as up to 24h), which is a VOID of a different shape
-# than the zero-step billing VOID: `gh pr checks` shows a pending/queued
-# state rather than a fast pass/fail, and `gh api .../actions/runs/<id>/jobs`
-# shows `"status": "queued", "conclusion": null` rather than
-# `"conclusion": "failure"` with 0 steps. `n5pro-ct102-infra` is confirmed
-# online right now, so this is not live, but it is the failure mode to watch
-# for if that runner ever drops offline.
-#
-# MINUTES DISCIPLINE
-# ------------------
-# GitHub bills each *scheduled hosted job* rounded up to the minute -- and
-# "scheduled" is the operative word. A job that never gets scheduled because
-# the WORKFLOW it lives in never triggered bills nothing; a job that gets
-# scheduled and then has every step `if:`-skipped still bills the rounded-up
-# minute, because the runner was allocated. That distinction is why this
-# file's `on.pull_request.paths` list, not a per-step `if:` guard, is the
-# actual cost-control surface for `gate`. This is also deliberately ONE
-# hosted job rather than a fan-out: a 4-job matrix that each ran 12s would
-# bill 4 minutes, this bills 1-2.
-#
-# Estimated hosted (billed) minutes per PR that triggers THIS file:
-#   Dockerfile-only change (the common case) ......... ~1 min   (MEASURED: 24-26s)
-#   + testnet/edge (xcaddy build, cold) .............. ~5-8 min   (rare, unchanged)
-#   + any edit to THIS FILE (forces the edge branch) . ~5-8 min hosted
-#
-# An explorer/faucet-only PR -- e.g. #838's own dependabot bump, or #880's
-# og-image.test.js -- no longer appears in the table above at all, because
-# it no longer matches ANY path in this file's trigger list, so GitHub never
-# evaluates this workflow for that PR: not scheduled, not `if:`-skipped, not
-# billed. That is the genuine $0 this PR is sold on, and unlike the job-level
-# split this replaces, it is a property of what triggers the workflow, not
-# of what runs inside it once triggered -- proven with a real run in the PR
-# body (a scratch PR touching only a faucet file), not inferred from `if:`
-# guards. node-probes-gate.yml picks that same PR up on its own, separate,
-# self-hosted trigger, at $0 regardless of what it runs, because self-hosted
-# minutes are never billed at all.
-#
-# Before infra#838's runner migration, an explorer/faucet-only PR paid the
-# full "+ a booted Node service" line on the hosted runner -- previously
-# estimated ~2-3 min. That entire cost is now $0, genuinely, not just
-# relocated inside a job that still gets billed for showing up.
+# RUNNER AND COST
+# ---------------
+# GitHub-hosted, and free because this repo is public: hosted jobs here run
+# normally and bill nothing. The `on.pull_request.paths` list decides which PRs
+# spend CI time on this gate. It is one job rather than a fan-out, so a PR that
+# triggers it waits on one runner.
 
 name: Build/Boot Gate
 

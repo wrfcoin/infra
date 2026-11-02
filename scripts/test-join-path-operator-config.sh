@@ -13,9 +13,8 @@
 # seed's advertise address a precondition of the whole file set. `profiles:`
 # does not scope interpolation.
 #
-# It survived because SIX places inject a value the operator does not have:
+# It survived because several places inject a value the operator does not have:
 #
-#   .github/workflows/ci-self-hosted.yml
 #   .github/workflows/testnet-docker-validate.yml            (x2 steps)
 #   testnet/tests/render-testnet-compose.sh                  (exports BOTH addrs)
 #   scripts/test-compose-smoke.sh

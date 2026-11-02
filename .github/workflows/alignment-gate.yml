@@ -99,9 +99,6 @@ jobs:
       contents: read
       pull-requests: write
     name: Alignment Impact Check
-    # build runner self-hosted (2026-08-30): API-only github-script job; must stay
-    # REAL when hosted minutes are exhausted (zero-step billing failures
-    # otherwise).
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'alignment-exempt')
     steps:
