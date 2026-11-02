@@ -397,3 +397,40 @@ groups:
         annotations:
           summary: "Chain-rewards index behind or unavailable for {{ $labels.surface }}"
           description: "/api/{{ $labels.surface }} has not served a current index for 30+ minutes. Check the backend log for 'Chain reward index pass' and chain_reward_index_state.status (db_error = missing migration)."
+
+  # pg-basebackup.sh writes these through node-exporter's textfile collector.
+  # Silence is covered as well as failure: a run that is killed outright, or a cron
+  # entry that has gone, never records a failure.
+  - name: postgres_backup
+    rules:
+      - alert: PostgresBaseBackupFailed
+        expr: wrfcoin_pg_basebackup_last_run_success == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: postgres-backup
+        annotations:
+          summary: "The last Postgres base backup failed"
+          description: "pg-basebackup.sh exited non-zero. Older backups were left alone, but the PITR window is not moving forward. Check /var/log/wrfcoin-pg-basebackup.log, then rerun it (POSTGRES_PITR_RUNBOOK.md section 2)."
+
+      # Nightly, so 26 hours is one missed run plus some slack for a long backup.
+      - alert: PostgresBaseBackupStale
+        expr: time() - wrfcoin_pg_basebackup_last_success_timestamp_seconds > 93600
+        for: 15m
+        labels:
+          severity: critical
+          service: postgres-backup
+        annotations:
+          summary: "No clean Postgres base backup for 26+ hours"
+          description: "The nightly run is missing or failing. Check the cron entry and /var/log/wrfcoin-pg-basebackup.log (POSTGRES_PITR_RUNBOOK.md section 3)."
+
+      # The long hold gives a fresh install time to reach its first nightly run.
+      - alert: PostgresBaseBackupMetricMissing
+        expr: absent(wrfcoin_pg_basebackup_last_run_success)
+        for: 26h
+        labels:
+          severity: critical
+          service: postgres-backup
+        annotations:
+          summary: "No Postgres base backup result has been recorded"
+          description: "Node-exporter has shown no base backup result for 26+ hours, so the other backup alerts are blind. Check the cron entry, /var/lib/node_exporter/textfile_collector on the host and node-exporter's --collector.textfile.directory flag (POSTGRES_PITR_RUNBOOK.md section 3)."

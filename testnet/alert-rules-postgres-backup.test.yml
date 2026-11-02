@@ -1,0 +1,89 @@
+# promtool rule unit tests for the postgres_backup group.
+# Run: promtool test rules testnet/alert-rules-postgres-backup.test.yml
+# (alert-rules-gate.yml and scripts/tests/test-prometheus-scrape-config.sh run it).
+rule_files:
+  - alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Clean run recently: nothing fires.
+  - interval: 1h
+    input_series:
+      - series: 'wrfcoin_pg_basebackup_last_run_success'
+        values: '1x4'
+      - series: 'wrfcoin_pg_basebackup_last_success_timestamp_seconds'
+        values: '0x4'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: PostgresBaseBackupFailed
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: PostgresBaseBackupStale
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: PostgresBaseBackupMetricMissing
+        exp_alerts: []
+
+  # A failed run pages after 5 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'wrfcoin_pg_basebackup_last_run_success'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PostgresBaseBackupFailed
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: PostgresBaseBackupFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: postgres-backup
+            exp_annotations:
+              summary: "The last Postgres base backup failed"
+              description: "pg-basebackup.sh exited non-zero. Older backups were left alone, but the PITR window is not moving forward. Check /var/log/wrfcoin-pg-basebackup.log, then rerun it (POSTGRES_PITR_RUNBOOK.md section 2)."
+
+  # The last clean run was at t=0 and the last run claims success: only time passing
+  # can show the nightly run has stopped. Quiet at 25h, pages past 26h + 15m.
+  - interval: 5m
+    input_series:
+      - series: 'wrfcoin_pg_basebackup_last_run_success'
+        values: '1x400'
+      - series: 'wrfcoin_pg_basebackup_last_success_timestamp_seconds'
+        values: '0x400'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: PostgresBaseBackupStale
+        exp_alerts: []
+      - eval_time: 26h10m
+        alertname: PostgresBaseBackupStale
+        exp_alerts: []
+      - eval_time: 26h20m
+        alertname: PostgresBaseBackupStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: postgres-backup
+            exp_annotations:
+              summary: "No clean Postgres base backup for 26+ hours"
+              description: "The nightly run is missing or failing. Check the cron entry and /var/log/wrfcoin-pg-basebackup.log (POSTGRES_PITR_RUNBOOK.md section 3)."
+
+  # No result ever recorded: quiet while a first nightly run is still due, then pages.
+  - interval: 5m
+    input_series:
+      - series: 'up{job="node-exporter"}'
+        values: '1x400'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: PostgresBaseBackupMetricMissing
+        exp_alerts: []
+      - eval_time: 26h5m
+        alertname: PostgresBaseBackupMetricMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: postgres-backup
+            exp_annotations:
+              summary: "No Postgres base backup result has been recorded"
+              description: "Node-exporter has shown no base backup result for 26+ hours, so the other backup alerts are blind. Check the cron entry, /var/lib/node_exporter/textfile_collector on the host and node-exporter's --collector.textfile.directory flag (POSTGRES_PITR_RUNBOOK.md section 3)."

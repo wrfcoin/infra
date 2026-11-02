@@ -2406,6 +2406,9 @@ services:
       - "127.0.0.1:9100:9100"
     command:
       - "--path.rootfs=/host"
+      # pg-basebackup.sh writes its result here (PostgresBaseBackup* alerts). The
+      # flag takes the path inside the container: --path.rootfs does not apply to it.
+      - "--collector.textfile.directory=/host/var/lib/node_exporter/textfile_collector"
     volumes:
       - /:/host:ro,rslave
     pid: host

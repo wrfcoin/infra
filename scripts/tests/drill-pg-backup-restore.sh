@@ -20,6 +20,7 @@ FAILED=()
 export COMPOSE_PROJECT_NAME="${PROJECT}"
 export COMPOSE_FILE="${TMP}/compose.yml"
 export PG_BASEBACKUP_LOCK="${TMP}/lock"
+export PG_BASEBACKUP_METRICS_DIR="${TMP}/metrics"
 export POSTGRES_CONTAINER="${PROJECT}-postgres"
 DATA_VOLUME="${PROJECT}_postgres-data"
 BACKUP_VOLUME="${PROJECT}_postgres-backup"
@@ -101,6 +102,7 @@ docker volume inspect "${S1}" >/dev/null 2>&1 && bad "a refused restore created 
 
 echo "== first base backup"
 out="$(bash "${BASEBACKUP}" 2>&1)" || bad "pg-basebackup failed: ${out}"
+expect "backup result recorded" "wrfcoin_pg_basebackup_last_run_success 1" "$(grep '^wrfcoin_pg_basebackup_last_run_success ' "${PG_BASEBACKUP_METRICS_DIR}/wrfcoin_pg_basebackup.prom")"
 expect "exactly one base backup" 1 "$(in_backup 'ls -1 /var/lib/postgresql/data/backup/base | wc -l' | tr -d ' ')"
 first="$(in_backup 'ls -1 /var/lib/postgresql/data/backup/base | head -n1')"
 expect "backup files belong to postgres (uid 70)" 70 "$(in_backup "stat -c %u /var/lib/postgresql/data/backup/base/${first}/PG_VERSION")"
