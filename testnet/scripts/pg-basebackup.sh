@@ -13,6 +13,9 @@
 #   4. With --prune-wal, runs pg-wal-prune.sh --apply. Pruning is opt-in, so
 #      scheduling backups cannot start deleting WAL before a restore has been
 #      proven on that host.
+#   5. Records how the run ended in a node-exporter textfile, for the
+#      PostgresBaseBackup* alerts. A failed write only logs: it never changes the
+#      exit code. PG_BASEBACKUP_METRICS_DIR overrides the directory.
 #
 # The PITR window runs from the oldest kept base backup to now, so the keep count
 # and how often this runs set its length: nightly with 3 kept is about 3 days.
@@ -33,6 +36,11 @@ TIMESTAMP="$(date -u +%Y%m%d_%H%M%S)"
 LOCK_FILE="${PG_BASEBACKUP_LOCK:-/run/lock/wrfcoin-pg-basebackup.lock}"
 BACKUP_ROOT="/var/lib/postgresql/data/backup"
 PRUNE_WAL=0
+METRICS_DIR="${PG_BASEBACKUP_METRICS_DIR:-/var/lib/node_exporter/textfile_collector}"
+METRICS_FILE="${METRICS_DIR}/wrfcoin_pg_basebackup.prom"
+RECORD_RUN=1
+BASE_DIR=""
+BACKUP_OK=0
 
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
 err() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] ERROR: $*" >&2; }
@@ -67,6 +75,67 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# Written to a temp name and renamed, so a scrape never reads half a file. A failed run
+# keeps the last success time, which is what the staleness alert measures.
+record_run() {
+  local rc="$1" now success last_success tmp
+  now="$(date +%s)"
+  if [ "${rc}" -eq 0 ]; then
+    success=1
+    last_success="${now}"
+  else
+    success=0
+    last_success="$(sed -n 's/^wrfcoin_pg_basebackup_last_success_timestamp_seconds \([0-9][0-9]*\)$/\1/p' "${METRICS_FILE}" 2>/dev/null || true)"
+  fi
+  tmp="${METRICS_FILE}.$$.tmp"
+  if ! {
+    mkdir -p "${METRICS_DIR}" &&
+    {
+      echo "# HELP wrfcoin_pg_basebackup_last_run_success 1 if the last base backup run finished cleanly, 0 if it failed."
+      echo "# TYPE wrfcoin_pg_basebackup_last_run_success gauge"
+      echo "wrfcoin_pg_basebackup_last_run_success ${success}"
+      echo "# HELP wrfcoin_pg_basebackup_last_run_timestamp_seconds When the last base backup run ended."
+      echo "# TYPE wrfcoin_pg_basebackup_last_run_timestamp_seconds gauge"
+      echo "wrfcoin_pg_basebackup_last_run_timestamp_seconds ${now}"
+      if [ -n "${last_success}" ]; then
+        echo "# HELP wrfcoin_pg_basebackup_last_success_timestamp_seconds When a base backup run last finished cleanly."
+        echo "# TYPE wrfcoin_pg_basebackup_last_success_timestamp_seconds gauge"
+        echo "wrfcoin_pg_basebackup_last_success_timestamp_seconds ${last_success}"
+      fi
+    } > "${tmp}" &&
+    chmod 0644 "${tmp}" &&
+    mv "${tmp}" "${METRICS_FILE}"
+  } 2>/dev/null; then
+    rm -f "${tmp}" 2>/dev/null
+    err "could not write ${METRICS_FILE}; the backup alerts will not see this run"
+  fi
+}
+
+# On any failure, remove the attempt, so a partial directory can't count as a kept
+# backup. Only this run's exact directory is touched.
+remove_failed_attempt() {
+  if [ -n "${BASE_DIR}" ] && [ "${BACKUP_OK}" -ne 1 ]; then
+    err "backup failed; removing the incomplete ${BASE_DIR}"
+    compose exec -T --user root postgres rm -rf -- "${BASE_DIR}" || true
+  fi
+}
+
+on_exit() {
+  local rc=$?
+  set +e
+  trap - EXIT
+  remove_failed_attempt
+  if [ "${RECORD_RUN}" -eq 1 ]; then
+    record_run "${rc}"
+  fi
+  exit "${rc}"
+}
+trap on_exit EXIT
+# A signal must count as a failed run, not as whatever the last command returned.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 BASE_BACKUP_KEEP_COUNT="$(read_env_or_default BASE_BACKUP_KEEP_COUNT "$(read_env_or_default PG_BASEBACKUP_KEEP_COUNT 3)")"
 
 case "${BASE_BACKUP_KEEP_COUNT}" in
@@ -76,6 +145,8 @@ esac
 exec 9>"${LOCK_FILE}"
 if ! flock -n 9; then
   err "another base backup is running (lock ${LOCK_FILE})"
+  # Says nothing about the run holding the lock, which records its own result.
+  RECORD_RUN=0
   exit 75
 fi
 
@@ -91,17 +162,6 @@ compose exec -T --user root postgres sh -ceu \
   "mkdir -p '${BACKUP_ROOT}/base' '${BACKUP_ROOT}/wal' && chown postgres:postgres '${BACKUP_ROOT}' '${BACKUP_ROOT}/base' '${BACKUP_ROOT}/wal'"
 
 BASE_DIR="${BACKUP_ROOT}/base/${TIMESTAMP}"
-BACKUP_OK=0
-
-# On any failure, remove the attempt, so a partial directory can't count as a kept
-# backup. Only this run's exact directory is touched.
-remove_failed_attempt() {
-  if [ "${BACKUP_OK}" -ne 1 ]; then
-    err "backup failed; removing the incomplete ${BASE_DIR}"
-    compose exec -T --user root postgres rm -rf -- "${BASE_DIR}" || true
-  fi
-}
-trap remove_failed_attempt EXIT
 
 log "Running pg_basebackup to ${BASE_DIR} ..."
 compose exec -T --user postgres postgres sh -ceu \

@@ -15,9 +15,10 @@ FAILED=()
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/docker" <<'SHIM'
 #!/usr/bin/env bash
-# Knobs: SHIM_NO_LIVE, SHIM_BASES, SHIM_VERIFY_FAIL, SHIM_FAIL_MATCH, and $SHIM/vol.NAME = a volume ("1" = labelled).
+# Knobs: SHIM_NO_LIVE, SHIM_BASES, SHIM_VERIFY_FAIL, SHIM_FAIL_MATCH, SHIM_SLEEP_MATCH, and $SHIM/vol.NAME = a volume ("1" = labelled).
 echo "docker $*" >> "$SHIM/calls"
 if [[ -n "${SHIM_FAIL_MATCH:-}" && "$*" == *"$SHIM_FAIL_MATCH"* ]]; then exit 1; fi
+if [[ -n "${SHIM_SLEEP_MATCH:-}" && "$*" == *"$SHIM_SLEEP_MATCH"* ]]; then touch "$SHIM/sleeping"; sleep 1; fi
 case "$1" in
   compose)
     case " $* " in
@@ -55,6 +56,7 @@ SHIM
 chmod +x "$TMP/bin/docker"
 
 export SHIM="$TMP/shim" COMPOSE_FILE="$TMP/compose.yml" PG_BASEBACKUP_LOCK="$TMP/lock"
+export PG_BASEBACKUP_METRICS_DIR="$TMP/metrics"
 fresh() { rm -rf "$SHIM"; mkdir -p "$SHIM"; : > "$SHIM/calls"; unset SHIM_NO_LIVE SHIM_BASES SHIM_VERIFY_FAIL SHIM_FAIL_MATCH; }
 run() { OUT="$(PATH="$TMP/bin:$PATH" bash "$@" 2>&1)"; RC=$?; }
 restore() { run "$RESTORE" "$@"; }
@@ -167,6 +169,52 @@ fresh; bb --bogus; [[ "$RC" == 2 ]] && pass "basebackup unknown argument exits 2
 
 fresh; exec 8>"$PG_BASEBACKUP_LOCK"; flock -n 8; bb; exec 8>&-
 [[ "$RC" == 75 ]] && ! called 'exec' && pass "a second run stops at the lock" || fail "lock"
+
+# --- the result file behind the PostgresBaseBackup* alerts ----------------------------
+PROM="$PG_BASEBACKUP_METRICS_DIR/wrfcoin_pg_basebackup.prom"
+metric() { sed -n "s/^wrfcoin_pg_basebackup_$1 //p" "$PROM" 2>/dev/null; }
+no_temp() { [[ -z "$(find "$PG_BASEBACKUP_METRICS_DIR" -name '*.tmp' 2>/dev/null)" ]]; }
+
+rm -rf "$PG_BASEBACKUP_METRICS_DIR"
+fresh; start="$(date +%s)"; bb
+s="$(metric last_success_timestamp_seconds)"
+[[ "$RC" == 0 && "$(metric last_run_success)" == 1 && "$s" -ge "$start" ]] && no_temp && pass "clean run records success and its time" || fail "metric on success"
+[[ "$(stat -c %a "$PROM")" == 644 ]] && pass "result file is readable by node-exporter's user" || fail "metric mode"
+
+fresh; export SHIM_FAIL_MATCH='pg_verifybackup -q'; bb; unset SHIM_FAIL_MATCH
+[[ "$RC" != 0 && "$(metric last_run_success)" == 0 && "$(metric last_success_timestamp_seconds)" == "$s" ]] && pass "failed run records 0 and keeps the last success time" || fail "metric on failure"
+called 'rm -rf -- /var/lib/postgresql/data/backup/base/[0-9_]+$' && pass "failed run still removes its attempt" || fail "cleanup with metrics"
+
+fresh; export SHIM_FAIL_MATCH='sort -r'; bb; unset SHIM_FAIL_MATCH
+[[ "$RC" != 0 && "$(metric last_run_success)" == 0 ]] && ! called 'rm -rf -- /var/lib/postgresql/data/backup/base/[0-9_]+$' && pass "failure after the backup verified records 0 and keeps the backup" || fail "metric on retention failure"
+
+rm -rf "$PG_BASEBACKUP_METRICS_DIR"
+fresh; export SHIM_FAIL_MATCH='pg_basebackup -h'; bb; unset SHIM_FAIL_MATCH
+[[ "$RC" != 0 && "$(metric last_run_success)" == 0 && -z "$(metric last_success_timestamp_seconds)" ]] && pass "failure with no earlier success records no success time" || fail "metric first failure"
+
+fresh; export BASE_BACKUP_KEEP_COUNT=0; bb; unset BASE_BACKUP_KEEP_COUNT
+[[ "$RC" == 1 && "$(metric last_run_success)" == 0 ]] && pass "bad keep count counts as a failed run" || fail "metric on bad config"
+
+rm -rf "$PG_BASEBACKUP_METRICS_DIR"
+fresh; exec 8>"$PG_BASEBACKUP_LOCK"; flock -n 8; bb; exec 8>&-
+[[ "$RC" == 75 && ! -e "$PROM" ]] && pass "a run stopped at the lock records nothing" || fail "metric on lock"
+fresh; bb --bogus
+[[ "$RC" == 2 && ! -e "$PROM" ]] && pass "a usage error records nothing" || fail "metric on usage"
+
+fresh; mkdir -p "$TMP/blocked"; : > "$TMP/blocked/file"
+PG_BASEBACKUP_METRICS_DIR="$TMP/blocked/file/sub" bb
+[[ "$RC" == 0 ]] && grep -qF 'could not write' <<<"$OUT" && pass "unwritable result file logs and keeps exit 0" || fail "metric write failure on success"
+fresh; export SHIM_FAIL_MATCH='pg_basebackup -h'
+PG_BASEBACKUP_METRICS_DIR="$TMP/blocked/file/sub" bb; unset SHIM_FAIL_MATCH
+[[ "$RC" != 0 ]] && pass "unwritable result file does not hide a failed backup" || fail "metric write failure on failure"
+
+# A signal during the backup is a failed run even though the last command succeeded.
+rm -rf "$PG_BASEBACKUP_METRICS_DIR"
+fresh; SHIM_SLEEP_MATCH='pg_basebackup -h' PATH="$TMP/bin:$PATH" bash "$BASEBACKUP" >/dev/null 2>&1 &
+pid=$!
+for _ in $(seq 1 100); do [[ -e "$SHIM/sleeping" ]] && break; sleep 0.1; done
+kill -TERM "$pid"; wait "$pid"; RC=$?
+[[ "$RC" == 143 && "$(metric last_run_success)" == 0 ]] && pass "SIGTERM records a failed run" || fail "metric on SIGTERM (rc=$RC)"
 
 if (( ${#FAILED[@]} )); then echo "FAILED: ${FAILED[*]}" >&2; exit 1; fi
 echo "pg backup and restore: all cases passed"

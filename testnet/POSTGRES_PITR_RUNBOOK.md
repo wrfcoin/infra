@@ -77,6 +77,19 @@ Optional retention tuning in `testnet/.env`:
 PG_BASEBACKUP_KEEP_COUNT=3
 ```
 
+Each run records its result in
+`/var/lib/node_exporter/textfile_collector/wrfcoin_pg_basebackup.prom`, which
+node-exporter serves to Prometheus. Three alerts page through Alertmanager:
+
+| Alert | Means |
+|---|---|
+| `PostgresBaseBackupFailed` | The last run exited non-zero. |
+| `PostgresBaseBackupStale` | No clean run for 26 hours, even if the last run recorded no failure. |
+| `PostgresBaseBackupMetricMissing` | No result recorded for 26 hours: no cron entry, or node-exporter can't see the file. |
+
+A run that stops at the lock because another run is active records nothing. To point
+the result somewhere else, set `PG_BASEBACKUP_METRICS_DIR`.
+
 ## 4. Test a backup: restore into a scratch volume
 
 This doesn't touch or stop the live database. The copy runs in a new container with no
