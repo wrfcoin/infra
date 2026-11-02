@@ -1071,12 +1071,19 @@ PARITY_ADDR = "0x" + "a1" * 20
 PARITY_BEARER = ("Authorization: Bearer test-session",)
 _W = f"/api/wallet/{PARITY_ADDR}"
 _T = f"{_W}/transactions"
+_C = "f662f1e6a3e3c2cf" * 4  # a commit ID: 64 lowercase hex
 PARITY_WALLET_CASES = (
     ("GET", _W, PARITY_BEARER, 502),
     ("GET", f"/api/wallet/0x{'A1' * 20}", PARITY_BEARER, 502),
     ("GET", f"{_T}?limit=20&offset=0", PARITY_BEARER, 502),  # exactly what the mobile app sends
     ("GET", f"{_T}?limit=1&offset=0", PARITY_BEARER, 502),
     ("GET", f"{_T}?limit=50&offset=999999", PARITY_BEARER, 502),
+    # Reward paging, in the order the backend forwards it.
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=1", PARITY_BEARER, 502),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=100", PARITY_BEARER, 502),
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter={_C}", PARITY_BEARER, 502),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=100&creditAfter={_C}", PARITY_BEARER, 502),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=100&creditAfter={_C}", (), 404),
     # Missing / wrong credential: never proxied.
     ("GET", _W, (), 404),
     ("GET", _T + "?limit=20&offset=0", (), 404),
@@ -1094,7 +1101,20 @@ PARITY_WALLET_CASES = (
     ("GET", f"{_T}?limit=20&offset=", PARITY_BEARER, 404),
     ("GET", f"{_T}?limit=20&offset=1234567", PARITY_BEARER, 404),
     ("GET", f"{_T}?offset=0&limit=20", PARITY_BEARER, 404),
-    ("GET", f"{_T}?limit=20&offset=0&creditLimit=100", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=0", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=101", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter=", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter={_C[:-1]}", PARITY_BEARER, 404),  # 63 hex
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter={_C}a", PARITY_BEARER, 404),  # 65 hex
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter={_C.upper()}", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter={_C[:-3]}%26", PARITY_BEARER, 404),  # encoded
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter={_C}&creditLimit=1", PARITY_BEARER, 404),  # reordered
+    ("GET", f"{_T}?limit=20&creditLimit=1&offset=0", PARITY_BEARER, 404),
+    ("GET", f"{_T}?creditLimit=1&limit=20&offset=0", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=1&creditLimit=2", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditAfter={_C}&creditAfter={_C}", PARITY_BEARER, 404),
+    ("GET", f"{_T}?limit=20&offset=0&creditLimit=1&page=2", PARITY_BEARER, 404),
     ("GET", f"{_T}?limit=20&offset=0&page=2", PARITY_BEARER, 404),
     ("GET", f"{_T}?x=1&limit=20&offset=0", PARITY_BEARER, 404),
     # Address shape, siblings, methods.

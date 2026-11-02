@@ -814,8 +814,11 @@
 	# estimate-gas, mnemonic/*, nonce, nfts, data and POST /:address/transactions
 	# stay 404. The transactions query is locked to the mobile shape
 	# (api_constants.dart walletTransactions): limit=<1..50>&offset=<digits>, in that
-	# order; the backend clamps limit to 1..100 (wallet-routes.js:426-427) and also
-	# reads creditLimit/creditAfter, which are refused here.
+	# order; the backend clamps limit to 1..100 (wallet-routes.js). Reward paging may
+	# follow, in the order the backend forwards it: creditLimit=<1..100> (the backend
+	# and node clamp to the same range), then creditAfter=<commit id>. The cursor is
+	# the node's credit_next_cursor, a reward-record key: a commit ID, always 64
+	# lowercase hex (Transaction::compute_commit_id, Hash::to_hex), so no percent-encoding.
 	@public_readonly_wallet_info {
 		method GET
 		path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}$
@@ -831,7 +834,7 @@
 		method GET
 		path_regexp ^/api/wallet/0x[0-9A-Fa-f]{40}/transactions$
 		vars {env.PUBLIC_READONLY_API} on
-		expression `{query}.matches('^limit=([1-9]|[1-4][0-9]|50)&offset=[0-9]{1,6}$')`
+		expression `{query}.matches('^limit=([1-9]|[1-4][0-9]|50)&offset=[0-9]{1,6}(&creditLimit=([1-9]|[1-9][0-9]|100))?(&creditAfter=[0-9a-f]{64})?$')`
 		header Authorization "Bearer *"
 	}
 	handle @public_readonly_wallet_transactions {
