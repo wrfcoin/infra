@@ -333,25 +333,23 @@ scale_target_services() {
     
     log INFO "Scaling target services..."
     
-    # `all` only reaches the first arm. Fixing that would scale more deployments than it does today.
-    # shellcheck disable=SC2221,SC2222
+    local targets
     case $service in
-        "main-api"|"all")
-            kubectl scale deployment wrfcoin-main-api --replicas="${replicas}" -n default 2>/dev/null || log WARN "wrfcoin-main-api deployment not found"
+        "all")
+            targets="main-api iot-sensors cross-chain compute-networks"
             ;;
-        "iot-sensors"|"all")
-            kubectl scale deployment wrfcoin-iot-sensors --replicas="${replicas}" -n default 2>/dev/null || log WARN "wrfcoin-iot-sensors deployment not found"
-            ;;
-        "cross-chain"|"all")
-            kubectl scale deployment wrfcoin-cross-chain --replicas="${replicas}" -n default 2>/dev/null || log WARN "wrfcoin-cross-chain deployment not found"
-            ;;
-        "compute-networks"|"all")
-            kubectl scale deployment wrfcoin-compute-networks --replicas="${replicas}" -n default 2>/dev/null || log WARN "wrfcoin-compute-networks deployment not found"
+        "main-api"|"iot-sensors"|"cross-chain"|"compute-networks")
+            targets=$service
             ;;
         *)
             error_exit "Unknown service: ${service}"
             ;;
     esac
+
+    local target
+    for target in $targets; do
+        kubectl scale deployment "wrfcoin-${target}" --replicas="${replicas}" -n default 2>/dev/null || log WARN "wrfcoin-${target} deployment not found"
+    done
     
     log INFO "Target services scaling initiated"
 }

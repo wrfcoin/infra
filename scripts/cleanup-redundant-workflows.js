@@ -123,7 +123,7 @@ ${this.duplicateServers.map(workflow => `echo "   ❌ Removing: ${workflow}"`).j
 
 echo ""
 echo "✅ Cleanup complete!"
-echo "📊 System optimized: $(($totalRemoved)) workflows removed"
+echo "📊 System optimized: redundant workflows removed"
 echo "⚡ Performance improved through workflow consolidation"
 echo "💰 Weather earnings protected: AcuRite station continues earning WRF"
 `;
