@@ -166,10 +166,8 @@ deploy_canary() {
         -n wrfcoin-production --watch --timeout 1800s
     
     # Check rollout status
-    local status=$(kubectl argo rollouts status wrfcoin-api-rollout \
-        -n wrfcoin-production --timeout 1800s)
-    
-    if [[ $? -eq 0 ]]; then
+    if kubectl argo rollouts status wrfcoin-api-rollout \
+        -n wrfcoin-production --timeout 1800s >/dev/null; then
         success "Canary deployment completed successfully"
     else
         error "Canary deployment failed"

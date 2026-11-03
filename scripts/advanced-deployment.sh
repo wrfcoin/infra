@@ -168,12 +168,8 @@ deploy_canary() {
         -n wrfcoin-production --watch --timeout 1800s
     
     # Check rollout status
-    # Unused, and `local` hides the exit status from the $? check below. Fixing that would change this script's outcome.
-    # shellcheck disable=SC2034,SC2155
-    local status=$(kubectl argo rollouts status wrfcoin-api-rollout \
-        -n wrfcoin-production --timeout 1800s)
-    
-    if [[ $? -eq 0 ]]; then
+    if kubectl argo rollouts status wrfcoin-api-rollout \
+        -n wrfcoin-production --timeout 1800s >/dev/null; then
         success "Canary deployment completed successfully"
     else
         error "Canary deployment failed"
