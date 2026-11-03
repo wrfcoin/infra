@@ -64,6 +64,22 @@ groups:
           summary: "cAdvisor scrape target is down"
           description: "Prometheus cannot scrape cadvisor ({{ $labels.instance }}) for 2+ minutes; verify infra#421 port-conflict status."
 
+      # cAdvisor can be up and scraped while seeing no Docker container at all
+      # (CT101 until 2026-11-01: v0.49.1 + Docker 29's containerd image store
+      # exported only raw cgroup ids). Then ContainerRss* match nothing and
+      # stay silent, so the blindness itself pages.
+      - alert: CAdvisorContainerMetricsMissing
+        expr: |
+          absent(container_memory_working_set_bytes{name=~"wrfcoin-testnet-.*",image!=""})
+          and on () count(up{job="cadvisor"} == 1) > 0
+        for: 30m
+        labels:
+          severity: critical
+          component: scrape-coverage
+        annotations:
+          summary: "cAdvisor is up but reports no wrfcoin-testnet container"
+          description: "cAdvisor exposes no container_memory_working_set_bytes with a wrfcoin-testnet-* name, so the ContainerRss* alerts are blind. Check docker logs wrfcoin-testnet-cadvisor for 'failed to identify the read-write layer' and the containerd socket / CADVISOR_DOCKER_ROOT mounts."
+
   - name: wrfcoin_testnet
     rules:
       - alert: ChainStalled

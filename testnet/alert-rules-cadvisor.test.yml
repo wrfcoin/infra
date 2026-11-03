@@ -1,0 +1,68 @@
+# promtool rule unit tests for cAdvisor coverage (2026-11-01).
+# Run: promtool test rules testnet/alert-rules-cadvisor.test.yml
+rule_files:
+  - alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # CT101 before the fix: cadvisor scraped (up == 1) but only raw cgroup ids,
+  # no name/image labels. ContainerRss* cannot fire; the blindness pages.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="cadvisor", instance="cadvisor:8080"}'
+        values: '1x45'
+      - series: 'container_memory_working_set_bytes{job="cadvisor", instance="cadvisor:8080", id="/system.slice/docker-25bc.scope"}'
+        values: '50000000x45'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CAdvisorContainerMetricsMissing
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: CAdvisorContainerMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: scrape-coverage
+            exp_annotations:
+              summary: "cAdvisor is up but reports no wrfcoin-testnet container"
+              description: "cAdvisor exposes no container_memory_working_set_bytes with a wrfcoin-testnet-* name, so the ContainerRss* alerts are blind. Check docker logs wrfcoin-testnet-cadvisor for 'failed to identify the read-write layer' and the containerd socket / CADVISOR_DOCKER_ROOT mounts."
+
+  # Named containers present: no coverage alert, and a container at 95% of its
+  # limit for 20m raises ContainerRssNearLimitCritical (the alert this fixes).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="cadvisor", instance="cadvisor:8080"}'
+        values: '1x45'
+      - series: 'container_memory_working_set_bytes{job="cadvisor", instance="cadvisor:8080", name="wrfcoin-testnet-backend", image="wrfcoin/backend:testnet-local"}'
+        values: '950x45'
+      - series: 'container_spec_memory_limit_bytes{job="cadvisor", instance="cadvisor:8080", name="wrfcoin-testnet-backend", image="wrfcoin/backend:testnet-local"}'
+        values: '1000x45'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: CAdvisorContainerMetricsMissing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: ContainerRssNearLimitCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              resource: memory
+              scope: container
+              job: cadvisor
+              instance: cadvisor:8080
+              name: wrfcoin-testnet-backend
+              image: wrfcoin/backend:testnet-local
+            exp_annotations:
+              summary: "Container RSS sustained above 92% of memory limit"
+              description: "Container wrfcoin-testnet-backend has sustained RSS >92% of its memory limit for 15 minutes. Current ratio: 95%. Immediate action: reduce workload or increase container memory allocation before OOM."
+
+  # cadvisor down: the coverage alert stays quiet (CAdvisorScrapeDown owns it).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="cadvisor", instance="cadvisor:8080"}'
+        values: '0x45'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: CAdvisorContainerMetricsMissing
+        exp_alerts: []
