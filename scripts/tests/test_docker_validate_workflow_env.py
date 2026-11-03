@@ -6,10 +6,10 @@ them (#762). So a render step fails if ANY file it names requires a variable the
 step's environment does not provide. infra#1064 was exactly that:
 docker-compose.oracle-attester.yml gained `${WRFCOIN_ATTESTER_NWS_STATION:?}`
 (infra#986), the workflow was never updated, and the failure stayed invisible
-because hosted runners are billing-VOID.
+because the workflow's jobs were not running at the time.
 
 The workflow is path-filtered, so a later compose change can land without it
-ever running. This test is collected by the unfiltered CT102 `scripts/tests`
+ever running. This test is collected by the unfiltered `scripts/tests`
 job on every PR, which closes that gap statically. It needs no Docker.
 
 Run: python3 -m pytest scripts/tests/test_docker_validate_workflow_env.py

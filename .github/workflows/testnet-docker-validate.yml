@@ -123,13 +123,9 @@ on:
   # schedule:
   # - cron: '0 6 * * 1' # Weekly Monday 6am UTC
 
-# RUNNER (infra#1064, infra#1001): all three jobs run on the self-hosted build runner
-# infra runner. Hosted runners are billing-VOID on this account (steps=0), and
-# that VOID is what hid the attester render failure fixed below: on a real
-# runner this workflow was red on main. `[self-hosted, n5pro]` is how you target
-# build runner. `n5pro-ct102-infra` is the runner's NAME, not a label (see
-# public-exposure-edge-gate.yml). build runner has Docker for hadolint and Compose v2
-# for the renders; every step here is config-only or `docker run`. Nothing is
+# RUNNER (infra#1064, infra#1001): all three jobs run on GitHub-hosted runners,
+# which are free on this public repo. Every step here is config-only or
+# `docker run`. Nothing is
 # built, pushed, or started as a service.
 # Refs infra#1113: superseded PRs share a group; every other run is isolated,
 # including pending main/dispatch/schedule jobs.

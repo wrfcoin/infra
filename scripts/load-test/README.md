@@ -85,8 +85,7 @@ k6 run --env BASE_URL=http://localhost:4001 --env PHASE=stress scripts/load-test
 
 ## CI integration
 
-The self-hosted runner workflow (`ci-self-hosted.yml`) can run k6 directly on the N5 Pro against
-a locally-started testnet. Add a step like:
+A workflow can run k6 against a locally-started testnet on a GitHub-hosted runner. Add a step like:
 
 ```yaml
 - name: k6 smoke test

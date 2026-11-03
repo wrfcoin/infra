@@ -34,35 +34,18 @@ name: Node Image Ship-Feature Guard
 #
 # RUNNER AND COST
 # ---------------
-# build runner self-hosted only: hosted runners are billing-VOID on this account, so a hosted
-# job here would be a green tick with zero executed steps. No other build runner job builds
-# the node image (Oracle Attester Image Gate is hosted and builds the attester target),
-# so there is no image to reuse: this job does the one node build. BuildKit builds only
-# the `runtime` target's stages (not attester-builder), and build runner's daemon keeps the
-# layer cache, so a rerun at the same cut pin reuses the cargo layer. The job is
+# GitHub-hosted, free on this public repo. No other job builds the node image (Oracle
+# Attester Image Gate builds the attester target), so this job does the one node build.
+# BuildKit builds only the `runtime` target's stages, and the GitHub Actions cache keeps
+# the layers, so a rerun at the same cut pin reuses the cargo layer. The job is
 # path-filtered to the files that can change what it proves; the file-level guard also
 # runs unfiltered on every PR inside Scripts Tests (scripts/tests/test_node_image_ship_features.py).
-# The image is tagged locally, never pushed, and its tag is removed at the end.
+# The image is loaded locally and never pushed. No secret is used: core4 is public.
 #
 # BUILD CONTEXT (infra#1034 N3): the build installs testnet/workspace.dockerignore as
 # wrfcoin/.dockerignore first, exactly as testnet/bootstrap.sh does before a shipping
 # build, so the context sent to the daemon is the shipped one (no core4/.git etc.).
 #
-# CLEANUP (N2): the extraction container's id goes to $GITHUB_ENV the moment it exists,
-# and an always() step removes the container, then the image tag. Anything it cannot
-# remove is logged as a ::warning:: naming the object; it never disappears into `|| true`.
-#
-# BUILDER CACHE (N4): nothing on build runner prunes the Docker builder cache (checked
-# 2026-09-25: no crontab, no cron.d entry, no systemd timer; wrfcoin-tmp-reaper only
-# reaps /tmp). The data-root is /mnt/wrfcoin-build-docker (94G). The same always() step
-# runs `docker builder prune --all --keep-storage` so the cache is bounded at
-# BUILDER_CACHE_KEEP. `--all` is what makes it a bound: without it Docker only considers
-# dangling cache records, and in-use records could keep the total above the limit. It
-# evicts least-recently-used build cache down to the limit; it removes no image, no
-# container and no volume, and it keeps enough for several cut-pin builds.
-# The step runs with `set +e` and checks each command itself, so one failing docker
-# command never skips the prune or the summary line.
-
 on:
   push:
     branches: [main]
@@ -90,16 +73,20 @@ env:
   # Public core4 h3000 gate release (core4#36; tag v888-h3000); its check_release_endpoints.py
   # carries the panic-drill feature list, --binary marker and --profile-file.
   CHECKER_SHA: de9d0d268e1a914109444c1d49b2dcfffe896d80
-  # N4: upper bound on build runner's shared BuildKit cache after this job (most-recently-used kept).
-  BUILDER_CACHE_KEEP: 20GB
 
 jobs:
   guard:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    name: Node image ship-feature guard (self-hosted)
-    runs-on: [self-hosted, n5pro]
+    name: Node image ship-feature guard
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      - name: Free disk for the image build
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - name: Checkout infra
         uses: actions/checkout@v7
         with:
@@ -203,20 +190,28 @@ jobs:
             --core4 wrfcoin/core4 \
             --checker core4-checker/scripts/check_release_endpoints.py
 
-      - name: Build the node runtime image (local, never pushed)
+      - name: Install the shipped build context (N3)
         run: |
           set -euo pipefail
           test "$(git -C wrfcoin/core4 rev-parse HEAD)" = "${{ steps.pin.outputs.core4 }}"
-          # N3: the shipped build context, not the raw checkout tree.
           install -m 0644 wrfcoin/infra/testnet/workspace.dockerignore wrfcoin/.dockerignore
           cmp wrfcoin/infra/testnet/workspace.dockerignore wrfcoin/.dockerignore
-          tag="wrfcoin/node-ship-guard:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "TAG=${tag}" >> "$GITHUB_ENV"
-          DOCKER_BUILDKIT=1 docker build \
-            --file wrfcoin/infra/infra/docker/Dockerfile.core \
-            --target runtime \
-            --tag "$tag" \
-            wrfcoin
+          echo "TAG=wrfcoin/node-ship-guard:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the node runtime image (local, never pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: wrfcoin
+          file: wrfcoin/infra/infra/docker/Dockerfile.core
+          target: runtime
+          push: false
+          load: true
+          tags: ${{ env.TAG }}
+          cache-from: type=gha,scope=node-ship-guard
+          cache-to: type=gha,mode=max,scope=node-ship-guard
 
       - name: Scan the shipped launch_api (check_release_endpoints --binary)
         run: |
@@ -224,7 +219,6 @@ jobs:
           CK=core4-checker/scripts/check_release_endpoints.py
           out="$RUNNER_TEMP/ship-guard-bin"; mkdir -p "$out"
           cid=$(docker create "$TAG")
-          echo "CID=${cid}" >> "$GITHUB_ENV"   # N2: the always() cleanup removes it even if cp fails
           docker cp "$cid:/usr/local/bin/wrfcoin-node" "$out/launch_api"
           ls -l "$out/launch_api"
           # --root is the BUILD checkout: its RPC_SURFACE.md is what the binary embeds.
@@ -239,32 +233,3 @@ jobs:
           set +e; python3 "$CK" --root wrfcoin/core4 --binary "$out/drill.bin"; rc=$?; set -e
           if [ "$rc" -ne 1 ]; then echo "::error::binary RED control: exit ${rc}, expected 1"; exit 1; fi
           echo "  ok  binary RED control: drill marker refused (exit ${rc})"
-
-      - name: Clean up container, image tag and builder cache
-        if: always()
-        run: |
-          # The runner invokes `bash -e`; turn errexit OFF so every command below runs and
-          # reports its own status (review N-a of #1037).
-          set +e
-          set -uo pipefail
-          : "${GITHUB_STEP_SUMMARY:=/dev/null}"
-          leaks=0
-          if [ -n "${CID:-}" ]; then
-            if docker rm -f "$CID" >/dev/null; then echo "removed container ${CID}"
-            else echo "::warning::could not remove extraction container ${CID} (leaked on CT102)"; leaks=$((leaks+1)); fi
-          fi
-          if [ -n "${TAG:-}" ] && docker image inspect "$TAG" >/dev/null 2>&1; then
-            if docker image rm "$TAG"; then echo "removed image ${TAG}"
-            else echo "::warning::could not remove image ${TAG} (leaked on CT102)"; leaks=$((leaks+1)); fi
-          fi
-          cache_report() {
-            local df
-            if df=$(docker system df 2>&1); then printf '%s\n' "$df" | grep -E '^(TYPE|Build Cache)'
-            else echo "::warning::docker system df failed: ${df}"; fi
-          }
-          echo "builder cache before prune:"; cache_report
-          if docker builder prune --force --all --keep-storage "$BUILDER_CACHE_KEEP"; then :
-          else echo "::warning::docker builder prune --all --keep-storage ${BUILDER_CACHE_KEEP} failed; CT102 builder cache is unbounded this run"; leaks=$((leaks+1)); fi
-          echo "builder cache after prune:";  cache_report
-          echo "- cleanup: ${leaks} object(s) not removed" >> "$GITHUB_STEP_SUMMARY"
-          exit 0

@@ -9,19 +9,16 @@ on:
     paths: ['**/*.sh']
   pull_request:
     paths: ['**/*.sh']
+  workflow_dispatch:
 
 jobs:
   shellcheck:
     name: Lint Shell Scripts
-    # build runner self-hosted (2026-08-30): PR-blocking guards must stay REAL when
-    # hosted minutes are exhausted (zero-step billing failures otherwise).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: Install shellcheck
-        # Preinstalled on build runner (the runner user has no sudo); the install
-        # branch keeps the hosted-runner path working unchanged.
         run: command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
 
       - name: Shellcheck testnet scripts (blocking)
@@ -65,9 +62,24 @@ jobs:
             xargs -0 shellcheck --severity=warning --shell=bash || true
           echo "Utility scripts checked (non-blocking)"
 
+  # Every script under scripts/ and testnet/, blocking. Main and manual only: the
+  # tree does not pass yet, and PRs should not go red over findings they did not add.
+  shellcheck-sweep:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: ShellCheck (all infra scripts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint all shell scripts
+        run: |
+          shellcheck --version
+          find scripts testnet -name '*.sh' -print0 \
+            | xargs -0 shellcheck --severity=warning --exclude=SC1091
+
   test-setup-env:
     name: Validate setup-env.sh Output
-    # build runner self-hosted (2026-08-30): see the shellcheck job above.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

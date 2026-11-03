@@ -24,9 +24,6 @@ concurrency:
 
 jobs:
   dependabot-coverage:
-    # build runner self-hosted (2026-08-30): PR-blocking guards must stay REAL when
-    # hosted minutes are exhausted (zero-step billing failures otherwise).
-    # Needs only python3 + python3-yaml, both preinstalled on build runner.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

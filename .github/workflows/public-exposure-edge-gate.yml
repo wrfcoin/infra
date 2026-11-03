@@ -2,31 +2,15 @@ name: Public Exposure Edge Gate
 
 # THREE jobs. Read this before changing any runs-on.
 #
-# 1. `static-boundary` is BLOCKING. It executes on the self-hosted build runner infra
-#    runner and produces real evidence on every run. Keep EXPECTED aligned with
+# 1. `static-boundary` is BLOCKING. It executes on a GitHub-hosted runner
+#    and produces real evidence on every run. Keep EXPECTED aligned with
 #    the owner's approved exposure decision; do not weaken the verifier to make
 #    it green.
 #
-# 2. `runtime-edge` runs the real verifier on the same self-hosted build runner infra
-#    runner as the static gate. It does NOT decide the run itself -- see §3 and
-#    §4 -- but a genuine failure in it still blocks, via the classifier.
-#    It was previously on ubuntu-latest, which is VOID
-#    on this account (hosted minutes exhausted: runner_name="" and steps=0 on
-#    every run), so the gate reported a verdict it never earned -- infra#894.
-#
-#    It could not move earlier because the verifier shells out to
-#    `docker run/port/logs/rm` and build runner's `gh-runner` user could not open
-#    /var/run/docker.sock. That is fixed: core4#2958 landed, and as of
-#    2026-08-31T23:28Z `gh-runner` is in the `docker` group
-#    (`docker:x:112:gh-runner`), `docker version` returns 20.10.24+dfsg1 for that
-#    user, and `docker run --rm hello-world` succeeds. Python 3.11.2, curl 7.88.1
-#    and git 2.39.5 are present, and the container has 138G free for the image
-#    build.
-#
-#    `runs-on: [self-hosted, n5pro]` is how you target that runner.
-#    `n5pro-ct102-infra` is the runner's NAME, not a label -- its labels are
-#    [self-hosted, Linux, X64, n5pro, wrfcoin]. A job asking for a
-#    `n5pro-ct102-infra` label matches no runner and queues until it times out.
+# 2. `runtime-edge` runs the real verifier on a GitHub-hosted runner, which has
+#    Docker for the verifier's `docker run/port/logs/rm`. It does NOT decide the
+#    run itself -- see §3 and §4 -- but a genuine failure in it still blocks, via
+#    the classifier.
 #
 # 3. `runtime-evidence` is THE BLOCKING JOB, and it is the only one whose exit
 #    status decides this gate. It reads `runtime-edge`'s job record and
@@ -44,16 +28,9 @@ name: Public Exposure Edge Gate
 #    failure can never be read as a code failure -- the misattribution that made
 #    core4#2958's docker fault look like an execution-engine test bug.
 #
-#    STATED HONESTLY: it now shares a runner class with the job it classifies.
-#    While `runtime-edge` was on ubuntu-latest the separation was real -- the
-#    checker ran on a class that worked while the checked job's class was VOID.
-#    That separation is gone, and there is nowhere to restore it to: the only
-#    other class available is ubuntu-latest, which is VOID, so a checker hosted
-#    there could report nothing at all. The consequence is bounded and
-#    fail-closed: if the self-hosted runner itself dies, both jobs go VOID, the
-#    classification is not produced, and the run FAILS. That is a loud stop, not
-#    a silent pass. What it is not any more is a guarantee that the reason will
-#    be explained. Restoring the separation needs a second working runner class.
+#    It shares a runner class with the job it classifies. The consequence is
+#    bounded and fail-closed: if nothing can execute either job, the classification
+#    is not produced and the run FAILS. That is a loud stop, not a silent pass.
 #
 # 4. WHY `continue-on-error` IS NOT THE LEVER, IN EITHER DIRECTION. This is the
 #    part that took three attempts, so it is written down.
@@ -77,10 +54,9 @@ name: Public Exposure Edge Gate
 #    all-green job and MANUFACTURE A FALSE GREEN. Job-level is the only correct
 #    placement.
 #
-# WHAT NOT TO DO (infra#891, infra#893): #891 moved only `static-boundary` to
-# self-hosted and left this job on ubuntu-latest; #893 then renamed the job to
-# "(VOID -- hosted minutes exhausted)" and changed nothing else. Renaming a job
-# retires the alarm and keeps the hole, and it poisons name-based VOID detection.
+# WHAT NOT TO DO (infra#893): that PR renamed this job to mark it void and changed
+# nothing else. Renaming a job retires the alarm and keeps the hole, and it poisons
+# name-based VOID detection.
 # Change the runner or change what blocks -- never only the label.
 
 on:
