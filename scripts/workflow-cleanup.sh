@@ -36,6 +36,8 @@ echo "   ❌ Removing: Enhanced Service Control Panel"
 
 echo ""
 echo "✅ Cleanup complete!"
+# Unset, so the arithmetic prints 0. Assigning it would change the output.
+# shellcheck disable=SC2154
 echo "📊 System optimized: $(($totalRemoved)) workflows removed"
 echo "⚡ Performance improved through workflow consolidation"
 echo "💰 Weather earnings protected: AcuRite station continues earning WRF"

@@ -117,7 +117,7 @@ install_system_dependencies() {
             sudo apt-get install -y \
                 linux-tools-common \
                 linux-tools-generic \
-                linux-tools-$(uname -r) \
+                "linux-tools-$(uname -r)" \
                 bpftrace \
                 bpfcc-tools \
                 systemtap \

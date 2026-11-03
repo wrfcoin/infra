@@ -1288,7 +1288,7 @@ faucet_running_container_checked() {
 faucet_missing_from_render_is_unavailable() {
   local rc=0
   # A render without the faucet profile cannot vouch for a running faucet.
-  COMPOSE_PROFILES= expect faucet_unrendered_unavailable 2 UNAVAILABLE faucet "${COMPOSE_ARGS[@]}" || rc=1
+  COMPOSE_PROFILES='' expect faucet_unrendered_unavailable 2 UNAVAILABLE faucet "${COMPOSE_ARGS[@]}" || rc=1
   out_has faucet_unrendered_unavailable 'wrfcoin-faucet: required service is not rendered' || rc=1
   return $rc
 }

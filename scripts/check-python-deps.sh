@@ -29,6 +29,8 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# No set -e here: the script carries on if cd fails. Adding an exit would change that.
+# shellcheck disable=SC2164
 cd "$REPO_ROOT"
 
 # --------------------------------------------------------------------------

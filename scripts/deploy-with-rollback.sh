@@ -42,12 +42,14 @@ timestamp() {
 }
 
 log() {
-    local msg="[$(timestamp)] $1"
+    local msg
+    msg="[$(timestamp)] $1" || true
     echo "$msg" | tee -a "$LOG_FILE"
 }
 
 log_error() {
-    local msg="[$(timestamp)] ERROR: $1"
+    local msg
+    msg="[$(timestamp)] ERROR: $1" || true
     echo "$msg" >&2 | tee -a "$LOG_FILE"
 }
 
@@ -161,7 +163,8 @@ preflight_checks() {
 ###############################################################################
 
 tag_current_release() {
-    local tag="release-$(date +%Y%m%d-%H%M%S)"
+    local tag
+    tag="release-$(date +%Y%m%d-%H%M%S)" || true
     log "Tagging current release as $tag"
 
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -393,7 +396,7 @@ monitor_error_rate() {
         local total=0
         local errors=0
 
-        for i in $(seq 1 5); do
+        for _ in $(seq 1 5); do
             total=$((total + 1))
             if ! check_health "localhost" "4001" "/health"; then
                 errors=$((errors + 1))

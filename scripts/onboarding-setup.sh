@@ -67,7 +67,8 @@ EOF
 update_progress() {
     local step=$1
     local status=$2
-    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ) || true
     
     if command -v jq >/dev/null 2>&1; then
         jq ".steps.${step}.status = \"${status}\" | 
@@ -130,6 +131,8 @@ parse_args() {
                 shift
                 ;;
             --force-reinstall)
+                # Unused here; left in place because removing this assignment could change behaviour.
+                # shellcheck disable=SC2034
                 FORCE_REINSTALL=true
                 shift
                 ;;
@@ -731,7 +734,8 @@ setup_data_role() {
 
 # Generate completion report
 generate_completion_report() {
-    local completion_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local completion_time
+    completion_time=$(date -u +%Y-%m-%dT%H:%M:%SZ) || true
     
     # Update progress file
     if command -v jq >/dev/null 2>&1; then

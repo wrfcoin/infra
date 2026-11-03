@@ -62,10 +62,8 @@ jobs:
             xargs -0 shellcheck --severity=warning --shell=bash || true
           echo "Utility scripts checked (non-blocking)"
 
-  # Every script under scripts/ and testnet/, blocking. Main and manual only: the
-  # tree does not pass yet, and PRs should not go red over findings they did not add.
+  # Every script under scripts/ and testnet/, blocking.
   shellcheck-sweep:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     name: ShellCheck (all infra scripts)
     runs-on: ubuntu-latest
     timeout-minutes: 10

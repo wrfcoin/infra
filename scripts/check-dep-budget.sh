@@ -76,6 +76,8 @@ count_deps() {
 }
 
 # List direct dependencies
+# Optional argument kept for callers; no caller passes it today.
+# shellcheck disable=SC2120
 list_deps() {
     local features="${1:-}"
     local cmd="cargo tree --depth 1 --edges normal --prefix none"

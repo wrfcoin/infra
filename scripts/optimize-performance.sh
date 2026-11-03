@@ -7,6 +7,8 @@ set -e
 
 echo "⚡ Applying Wrfcoin Performance Optimizations..."
 
+# Unused here; left in place because removing this assignment could change behaviour.
+# shellcheck disable=SC2034
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Node.js performance optimizations

@@ -17,6 +17,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Unused here; left in place because removing this assignment could change behaviour.
+# shellcheck disable=SC2034
 TESTNET_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 PASS_COUNT=0

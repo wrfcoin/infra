@@ -38,7 +38,8 @@ ROLLBACK_DATA=()
 log() {
   local level="$1"
   shift
-  local msg="[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [${level}] $*"
+  local msg
+  msg="[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [${level}] $*" || true
   echo "$msg"
   if [[ -d "$(dirname "$LOG_FILE")" ]]; then
     echo "$msg" >> "$LOG_FILE"

@@ -22,11 +22,9 @@ TESTNET_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ENV_FILE="${TESTNET_DIR}/.env"
 CT_ID="${N5_CT_ID:-101}"
-NODE_SERVICE="wrfcoin-node"
 TARGET="${YUBIKEY_TARGET:-n5}"
 
 HSM_MODULE_PATH_SOFTHSM="/usr/lib/softhsm/libsofthsm2.so"
-HSM_MODULE_PATH_YUBIKEY="/usr/lib/x86_64-linux-gnu/libykcs11.so"
 YUBIKEY_USB_PATH="/dev/bus/usb"
 PCSC_SOCKET="/run/pcscd/pcscd.comm"
 

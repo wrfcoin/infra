@@ -102,6 +102,8 @@ is_expected_dir() {
 is_expected_file() {
     local file_name="$1"
     for pattern in "${EXPECTED_FILE_PATTERNS[@]}"; do
+        # Deliberate glob match against the pattern list.
+        # shellcheck disable=SC2053
         if [[ "$file_name" == $pattern ]]; then
             return 0
         fi

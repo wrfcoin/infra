@@ -119,6 +119,8 @@ echo ""
 echo "🚀 RESTARTING SERVICES"
 echo "====================="
 
+# No set -e here: the script carries on if cd fails. Adding an exit would change that.
+# shellcheck disable=SC2164
 cd "$PROJECT_ROOT/infrastructure/monitoring"
 
 # Check if Docker is accessible

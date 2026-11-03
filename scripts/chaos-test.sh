@@ -76,6 +76,8 @@ log_event() {
 # Argument parsing
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
+  # Unused here; left in place because removing this assignment could change behaviour.
+  # shellcheck disable=SC2034
   case "$1" in
     --interval)       INTERVAL="$2";       shift 2 ;;
     --pattern)        PATTERN="$2";        shift 2 ;;

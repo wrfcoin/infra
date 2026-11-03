@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SCRIPT="$ROOT/infra/docker/esbuild-backend.sh"
 TMP_ROOT="${TMPDIR:-/tmp}/esbuild-backend-test-$$"
 MOCK_BIN="$TMP_ROOT/bin"
