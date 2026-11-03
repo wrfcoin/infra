@@ -280,8 +280,8 @@ check_volume_free_space() {
       fi
       echo "${volume}" >> "${seen_file}"
 
-      local total used avail pct
-      read -r total used avail pct < <(df_snapshot "${mountpoint}")
+      local used avail pct
+      read -r _ used avail pct < <(df_snapshot "${mountpoint}")
       if [ -z "${avail:-}" ]; then
         fail "volume ${volume} could not be inspected at ${mountpoint}"
         failures=$((failures + 1))

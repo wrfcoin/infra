@@ -612,7 +612,7 @@ check "publisher records the source container's core4 build in the manifest" pub
 
 publisher_refuses_unlabelled_source() {
   fresh_out
-  if PUBLISH_CORE4_REVISION= run_publisher >/dev/null 2>&1; then return 1; fi
+  if PUBLISH_CORE4_REVISION='' run_publisher >/dev/null 2>&1; then return 1; fi
   if PUBLISH_CORE4_REVISION=abc123 run_publisher >/dev/null 2>&1; then return 1; fi
   [ ! -e "${PUB}/out/manifest.json" ]
 }

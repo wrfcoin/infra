@@ -46,6 +46,8 @@ log_success() {
 }
 
 # Check if running as root (required for many profiling tools)
+# Optional argument kept for callers; no caller passes it today.
+# shellcheck disable=SC2120
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run as root for system profiling"
@@ -104,6 +106,8 @@ get_wrfcoin_pids() {
         local process_pids
         process_pids=$(pgrep -f "$process" 2>/dev/null || true)
         if [[ -n "$process_pids" ]]; then
+            # Word splitting of numeric PIDs is intended.
+            # shellcheck disable=SC2206
             pids+=($process_pids)
         fi
     done
@@ -119,11 +123,14 @@ profile_cpu_perf() {
     
     log_info "Starting CPU profiling with perf..."
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S) || true
     local output_file="$PROFILE_DIR/perf/cpu_profile_$timestamp.data"
     local flame_graph_file="$PROFILE_DIR/flame-graphs/cpu_flame_graph_$timestamp.svg"
     
     local pids
+    # Word splitting of numeric values is intended; mapfile is missing from macOS bash 3.2.
+    # shellcheck disable=SC2207
     pids=($(get_wrfcoin_pids))
     
     if [[ ${#pids[@]} -eq 0 ]]; then
@@ -163,10 +170,13 @@ profile_memory_perf() {
     
     log_info "Starting memory profiling with perf..."
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S) || true
     local output_file="$PROFILE_DIR/perf/memory_profile_$timestamp.data"
     
     local pids
+    # Word splitting of numeric values is intended; mapfile is missing from macOS bash 3.2.
+    # shellcheck disable=SC2207
     pids=($(get_wrfcoin_pids))
     
     if [[ ${#pids[@]} -eq 0 ]]; then
@@ -195,7 +205,8 @@ profile_ebpf() {
     
     log_info "Starting eBPF profiling..."
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S) || true
     
     # CPU profiling with bpftrace
     cat > "$PROFILE_DIR/ebpf/cpu_profile_$timestamp.bt" << 'EOF'
@@ -274,7 +285,8 @@ profile_containers() {
     
     log_info "Starting container profiling..."
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S) || true
     local output_file="$PROFILE_DIR/container/container_stats_$timestamp.json"
     
     # Get Wrfcoin-related containers
@@ -336,7 +348,8 @@ profile_containers() {
 profile_network() {
     log_info "Starting network profiling..."
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S) || true
     local output_file="$PROFILE_DIR/perf/network_profile_$timestamp.data"
     
     # Network event profiling with perf
@@ -367,7 +380,8 @@ profile_network() {
 monitor_system_resources() {
     log_info "Starting system resource monitoring..."
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S) || true
     local output_file="$PROFILE_DIR/system_resources_$timestamp.log"
     
     {
@@ -410,7 +424,8 @@ monitor_system_resources() {
 generate_report() {
     log_info "Generating comprehensive profiling report..."
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S) || true
     local report_file="$PROFILE_DIR/profiling_report_$timestamp.md"
     
     {
@@ -436,6 +451,8 @@ generate_report() {
         
         echo "## Process Information"
         local pids
+        # Word splitting of numeric values is intended; mapfile is missing from macOS bash 3.2.
+        # shellcheck disable=SC2207
         pids=($(get_wrfcoin_pids))
         if [[ ${#pids[@]} -gt 0 ]]; then
             echo "- Wrfcoin Process PIDs: ${pids[*]}"

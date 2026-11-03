@@ -127,6 +127,8 @@ bench_endpoint() {
   fi
 
   # Sort latencies numerically
+  # Word splitting of numeric values is intended; mapfile is missing from macOS bash 3.2.
+  # shellcheck disable=SC2207
   IFS=$'\n' sorted=($(printf '%s\n' "${latencies[@]}" | sort -n)); unset IFS
 
   local p50 p95 p99

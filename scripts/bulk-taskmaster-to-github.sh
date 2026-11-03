@@ -62,7 +62,7 @@ elif [ $# -eq 0 ]; then
     
 else
     # Convert specific task IDs
-    echo "🔄 Converting specified tasks: $@"
+    echo "🔄 Converting specified tasks: $*"
     
     success_count=0
     total_count=$#

@@ -18,6 +18,8 @@ declare -A RESULTS
 
 test_feature() {
     local name="$1"
+    # Unused here; left in place because removing this assignment could change behaviour.
+    # shellcheck disable=SC2034
     local description="$2"
     local url="$3"
     local expected_code="${4:-200}"

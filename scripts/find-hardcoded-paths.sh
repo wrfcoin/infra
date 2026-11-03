@@ -31,17 +31,6 @@ HARDCODED_PATTERNS=(
 )
 
 # File patterns to scan
-FILE_PATTERNS=(
-    "*.ts"
-    "*.js"
-    "*.json"
-    "*.sh"
-    "*.md"
-    "*.yaml"
-    "*.yml"
-    "*.toml"
-    "*.env.example"
-)
 
 # Directories to exclude
 EXCLUDE_DIRS=(

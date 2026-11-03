@@ -11,7 +11,8 @@ stop_process() {
     local pid_file=$2
     
     if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file")
+        local pid
+        pid=$(cat "$pid_file") || true
         if ps -p $pid > /dev/null 2>&1; then
             echo "🛑 Stopping $service_name (PID: $pid)..."
             kill $pid

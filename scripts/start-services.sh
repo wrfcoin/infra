@@ -16,6 +16,8 @@ lsof -ti:5000 | xargs kill -9 2>/dev/null
 
 # Start backend API
 echo "Starting backend API on port 3001..."
+# No set -e here: the script carries on if cd fails. Adding an exit would change that.
+# shellcheck disable=SC2164
 cd "$PROJECT_ROOT/backend"
 PORT=3001 nohup npm run dev > backend.log 2>&1 &
 BACKEND_PID=$!
@@ -26,6 +28,8 @@ sleep 5
 
 # Start frontend
 echo "Starting frontend on port 5000..."
+# No set -e here: the script carries on if cd fails. Adding an exit would change that.
+# shellcheck disable=SC2164
 cd "$PROJECT_ROOT/frontend"
 nohup npm run dev > frontend.log 2>&1 &
 FRONTEND_PID=$!

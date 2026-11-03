@@ -326,7 +326,8 @@ cleanup_test_environment() {
 
 # Main execution function
 main() {
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s) || true
     local overall_status=0
     
     echo -e "${PURPLE}"
@@ -411,7 +412,8 @@ main() {
     cleanup_test_environment
     
     # Final summary
-    local end_time=$(date +%s)
+    local end_time
+    end_time=$(date +%s) || true
     local duration=$((end_time - start_time))
     
     print_header "FINAL TEST SUMMARY"

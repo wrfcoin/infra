@@ -51,6 +51,8 @@ $DETAILS
 *Converted from Task Master task $TASK_ID*"
 
 # Determine priority label
+# Unused here; left in place because removing this assignment could change behaviour.
+# shellcheck disable=SC2034
 case $PRIORITY in
     "high") PRIORITY_LABEL="high-priority" ;;
     "medium") PRIORITY_LABEL="medium-priority" ;;

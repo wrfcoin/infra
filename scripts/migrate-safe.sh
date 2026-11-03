@@ -39,12 +39,14 @@ timestamp() {
 }
 
 log() {
-    local msg="[$(timestamp)] $1"
+    local msg
+    msg="[$(timestamp)] $1" || true
     echo "$msg" | tee -a "$LOG_FILE"
 }
 
 log_error() {
-    local msg="[$(timestamp)] ERROR: $1"
+    local msg
+    msg="[$(timestamp)] ERROR: $1" || true
     echo "$msg" >&2 | tee -a "$LOG_FILE"
 }
 
@@ -168,7 +170,8 @@ parse_db_url() {
 ###############################################################################
 
 create_backup() {
-    local backup_file="$BACKUP_DIR/wrfcoin-pre-migration-$(date +%Y%m%d-%H%M%S).sql.gz"
+    local backup_file
+    backup_file="$BACKUP_DIR/wrfcoin-pre-migration-$(date +%Y%m%d-%H%M%S).sql.gz" || true
 
     log "Creating pre-migration backup..."
     log "Backup destination: $backup_file"

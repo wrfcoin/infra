@@ -27,7 +27,8 @@ log() {
     local level=$1
     shift
     local message="$*"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S') || true
     
     case $level in
         INFO)  echo -e "${GREEN}[${timestamp}] INFO: ${message}${NC}" ;;
@@ -72,6 +73,8 @@ check_prerequisites() {
 provision_infrastructure() {
     log INFO "Provisioning load testing infrastructure..."
     
+    # Unused here; left in place because removing this assignment could change behaviour.
+    # shellcheck disable=SC2034
     local env_file="${ENVIRONMENT}.tfvars"
     
     # Create terraform directory if it doesn't exist
@@ -104,8 +107,10 @@ provision_infrastructure() {
     terraform apply -auto-approve tfplan
     
     # Get outputs
-    local cluster_endpoint=$(terraform output -raw cluster_endpoint 2>/dev/null || echo "")
-    local cluster_name=$(terraform output -raw cluster_name 2>/dev/null || echo "${CLUSTER_NAME}")
+    local cluster_endpoint
+    cluster_endpoint=$(terraform output -raw cluster_endpoint 2>/dev/null || echo "") || true
+    local cluster_name
+    cluster_name=$(terraform output -raw cluster_name 2>/dev/null || echo "${CLUSTER_NAME}") || true
     
     if [ -n "$cluster_endpoint" ]; then
         log INFO "EKS cluster created: $cluster_name"
@@ -223,7 +228,8 @@ run_distributed_load_test() {
     log INFO "Geographic Distribution: ${geographic_distribution}"
     
     # Create test configuration
-    local test_config_name="load-test-config-$(date +%s)"
+    local test_config_name
+    test_config_name="load-test-config-$(date +%s)" || true
     
     kubectl create configmap "${test_config_name}" \
         --from-literal=LOAD_SCENARIO="${scenario}" \
@@ -257,7 +263,8 @@ monitor_load_test() {
     
     # Monitor metrics
     while true; do
-        local running_pods=$(kubectl get pods -l app=k6-load-generator -n wrfcoin-load-testing --field-selector=status.phase=Running --no-headers | wc -l)
+        local running_pods
+        running_pods=$(kubectl get pods -l app=k6-load-generator -n wrfcoin-load-testing --field-selector=status.phase=Running --no-headers | wc -l) || true
         
         if [ "$running_pods" -eq 0 ]; then
             log INFO "All load generator pods have completed"
@@ -276,12 +283,15 @@ monitor_load_test() {
 
 # Monitor infrastructure during load test
 monitor_infrastructure() {
+    # Unused here; left in place because removing this assignment could change behaviour.
+    # shellcheck disable=SC2034
     local dashboard=${1:-load-testing}
     
     log INFO "Monitoring infrastructure during load test..."
     
     # Get Grafana service details
-    local grafana_service=$(kubectl get service -n monitoring -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}')
+    local grafana_service
+    grafana_service=$(kubectl get service -n monitoring -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}') || true
     
     if [ -n "$grafana_service" ]; then
         # Port forward to Grafana
@@ -294,9 +304,12 @@ monitor_infrastructure() {
         # Monitor key metrics
         while true; do
             # Get cluster resource usage
-            local node_count=$(kubectl get nodes --no-headers | wc -l)
-            local pod_count=$(kubectl get pods --all-namespaces --no-headers | wc -l)
-            local cpu_usage=$(kubectl top nodes 2>/dev/null | tail -n +2 | awk '{sum+=$3} END {print sum}' || echo "N/A")
+            local node_count
+            node_count=$(kubectl get nodes --no-headers | wc -l) || true
+            local pod_count
+            pod_count=$(kubectl get pods --all-namespaces --no-headers | wc -l) || true
+            local cpu_usage
+            cpu_usage=$(kubectl top nodes 2>/dev/null | tail -n +2 | awk '{sum+=$3} END {print sum}' || echo "N/A") || true
             
             log INFO "Infrastructure Status:"
             log INFO "  Nodes: ${node_count}"
@@ -320,6 +333,8 @@ scale_target_services() {
     
     log INFO "Scaling target services..."
     
+    # `all` only reaches the first arm. Fixing that would scale more deployments than it does today.
+    # shellcheck disable=SC2221,SC2222
     case $service in
         "main-api"|"all")
             kubectl scale deployment wrfcoin-main-api --replicas="${replicas}" -n default 2>/dev/null || log WARN "wrfcoin-main-api deployment not found"
@@ -392,8 +407,10 @@ view_costs() {
     # This would integrate with AWS Cost Explorer API
     # For now, provide basic cost estimation based on running resources
     
-    local running_nodes=$(kubectl get nodes --no-headers | wc -l)
-    local load_gen_pods=$(kubectl get pods -l app=k6-load-generator -n wrfcoin-load-testing --no-headers | wc -l)
+    local running_nodes
+    running_nodes=$(kubectl get nodes --no-headers | wc -l) || true
+    local load_gen_pods
+    load_gen_pods=$(kubectl get pods -l app=k6-load-generator -n wrfcoin-load-testing --no-headers | wc -l) || true
     
     log INFO "Cost Estimation (approximate):"
     log INFO "  Running Nodes: ${running_nodes}"
@@ -425,8 +442,10 @@ optimize_costs() {
     log INFO "Optimizing costs based on ${analyze_usage} usage analysis..."
     
     # Basic cost optimization recommendations
-    local spot_percentage=$(kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["eks.amazonaws.com/capacityType"]=="SPOT") | .metadata.name' | wc -l)
-    local total_nodes=$(kubectl get nodes --no-headers | wc -l)
+    local spot_percentage
+    spot_percentage=$(kubectl get nodes -o json | jq -r '.items[] | select(.metadata.labels["eks.amazonaws.com/capacityType"]=="SPOT") | .metadata.name' | wc -l) || true
+    local total_nodes
+    total_nodes=$(kubectl get nodes --no-headers | wc -l) || true
     
     if [ "$spot_percentage" -lt "$((total_nodes / 2))" ]; then
         log WARN "Consider using more spot instances for cost optimization"
@@ -462,7 +481,8 @@ verify_deployment() {
     fi
     
     # Check HPA configurations
-    local hpa_count=$(kubectl get hpa --all-namespaces --no-headers 2>/dev/null | wc -l)
+    local hpa_count
+    hpa_count=$(kubectl get hpa --all-namespaces --no-headers 2>/dev/null | wc -l) || true
     if [ "$hpa_count" -eq 0 ]; then
         issues+=("HorizontalPodAutoscaler configurations")
     fi

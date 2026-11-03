@@ -91,6 +91,8 @@ fi
 
 if [[ "$USE_PYTHON" == "false" ]]; then
   if command -v yq &>/dev/null; then
+    # Unused here; left in place because removing this assignment could change behaviour.
+    # shellcheck disable=SC2034
     USE_YQ=true
   else
     echo "ERROR: Neither python3+PyYAML nor yq found." >&2

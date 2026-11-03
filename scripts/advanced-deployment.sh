@@ -6,9 +6,10 @@ set -euo pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Unused here; left in place because removing this assignment could change behaviour.
+# shellcheck disable=SC2034
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CLUSTER_NAME="${CLUSTER_NAME:-wrfcoin-production}"
-REGION="${AWS_REGION:-us-east-1}"
 DEPLOYMENT_TYPE="${DEPLOYMENT_TYPE:-canary}"
 ENVIRONMENT="${ENVIRONMENT:-production}"
 
@@ -60,7 +61,8 @@ pre_deployment_checks() {
     fi
     
     # Verify cluster connection
-    local current_context=$(kubectl config current-context)
+    local current_context
+    current_context=$(kubectl config current-context) || true
     if [[ "$current_context" != *"$CLUSTER_NAME"* ]]; then
         warning "Current kubectl context: $current_context"
         read -p "Continue with this context? (y/N): " -n 1 -r
@@ -166,6 +168,8 @@ deploy_canary() {
         -n wrfcoin-production --watch --timeout 1800s
     
     # Check rollout status
+    # Unused, and `local` hides the exit status from the $? check below. Fixing that would change this script's outcome.
+    # shellcheck disable=SC2034,SC2155
     local status=$(kubectl argo rollouts status wrfcoin-api-rollout \
         -n wrfcoin-production --timeout 1800s)
     

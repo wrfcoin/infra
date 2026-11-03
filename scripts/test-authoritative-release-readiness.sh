@@ -60,6 +60,8 @@ printf '{}\n' >"$ROOT/readiness.json"
 
 run_gate() {
   local label="$1"; shift
+  # Both prefixes deliberately read the shell value of RUNTIME_IMAGE_ID.
+  # shellcheck disable=SC2097,SC2098
   WRFCOIN_SECRETS_GATE="$ROOT/bin/secrets.sh" \
   WRFCOIN_READINESS_VALIDATOR="$ROOT/bin/validator.js" \
   WRFCOIN_CONTRACT_GATE="$ROOT/bin/contracts.js" \
@@ -121,6 +123,8 @@ cp "$ROOT/bin/full.py" "$ROOT/repo/testnet/scripts/full-profile-functional-probe
 chmod +x "$ROOT/repo/scripts/check-testnet-secrets.sh" \
   "$ROOT/repo/testnet/scripts/launch-readiness-gate.sh" \
   "$ROOT/repo/testnet/scripts/full-profile-functional-probe.py"
+# Both prefixes deliberately read the shell value of RUNTIME_IMAGE_ID.
+# shellcheck disable=SC2097,SC2098
 WRFCOIN_LAST_HEIGHT_FILE="$ROOT/public.height" \
   WRFCOIN_TESTNET_RUNTIME_IMAGE="$RUNTIME_IMAGE_ID" RUNTIME_IMAGE_ID="$RUNTIME_IMAGE_ID" PATH="$ROOT/bin:$PATH" \
   bash "$ROOT/repo/scripts/testnet-launch-readiness.sh" \

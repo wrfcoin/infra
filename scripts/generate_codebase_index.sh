@@ -68,8 +68,10 @@ generate_tree() {
         return
     fi
     
-    local file_count=$(find "$dir" -maxdepth 1 -type f 2>/dev/null | wc -l)
-    local dir_count=$(find "$dir" -maxdepth 1 -type d 2>/dev/null | grep -v "^$dir$" | wc -l)
+    local file_count
+    file_count=$(find "$dir" -maxdepth 1 -type f 2>/dev/null | wc -l) || true
+    local dir_count
+    dir_count=$(find "$dir" -maxdepth 1 -type d 2>/dev/null | grep -v "^$dir$" | wc -l) || true
     
     echo "${prefix}📁 **$(basename "$dir")/** (${file_count} files, ${dir_count} subdirs)"
     

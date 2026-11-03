@@ -35,6 +35,8 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# No set -e here: the script carries on if cd fails. Adding an exit would change that.
+# shellcheck disable=SC2164
 cd "$REPO_ROOT"
 
 HADOLINT="${HADOLINT_IMAGE:-hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d}"

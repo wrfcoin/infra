@@ -85,7 +85,6 @@ esac
 mkdir -p "$REPORT_DIR"
 COMMAND_LOG="$REPORT_DIR/command-output.txt"
 SUMMARY_MD="$REPORT_DIR/summary.md"
-SUMMARY_JSON="$REPORT_DIR/summary.json"
 CLEANUP_LOG="$REPORT_DIR/cleanup.log"
 
 exec > >(tee "$COMMAND_LOG") 2>&1
