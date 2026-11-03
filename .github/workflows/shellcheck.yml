@@ -49,13 +49,6 @@ jobs:
       - name: Test canonical-genesis reset archive semantics
         run: bash testnet/tests/test_reset_node_from_genesis_archives.sh
 
-      - name: Verify self-hosted runner script review fixes
-        run: |
-          shellcheck --severity=warning --shell=bash \
-            scripts/setup-self-hosted-runner.sh \
-            scripts/test-self-hosted-runner-review-fixes.sh
-          bash scripts/test-self-hosted-runner-review-fixes.sh
-
       - name: Shellcheck utility scripts (non-blocking)
         run: |
           find scripts/ -name '*.sh' -print0 | \

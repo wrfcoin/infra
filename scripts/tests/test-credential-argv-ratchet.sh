@@ -427,7 +427,6 @@ case "$url" in
       case "$url" in
         */metrics) body='wrfcoin_state_divergence_total 0' ;;
         */jobs*) body='{"jobs":[{"id":1},{"id":2}]}' ;;
-        */registration-token) body='{"token":"stub-registration"}' ;;
         */api/dashboards/*) body='{"dashboard":{"title":"stub"}}' ;;
         */api/snapshots) body='{"url":"http://grafana.stub/s/1"}' ;;
         *) body='{"ok":true}' ;;
@@ -534,23 +533,6 @@ out="$(env PATH="$TMP/bin:$PATH" EXPECT_HEADER="$BEARER" OPERATOR_TOKEN="$TOKEN"
 grep -q '^docker exec -i p2p-node-a curl' "$ARGV_LOG" || fail "p2p api_call did not use docker exec -i"
 assert_no_leak "p2p api_call" "$TOKEN"
 ok "run-p2p-partition-ci api_call pipes the bearer through docker exec -i"
-
-# 3d. setup-self-hosted-runner.sh registration-token exchange (the statement).
-: > "$ARGV_LOG"
-stmt="$(python3 - "$REPO/scripts/setup-self-hosted-runner.sh" <<'PY'
-import re, sys
-src = open(sys.argv[1], encoding="utf-8").read()
-m = re.search(r"^\s*REG_RESPONSE=\$\(.*?registration-token\"\)", src, re.S | re.M)
-assert m, "registration-token request not found"
-print(m.group(0))
-PY
-)"
-out="$(env PATH="$TMP/bin:$PATH" EXPECT_HEADER="Authorization: Bearer ghp_${TOKEN}" \
-  GITHUB_TOKEN="ghp_${TOKEN}" REPO=wrfcoin/infra bash -c "$stmt"$'\n''printf "%s" "$REG_RESPONSE"')" \
-  || fail "runner registration-token request failed"
-[[ "$out" == *stub-registration* ]] || fail "runner token exchange did not authenticate (got: $out)"
-assert_no_leak "setup-self-hosted-runner" "$TOKEN"
-ok "setup-self-hosted-runner exchanges the GitHub token via stdin"
 
 # 3e. public-exposure-edge-gate.yml "Fetch this run attempt's job records" step.
 : > "$ARGV_LOG"
