@@ -158,6 +158,19 @@ for matcher in matchers:
                     + ("32 KiB" if matcher["name"] == "public_wallet_security_key_actions" else "16 KiB")
                     + "; rate zone wallet_protection_actions 5 per minute per IP"
                 )
+            # Owner ruling 2026-10-24: the phone app's station registration and reading upload POSTs.
+            phone = {
+                "station_mobile_challenge": "phone station registration challenge",
+                "station_mobile_register": "phone station registration",
+                "oracle_submit_prepare": "phone reading upload, prepare step",
+                "oracle_submit_data_multipart": "phone reading upload, multipart file body at most 10 MB",
+                "oracle_submit_data": "phone reading upload, non-multipart body at most 2 MB",
+            }
+            if matcher["name"] in phone:
+                auth = (
+                    "wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend "
+                    "authenticates the wallet and rate-limits per wallet); " + phone[matcher["name"]]
+                )
             if matcher["gate"]:
                 name, value = matcher["gate"]
                 auth += f"; **OFF unless the edge env has `{name}={value}`** (compose default off)"

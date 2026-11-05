@@ -57,9 +57,22 @@ EXPECTED = {
     # Owner ruling 2026-10-02 (frontend#463, W28): the signed-in wallet's OWN phone-station status.
     # weather-routes.js GET /stations/mobile -> getMobileStationStatus(req.user.address): 401 without a
     # wallet session, 404 NOT_REGISTERED, else only the caller's row (station id, status, 0.1-degree cell,
-    # timestamps). Exact path, GET only, no query (QUERY_LOCK); POST /stations/mobile (phone registration)
-    # and /stations/mobile/challenge stay off the public edge. Counted by the `onboarding` rate zone.
+    # timestamps). Exact path, GET only, no query (QUERY_LOCK). Phone registration (POST /stations/mobile)
+    # and its challenge are their own Bearer-locked POST matchers below. Counted by the `onboarding` rate zone.
     "station_mobile_status": ("GET", "path /api/weather/stations/mobile", BACKEND),
+    # Owner ruling 2026-10-24: the phone app's four POSTs (mobile api_constants.dart mobileStationChallenge,
+    # mobileStationRegister, oracleSubmitDataPrepare, oracleSubmitData). Each is POST only, EXACT path, no
+    # query (QUERY_LOCK), and proxied only with an `Authorization: Bearer` header (BEARER_LOCK); the backend
+    # authenticates the wallet JWT and rate-limits per wallet. UNGATED. All four sit under the site-wide
+    # 2MB sane_limits cap except the multipart upload, which sane_limits exempts (SANE_LIMITS) and whose
+    # own handler caps at 10MB. The multipart matcher must precede the plain one (first match wins).
+    "station_mobile_challenge": ("POST", "path /api/weather/stations/mobile/challenge", BACKEND),
+    "station_mobile_register": ("POST", "path /api/weather/stations/mobile", BACKEND),
+    "oracle_submit_prepare": ("POST", "path /api/oracle/submit-data/prepare", BACKEND),
+    "oracle_submit_data_multipart": (
+        "POST", "path /api/oracle/submit-data", ("request_body {", "max_size 10MB", "}", *BACKEND),
+    ),
+    "oracle_submit_data": ("POST", "path /api/oracle/submit-data", BACKEND),
     # infra#886 — APPROVED PUBLIC EXPOSURE, owner ruling 2026-08-31.
     #
     # The snapshot-join path (infra#843, feat(#587)) exists so a NEW node can
@@ -352,6 +365,12 @@ BEARER_LOCK = {
     "public_challenges_write": 'header Authorization "Bearer *"',
     "public_duels_mine": 'header Authorization "Bearer *"',
     "public_duels_write": 'header Authorization "Bearer *"',
+    # The phone app's four POSTs (owner ruling 2026-10-24).
+    "station_mobile_challenge": 'header Authorization "Bearer *"',
+    "station_mobile_register": 'header Authorization "Bearer *"',
+    "oracle_submit_prepare": 'header Authorization "Bearer *"',
+    "oracle_submit_data_multipart": 'header Authorization "Bearer *"',
+    "oracle_submit_data": 'header Authorization "Bearer *"',
 }
 # JSON-body writes: the matcher also pins Content-Type (last directive).
 JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_notifications_unsubscribe",
@@ -445,7 +464,28 @@ READONLY_QUERY_LOCK = {
 QUERY_LOCK = {
     "station_mobile_status": 'expression `{query} == ""`',
     "station_owner_actions": 'expression `{query} == ""`',
+    "station_mobile_challenge": 'expression `{query} == ""`',
+    "station_mobile_register": 'expression `{query} == ""`',
+    "oracle_submit_prepare": 'expression `{query} == ""`',
+    "oracle_submit_data_multipart": 'expression `{query} == ""`',
+    "oracle_submit_data": 'expression `{query} == ""`',
 }
+# The phone's file upload: the only matcher that pins a multipart Content-Type (last directive), and
+# the only request the site-wide 2MB body cap exempts. The exemption must name exactly the same request.
+MULTIPART_BODY = {"oracle_submit_data_multipart": "header Content-Type multipart/form-data*"}
+SANE_LIMITS = [
+    "@sane_limits_capped {",
+    "not {",
+    "method POST",
+    "path /api/oracle/submit-data",
+    'header Authorization "Bearer *"',
+    "header Content-Type multipart/form-data*",
+    "}",
+    "}",
+    "request_body @sane_limits_capped {",
+    "max_size 2MB",
+    "}",
+]
 # Both edge overlays must pass the toggle with an `off` default; a missing
 # line would also be off (unset), but a default of `on` would turn the reads
 # on at the next recreate without anyone choosing to.
@@ -529,6 +569,8 @@ def verify(root: Path = ROOT) -> None:
         ) + ([QUERY_LOCK[name]] if name in QUERY_LOCK else []) + ([BEARER_LOCK[name]] if name in BEARER_LOCK else [])
         if name in JSON_BODY:
             approved += ['header Content-Type application/json']
+        if name in MULTIPART_BODY:
+            approved += [MULTIPART_BODY[name]]
         if directives(block(policy, f"@{name}")) != approved:
             raise AssertionError(
                 f"@{name} is not the exact approved method/path"
@@ -536,6 +578,16 @@ def verify(root: Path = ROOT) -> None:
             )
         if directives(block(policy, f"handle @{name}")) != list(expected[2]):
             raise AssertionError(f"@{name} has a handler other than its approved one")
+
+    # First match wins among sibling handle blocks: the multipart upload must be routed (and capped at
+    # 10MB) before the plain submit-data handler, or a multipart body would take the plain route.
+    handle_order = re.findall(r"(?m)^\thandle @([a-z_]+) \{", policy)
+    if handle_order.index("oracle_submit_data_multipart") > handle_order.index("oracle_submit_data"):
+        raise AssertionError("@oracle_submit_data_multipart must be handled before @oracle_submit_data")
+
+    # The site-wide body cap: 2MB for every request except exactly the authenticated multipart upload.
+    if directives(block(snippets, "(sane_limits)")) != SANE_LIMITS:
+        raise AssertionError("(sane_limits) is not the exact 2MB cap with the one multipart-upload exemption")
 
     for denied in ("handle /api/*", "handle /ws*"):
         if directives(block(policy, denied)) != ['respond "Not found" 404']:
@@ -549,6 +601,7 @@ def verify(root: Path = ROOT) -> None:
         "build stamp and capability inventory",
         "PUBLIC_READONLY_API",
         "station owner-action relay",
+        "phone station registration and reading upload",
     ):
         if ledger_entry not in ledger:
             raise AssertionError(f"route ledger is missing: {ledger_entry}")
@@ -1371,6 +1424,121 @@ def self_test() -> None:
                 "path /api/weather/stations/mobile\n\t\texpression `{query} == \"\"`\n",
                 "path /api/weather/stations/mobile\n",
             ),
+        ),
+        "phone challenge widened beyond POST": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@station_mobile_challenge {\n\t\tmethod POST", "@station_mobile_challenge {\n\t\tmethod POST GET"),
+        ),
+        "phone challenge Bearer lock removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/weather/stations/mobile/challenge\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "path /api/weather/stations/mobile/challenge\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "phone registration query lock removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "method POST\n\t\tpath /api/weather/stations/mobile\n\t\texpression `{query} == \"\"`\n",
+                "method POST\n\t\tpath /api/weather/stations/mobile\n",
+            ),
+        ),
+        "phone registration widened to a prefix (/api/weather/stations/mobile*)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("method POST\n\t\tpath /api/weather/stations/mobile\n", "method POST\n\t\tpath /api/weather/stations/mobile*\n"),
+        ),
+        "phone registration Bearer lock loosened to any Authorization": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/weather/stations/mobile\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "path /api/weather/stations/mobile\n\t\texpression `{query} == \"\"`\n\t\theader Authorization *\n",
+            ),
+        ),
+        "reading prepare Bearer lock removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/oracle/submit-data/prepare\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "path /api/oracle/submit-data/prepare\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "reading upload widened to the oracle prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "@oracle_submit_data {\n\t\tmethod POST\n\t\tpath /api/oracle/submit-data\n",
+                "@oracle_submit_data {\n\t\tmethod POST\n\t\tpath /api/oracle/*\n",
+            ),
+        ),
+        "reading upload query lock removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "@oracle_submit_data {\n\t\tmethod POST\n\t\tpath /api/oracle/submit-data\n\t\texpression `{query} == \"\"`\n",
+                "@oracle_submit_data {\n\t\tmethod POST\n\t\tpath /api/oracle/submit-data\n",
+            ),
+        ),
+        "plain reading upload acquires the 10MB cap": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @oracle_submit_data {\n",
+                "handle @oracle_submit_data {\n\t\trequest_body {\n\t\t\tmax_size 10MB\n\t\t}\n",
+            ),
+        ),
+        "multipart upload body cap widened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("max_size 10MB", "max_size 100MB"),
+        ),
+        "multipart upload body cap removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @oracle_submit_data_multipart {\n\t\trequest_body {\n\t\t\tmax_size 10MB\n\t\t}\n",
+                "handle @oracle_submit_data_multipart {\n",
+            ),
+        ),
+        "multipart upload Bearer lock removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "\t\theader Authorization \"Bearer *\"\n\t\theader Content-Type multipart/form-data*\n\t}\n\thandle @oracle_submit_data_multipart",
+                "\t\theader Content-Type multipart/form-data*\n\t}\n\thandle @oracle_submit_data_multipart",
+            ),
+        ),
+        "multipart upload content type removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "\t\theader Content-Type multipart/form-data*\n\t}\n\thandle @oracle_submit_data_multipart",
+                "\t}\n\thandle @oracle_submit_data_multipart",
+            ),
+        ),
+        "multipart upload handled after the plain upload (10MB cap never applies)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: (lambda m: s.replace(m.group(1), "").replace(
+                "\t# Read-only public viewer surface", m.group(1) + "\t# Read-only public viewer surface", 1
+            ))(re.search(r"(\thandle @oracle_submit_data_multipart \{.*?\n\t\}\n)", s, re.S)),
+        ),
+        "site body cap exemption widened to unauthenticated uploads": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "\t\t\tpath /api/oracle/submit-data\n\t\t\theader Authorization \"Bearer *\"\n",
+                "\t\t\tpath /api/oracle/submit-data\n",
+            ),
+        ),
+        "site body cap exemption widened to JSON bodies": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("\t\t\theader Content-Type multipart/form-data*\n", ""),
+        ),
+        "site body cap exemption widened to the oracle prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("\t\t\tpath /api/oracle/submit-data\n", "\t\t\tpath /api/oracle/*\n"),
+        ),
+        "site body cap raised to 10MB": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("\t\tmax_size 2MB\n", "\t\tmax_size 10MB\n"),
+        ),
+        "site body cap detached from its matcher (the cap no longer applies)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("request_body @sane_limits_capped {", "request_body @sane_limits_never {"),
+        ),
+        "phone routes ledger entry deleted": (
+            "testnet/edge/route-ledger.yml",
+            lambda s: s.replace("phone station registration and reading upload", "phone routes"),
         ),
         "stage15 station-list query lock removed (?lat=&lng= reaches NOAA)": (
             "testnet/edge/public_onboarding.caddy",
