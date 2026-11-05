@@ -207,6 +207,17 @@ services:
       governance artifact the backend refuses. GET /api/stations/<alias>/ownership (nonce,
       frozen, deactivated, pending recovery) is admitted read-only behind the same
       PUBLIC_READONLY_API gate, alias path only, NO query, public-read limiter.
+      (owner ruling 2026-10-24) phone station registration and reading upload: the mobile
+      app's four POSTs, POST /api/weather/stations/mobile/challenge, POST
+      /api/weather/stations/mobile, POST /api/oracle/submit-data/prepare and POST
+      /api/oracle/submit-data. Each is POST only, EXACT path, NO query string, and proxied
+      only when the request carries an `Authorization: Bearer ` header; the backend
+      authenticates the wallet JWT and rate-limits per wallet on each. UNGATED (the phone
+      loop does not depend on PUBLIC_READONLY_API). The two station routes count in the
+      onboarding zone. Body caps: the site-wide 2MB for all four, except a multipart POST
+      to /api/oracle/submit-data (the phone's file upload), which the site cap exempts and
+      its own handler caps at 10MB; a JSON body on that path stays at 2MB. GET
+      /api/weather/stations/mobile (own status) is unchanged.
       GET /api/v1/stations/status also stays OFF.
       (S1 + S2, website parity with the mobile app) seven more reads, ALL behind the same
       default-OFF PUBLIC_READONLY_API gate, GET only, exact paths, locked query. Own wallet

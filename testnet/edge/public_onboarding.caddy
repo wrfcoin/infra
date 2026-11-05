@@ -34,7 +34,25 @@
 
 (sane_limits) {
 	# reject absurd request bodies before they reach an app
-	request_body {
+	#
+	# A request_body cap can only be LOWERED further down (nested caps stack and the
+	# smaller wins), never raised, so the one route admitted above 2MB must be exempt
+	# from this site-wide cap. The exemption below is the SAME request the
+	# @oracle_submit_data_multipart matcher admits (owner ruling 2026-10-24: POST
+	# /api/oracle/submit-data with a multipart body, 10MB) and nothing else; its
+	# own handler re-applies the 10MB cap. Every other request, including a JSON
+	# body on that same path or an unauthenticated multipart, still gets 2MB. The
+	# empty-query lock lives on the handler only: a multipart POST with a query
+	# string matches no handler (404, body never read), so the exemption is moot.
+	@sane_limits_capped {
+		not {
+			method POST
+			path /api/oracle/submit-data
+			header Authorization "Bearer *"
+			header Content-Type multipart/form-data*
+		}
+	}
+	request_body @sane_limits_capped {
 		max_size 2MB
 	}
 }
@@ -198,14 +216,90 @@
 	# getMobileStationStatus(req.user.address): 401 without a wallet session,
 	# 404 NOT_REGISTERED, else only the caller's own row. Exact path, GET only,
 	# no query string. POST /stations/mobile (phone registration) and
-	# /stations/mobile/challenge stay off. The `onboarding` rate zone below
-	# already counts it (/api/weather/stations*).
+	# /stations/mobile/challenge are admitted by their own matchers below. The
+	# `onboarding` rate zone below already counts it (/api/weather/stations*).
 	@station_mobile_status {
 		method GET
 		path /api/weather/stations/mobile
 		expression `{query} == ""`
 	}
 	handle @station_mobile_status {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Phone data-submission routes (owner ruling 2026-10-24: the phone routes are
+	# allowlisted). The mobile app registers its
+	# phone station and submits readings through exactly these four POSTs
+	# (lib/core/constants/api_constants.dart: mobileStationChallenge,
+	# mobileStationRegister, oracleSubmitDataPrepare, oracleSubmitData). Each is
+	# POST only, EXACT path (no id segment, so no prefix or regex), NO query
+	# string, and proxied only when the request carries an `Authorization: Bearer `
+	# header (authMiddleware.js accepts only that prefix). The backend still
+	# authenticates the wallet JWT (authenticateWeatherRequest / requireAuth) and
+	# rate-limits per wallet (mobileChallengeWalletLimiter,
+	# mobileRegisterWalletLimiter, oraclePrepareLimiter/oracleSubmitLimiter).
+	# UNGATED like station registration: the phone loop must not depend on
+	# PUBLIC_READONLY_API. The /api/weather/stations* count in the `onboarding`
+	# rate zone below already covers the first two. The edge body limit is the
+	# site-wide 2MB (sane_limits) for all four, with ONE exception: a multipart
+	# POST to /api/oracle/submit-data (owner ruling 2026-10-24, the phone's
+	# file upload) is capped at 10MB. A JSON body on that path stays at 2MB.
+	# Content-Type is client-supplied, so a client may CLAIM multipart to get the
+	# larger cap; that is bounded by the Bearer lock and the backend's own multer
+	# limit, and widens nothing beyond one authenticated route.
+	@station_mobile_challenge {
+		method POST
+		path /api/weather/stations/mobile/challenge
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_mobile_challenge {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@station_mobile_register {
+		method POST
+		path /api/weather/stations/mobile
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_mobile_register {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@oracle_submit_prepare {
+		method POST
+		path /api/oracle/submit-data/prepare
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @oracle_submit_prepare {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Declared BEFORE @oracle_submit_data so the first-match handle order sends a
+	# multipart body here; sane_limits exempts exactly this request from its 2MB.
+	@oracle_submit_data_multipart {
+		method POST
+		path /api/oracle/submit-data
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type multipart/form-data*
+	}
+	handle @oracle_submit_data_multipart {
+		request_body {
+			max_size 10MB
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@oracle_submit_data {
+		method POST
+		path /api/oracle/submit-data
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @oracle_submit_data {
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 

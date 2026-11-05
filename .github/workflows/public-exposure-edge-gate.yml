@@ -150,6 +150,11 @@ jobs:
           docker rm "${cid}" >/dev/null
           python3 testnet/edge/verify_bond_grant_runtime.py "${RUNNER_TEMP}/edge-caddy"
 
+      # The phone app's four POSTs: Bearer/query/method locks and the 2MB site cap with its one
+      # 10MB multipart-upload exemption, against the same built Caddy and a body-reading stub.
+      - name: Phone station and reading upload routes against the built Caddy
+        run: python3 testnet/edge/verify_phone_routes_runtime.py "${RUNNER_TEMP}/edge-caddy"
+
   runtime-evidence:
     # API access required by this job only.
     permissions:

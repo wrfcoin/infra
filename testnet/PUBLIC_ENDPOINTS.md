@@ -22,6 +22,11 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `POST` | `regex: ^/api/stations/st_[0-9a-f]{12}/owner-actions$` | route-specific (station alias path only; wallet JWT equal to a signer for transfer, owner action and recovery cancel, signature-only for recovery execute; the signed tx is forwarded unaltered; body at most 8 KiB; own rate zone 10 per 10 min per IP); query string must be exactly none (anything else 404s) |
 | `GET` | `regex: ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/reward-progress$` | none/read-only |
 | `GET` | `/api/weather/stations/mobile` | wallet JWT (own station only); read-only; query string must be exactly none (anything else 404s) |
+| `POST` | `/api/weather/stations/mobile/challenge` | wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend authenticates the wallet and rate-limits per wallet); phone station registration challenge; query string must be exactly none (anything else 404s) |
+| `POST` | `/api/weather/stations/mobile` | wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend authenticates the wallet and rate-limits per wallet); phone station registration; query string must be exactly none (anything else 404s) |
+| `POST` | `/api/oracle/submit-data/prepare` | wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend authenticates the wallet and rate-limits per wallet); phone reading upload, prepare step; query string must be exactly none (anything else 404s) |
+| `POST` | `/api/oracle/submit-data` | wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend authenticates the wallet and rate-limits per wallet); phone reading upload, multipart file body at most 10 MB; query string must be exactly none (anything else 404s) |
+| `POST` | `/api/oracle/submit-data` | wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend authenticates the wallet and rate-limits per wallet); phone reading upload, non-multipart body at most 2 MB; query string must be exactly none (anything else 404s) |
 | `GET` | `/api/blockchain/status` | none/read-only |
 | `GET` | `/api/blockchain/blocks` | none/read-only |
 | `GET` | `/api/blockchain/transactions` | none/read-only |

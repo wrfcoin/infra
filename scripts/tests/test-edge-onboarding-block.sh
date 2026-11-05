@@ -39,8 +39,10 @@ if [[ -n "${S9_CADDY_BIN:-}" ]]; then
   # The bond-grant body cap needs a backend that reads the body (the docker matrix below has none, so
   # its proxy fails to dial first and any body size answers 502); the runtime verifier brings one.
   check "bond-grant 8 KiB edge body cap real-Caddy runtime matrix" python3 "${REPO}/testnet/edge/verify_bond_grant_runtime.py" "${S9_CADDY_BIN}"
+  # Same reason: the phone upload's 2MB / 10MB body caps need a backend that reads the body.
+  check "phone station and reading upload real-Caddy runtime matrix" python3 "${REPO}/testnet/edge/verify_phone_routes_runtime.py" "${S9_CADDY_BIN}"
 else
-  echo "  SKIP  S9 and bond-grant runtime matrices (set S9_CADDY_BIN to the edge Caddy executable)"
+  echo "  SKIP  S9, bond-grant and phone-route runtime matrices (set S9_CADDY_BIN to the edge Caddy executable)"
 fi
 check "S9 boundary and weakening controls pass" python3 "${REPO}/testnet/edge/verify_public_exposure_boundary.py" --self-test
 check "snippet defines (disabled_wallet_secret_routes)" \
@@ -226,14 +228,25 @@ if command -v docker >/dev/null 2>&1 && docker image inspect "${CADDY_IMG}" >/de
       curl -s --path-as-is -o /dev/null --max-time 5 -w '%{http_code}' -X "$1" \
         -H 'Authorization: Bearer test-session' "http://127.0.0.1:${probe_port}$2"
     }
+    # The same request with an explicit Authorization scheme ("" sends none at all). The header goes to
+    # curl on stdin (-H @-), never argv, per the credential-argv ratchet.
+    api_answer_auth() {
+      if [ -z "$3" ]; then
+        curl -s --path-as-is -o /dev/null --max-time 5 -w '%{http_code}' -X "$1" "http://127.0.0.1:${probe_port}$2"
+      else
+        printf 'Authorization: %s\n' "$3" |
+          curl -s --path-as-is -o /dev/null --max-time 5 -w '%{http_code}' -X "$1" -H @- "http://127.0.0.1:${probe_port}$2"
+      fi
+    }
     to_backend() { case "$(api_answer "$1" "$2")" in 502|503) return 0 ;; *) return 1 ;; esac; }
     edge_404() { [ "$(api_answer "$1" "$2")" = "404" ]; }
+    edge_404_auth() { [ "$(api_answer_auth "$1" "$2" "$3")" = "404" ]; }
     check "GET /api/weather/stations/mobile with a session reaches the backend" \
       to_backend GET /api/weather/stations/mobile
     for v in 'GET /api/weather/stations/mobile?x=1' 'GET /api/weather/stations/mobile?status=on_chain' \
-             'POST /api/weather/stations/mobile' 'PUT /api/weather/stations/mobile' 'DELETE /api/weather/stations/mobile' \
+             'PUT /api/weather/stations/mobile' 'DELETE /api/weather/stations/mobile' \
              'GET /api/weather/stations/mobile/x' 'GET /api/weather/stations/mobile/challenge' \
-             'POST /api/weather/stations/mobile/challenge' 'GET /api/weather/stations/mobilex'; do
+             'GET /api/weather/stations/mobilex'; do
       # shellcheck disable=SC2086
       check "edge 404s ${v} (query, method and subpath variants stay off)" edge_404 $v
     done
@@ -271,6 +284,45 @@ if command -v docker >/dev/null 2>&1 && docker image inspect "${CADDY_IMG}" >/de
       check "S1/S2 sibling stays 404: ${v}" edge_404 $v
     done
     check "GET .../reward-progress still reaches the backend" to_backend GET /api/weather/stations/abc/reward-progress
+    # The phone matrix runs on a FRESH throwaway edge: the station POSTs share the `onboarding` rate zone
+    # (30 per minute per client IP) with the checks above, so on the same edge they would answer 429.
+    docker stop "${probe_name}" >/dev/null 2>&1
+    probe_name="edge-onboarding-phone-test-$$"
+    if docker run -d --rm --name "${probe_name}" -p 127.0.0.1::8444 \
+        -v "${REPO}/testnet/edge/Caddyfile.funnel:/etc/caddy/Caddyfile:ro" \
+        -v "${REPO}/testnet/edge/public_onboarding.caddy:/etc/caddy/public_onboarding.caddy:ro" \
+        -v "${REPO}/testnet/edge/downloads.caddy:/etc/caddy/downloads.caddy:ro" \
+        "${CADDY_IMG}" caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null; then
+      probe_port="$(docker port "${probe_name}" 8444/tcp | head -1 | sed 's/.*://')"
+      for _ in $(seq 1 50); do curl -s -o /dev/null --max-time 1 "http://127.0.0.1:${probe_port}/" && break; sleep 0.2; done
+      # Owner ruling 2026-10-24: the phone app's station registration and reading upload POSTs. Each reaches
+      # the backend only as an exact-path POST with an `Authorization: Bearer` header and no query string.
+      # Body caps (2MB site-wide, 10MB for the authenticated multipart upload) need a backend that reads the
+      # body; testnet/edge/verify_phone_routes_runtime.py proves them (run above when S9_CADDY_BIN is set).
+      for p in /api/weather/stations/mobile/challenge /api/weather/stations/mobile \
+               /api/oracle/submit-data/prepare /api/oracle/submit-data; do
+        check "POST ${p} with a Bearer session reaches the backend" to_backend POST "$p"
+        check "POST ${p} without an Authorization header 404s" edge_404_auth POST "$p" ""
+        check "POST ${p} with Authorization: Basic 404s" edge_404_auth POST "$p" "Basic dGVzdDp0ZXN0"
+        check "POST ${p}?x=1 (any query string) 404s" edge_404 POST "${p}?x=1"
+        for m in GET PUT DELETE PATCH; do
+          # GET on the registration path is the separate own-status read (checked above).
+          [ "$m" = GET ] && [ "$p" = /api/weather/stations/mobile ] && continue
+          check "${m} ${p} 404s (POST only)" edge_404 "$m" "$p"
+        done
+      done
+      for p in /api/weather/stations/mobile/x /api/weather/stations/mobile/ /api/weather/stations/mobilex \
+               /api/weather/stations/mobile/challenge/x /api/oracle/submit-data/prepare/x /api/oracle/submit-data/ \
+               /api/oracle/submit-datax /api/oracle/submit-data/other /api/oracle/submit; do
+        check "POST ${p} (subpath or suffix variant) 404s" edge_404 POST "$p"
+      done
+      for p in /api/weather/stations//mobile/challenge /api/weather/stations/mobile%2Fchallenge \
+               /api/oracle//submit-data /api/oracle%2Fsubmit-data /api/oracle/submit-data/./prepare; do
+        check "edge refuses the non-canonical phone path ${p} (400, never routed)" refused "$p"
+      done
+    else
+      check "a fresh edge for the phone-route matrix starts" false
+    fi
   else
     echo "  SKIP  could not start ${CADDY_IMG} — runtime path matrix not run"
   fi

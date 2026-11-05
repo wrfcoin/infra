@@ -32,5 +32,20 @@ class EndpointAuth(unittest.TestCase):
     def test_phone_status_keeps_the_exact_query_boundary(self):
         self.assertIn("query string must be exactly none (anything else 404s)", self.row("/api/weather/stations/mobile"))
 
+    def test_phone_posts_require_a_bearer_and_no_query(self):
+        expected = {
+            "/api/weather/stations/mobile/challenge": 1,
+            "/api/weather/stations/mobile": 1,
+            "/api/oracle/submit-data/prepare": 1,
+            "/api/oracle/submit-data": 2,  # multipart (10 MB) and plain (2 MB) variants
+        }
+        for path, count in expected.items():
+            rows = [line for line in self.rows if f"| `POST` | `{path}` |" in line]
+            self.assertEqual(len(rows), count, path)
+            for row in rows:
+                self.assertIn("only with an `Authorization: Bearer` header", row)
+                self.assertIn("query string must be exactly none (anything else 404s)", row)
+                self.assertNotIn("read-only", row)
+
 if __name__ == "__main__":
     unittest.main()

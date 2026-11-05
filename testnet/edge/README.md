@@ -46,6 +46,11 @@ internal-only bindings; the edge is the sole public listener.
   denials for all other API/WebSocket routes.
 - `verify_public_exposure_boundary.py` — static fail-closed policy check. It
   proves the configured edge boundary, not an external-network probe.
+- `verify_phone_routes_runtime.py` — runs the edge Caddy binary against a
+  loopback stub and proves the phone app's four POSTs (station registration
+  challenge and registration, reading upload prepare and upload): Bearer
+  header required, no query string, POST only, the 2MB site body cap, and the
+  10MB cap on the authenticated multipart upload.
 - `Dockerfile.caddy` — builds Caddy with the `caddy-ratelimit` plugin (the
   vanilla image errors on `rate_limit`). Local build only — no registry push.
 - `../docker-compose.edge.yml` — runs the edge, publishes 80/443, joins the
@@ -83,6 +88,7 @@ Going public is deliberate and hard to reverse. In order:
    python3 testnet/edge/verify_public_exposure_boundary.py
    python3 testnet/edge/verify_public_exposure_boundary.py --self-test  # RED controls
    python3 testnet/edge/verify_public_exposure_runtime.py               # both edges + RED control
+   python3 testnet/edge/verify_phone_routes_runtime.py <caddy binary>   # phone POSTs + body caps
 
    # Compose merge + confirm ONLY the edge (80/443) + P2P (9000/9001) are public
    docker compose -f testnet/docker-compose.testnet.yml -f testnet/docker-compose.edge.yml config
