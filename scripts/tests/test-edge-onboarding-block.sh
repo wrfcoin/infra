@@ -221,12 +221,15 @@ if command -v docker >/dev/null 2>&1 && docker image inspect "${CADDY_IMG}" >/de
       curl -s --path-as-is -o /dev/null --max-time 5 -w '%{http_code}' -X "$1" \
         -H 'Authorization: Bearer test-session' "http://127.0.0.1:${probe_port}$2"
     }
-    # The same request with an explicit Authorization header value ("" sends none at all).
+    # The same request with an explicit Authorization scheme ("" sends none at all). The header goes to
+    # curl on stdin (-H @-), never argv, per the credential-argv ratchet.
     api_answer_auth() {
-      local auth=()
-      [ -n "$3" ] && auth=(-H "Authorization: $3")
-      curl -s --path-as-is -o /dev/null --max-time 5 -w '%{http_code}' -X "$1" "${auth[@]}" \
-        "http://127.0.0.1:${probe_port}$2"
+      if [ -z "$3" ]; then
+        curl -s --path-as-is -o /dev/null --max-time 5 -w '%{http_code}' -X "$1" "http://127.0.0.1:${probe_port}$2"
+      else
+        printf 'Authorization: %s\n' "$3" |
+          curl -s --path-as-is -o /dev/null --max-time 5 -w '%{http_code}' -X "$1" -H @- "http://127.0.0.1:${probe_port}$2"
+      fi
     }
     to_backend() { case "$(api_answer "$1" "$2")" in 502|503) return 0 ;; *) return 1 ;; esac; }
     edge_404() { [ "$(api_answer "$1" "$2")" = "404" ]; }
