@@ -123,3 +123,20 @@ in the `edge-caddy-data` volume for the next bring-up.
 - Supersedes the "testers reach the testnet over Tailscale only" language in
   `testnet/README.md` once the edge is live. `infra#598` (internal API gateway)
   is a different component; this is the public TLS edge its scope didn't cover.
+
+## Tunnel address
+
+`Caddyfile.funnel` takes the visitor's address from `Cf-Connecting-IP`, and only on connections from
+`10.251.0.13/32`. That has to be the `wrfcoin-cloudflared` container, which is not in a compose file, so
+its address is pinned by hand. Docker keeps the pin across restarts:
+
+```bash
+docker network disconnect testnet_wrfcoin-ingress wrfcoin-cloudflared
+docker network connect --ip 10.251.0.13 testnet_wrfcoin-ingress wrfcoin-cloudflared
+```
+
+The tunnel drops for a few seconds. `.13` is next to the other pinned hops and clear of `.2`, where Docker
+starts handing out unpinned addresses. If the container is ever recreated, pass `--ip 10.251.0.13` again.
+
+The change needs three things live together: this pin, the `funnel-edge` config and the backend's
+`TRUSTED_PROXIES`. Until all three are in place, visitors share one key, as they did before.

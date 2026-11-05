@@ -108,35 +108,42 @@ status_json_is_get_only() {
 }
 check "GET /status.json is exact and POST/sibling paths fail closed" status_json_is_get_only
 
-echo "== the funnel edge trusts exactly the pinned ingress gateway (backend#1229, infra#884) =="
+echo "== the public edge trusts exactly the tunnel container, for one header =="
 
-# History: #885 added `trusted_proxies static private_ranges` + strict; infra#884
-# removed both because it was unknown whether tailscale funnel appends to or
-# passes through X-Forwarded-For. backend#1229 established from tailscale's
-# source that tailscaled REPLACES the header with the true source address, so
-# the funnel edge now trusts exactly one hop -- the pinned wrfcoin-ingress
-# gateway that docker-proxy delivers its 127.0.0.1:8444 traffic from -- with
-# strict (rightmost-untrusted) parsing.
-#
-# These guard that decision: the trusted set must stay that single /32 (never
-# private_ranges or any wider range, which is what made #885 spoofable), strict
-# must accompany it, and the address must match the compose pin.
+# Behind the Cloudflare Tunnel the only peer whose forwarded address counts is
+# wrfcoin-cloudflared at its pinned address, and the only header read from it is
+# Cf-Connecting-IP. History: #885 trusted private_ranges (spoofable); backend#1229
+# trusted the ingress gateway, which is the wrong peer since the tunnel connects
+# directly. The gateway must stay untrusted: Funnel traffic arrives from it and
+# tailscaled does not overwrite Cf-Connecting-IP.
 
-check "funnel edge trusts exactly one hop: static 10.251.0.1/32" \
+check "funnel edge trusts exactly one hop: static 10.251.0.13/32" \
   bash -c '[ "$(grep -cE "^[[:space:]]*trusted_proxies([[:space:]]|$)" "$1")" = 1 ] &&
-    grep -qE "^[[:space:]]*trusted_proxies[[:space:]]+static[[:space:]]+10\.251\.0\.1/32[[:space:]]*$" "$1"' _ "${FUNNEL}"
+    grep -qE "^[[:space:]]*trusted_proxies[[:space:]]+static[[:space:]]+10\.251\.0\.13/32[[:space:]]*$" "$1"' _ "${FUNNEL}"
 
 check "funnel edge never trusts private_ranges or a wider range" \
   bash -c '! grep -E "^[[:space:]]*trusted_proxies([[:space:]]|$)" "$1" | grep -qE "private_ranges|/(0|[1-9]|[12][0-9]|3[01])([[:space:]]|$)"' _ "${FUNNEL}"
 
+check "funnel edge reads only Cf-Connecting-IP from that hop" \
+  bash -c '[ "$(grep -cE "^[[:space:]]*client_ip_headers([[:space:]]|$)" "$1")" = 1 ] &&
+    grep -qE "^[[:space:]]*client_ip_headers[[:space:]]+Cf-Connecting-IP[[:space:]]*$" "$1"' _ "${FUNNEL}"
+
 check "funnel edge sets trusted_proxies_strict alongside it" \
   bash -c 'grep -qE "^[[:space:]]*trusted_proxies_strict[[:space:]]*$" "$1"' _ "${FUNNEL}"
 
+check "funnel edge hands upstreams only the address it resolved" \
+  bash -c 'grep -qE "^[[:space:]]*request_header[[:space:]]+X-Forwarded-For[[:space:]]+\{client_ip\}[[:space:]]*$" "$1" &&
+    grep -qE "^[[:space:]]*request_header[[:space:]]+-X-Real-IP[[:space:]]*$" "$1" &&
+    grep -qE "^[[:space:]]*request_header[[:space:]]+-Cf-Connecting-IP[[:space:]]*$" "$1"' _ "${FUNNEL}"
+
 COMPOSE_BASE="${REPO}/testnet/docker-compose.testnet.yml"
 COMPOSE_FUNNEL="${REPO}/testnet/docker-compose.funnel-edge.yml"
-check "the trusted address is the pinned wrfcoin-ingress gateway" \
-  bash -c 'grep -qE "^[[:space:]]*gateway:[[:space:]]*10\.251\.0\.1[[:space:]]*$" "$1" &&
-    grep -qE "^[[:space:]]*-[[:space:]]*subnet:[[:space:]]*10\.251\.0\.0/24[[:space:]]*$" "$1"' _ "${COMPOSE_BASE}"
+check "the trusted address sits on the pinned wrfcoin-ingress subnet" \
+  bash -c 'grep -qE "^[[:space:]]*-[[:space:]]*subnet:[[:space:]]*10\.251\.0\.0/24[[:space:]]*$" "$1"' _ "${COMPOSE_BASE}"
+check "the backend lists the tunnel address as a trusted proxy" \
+  bash -c 'grep -qE "^[[:space:]]*TRUSTED_PROXIES:.*[\",]10\.251\.0\.13[\",]" "$1"' _ "${COMPOSE_BASE}"
+check "the README gives the same tunnel address" \
+  bash -c 'grep -qF -- "--ip 10.251.0.13 testnet_wrfcoin-ingress wrfcoin-cloudflared" "$1"' _ "${REPO}/testnet/edge/README.md"
 check "funnel-edge is pinned on wrfcoin-ingress only" \
   bash -c 'grep -A3 -E "^[[:space:]]+networks:" "$1" | grep -qE "ipv4_address:[[:space:]]*10\.251\.0\.12" &&
     ! grep -qE "^[[:space:]]+-[[:space:]]*wrfcoin-testnet[[:space:]]*$" "$1"' _ "${COMPOSE_FUNNEL}"

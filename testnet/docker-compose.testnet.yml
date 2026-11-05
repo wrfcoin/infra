@@ -1153,9 +1153,12 @@ services:
       #                X-Forwarded-For to the true source (overwriting any
       #                client value), so the entry left of this hop is real.
       #   10.251.0.10  frontend nginx   10.251.0.11 edge (443)   10.251.0.12 funnel-edge
+      #   10.251.0.13  wrfcoin-cloudflared: funnel-edge appends it after the visitor's
+      #                address, so it must be listed for the walk to reach the visitor.
+      #                See "Tunnel address" in testnet/edge/README.md.
       # Anything else — including this backend's own 127.0.0.1:4001 port — is
       # keyed on its socket peer, and the backend never bans a private peer.
-      TRUSTED_PROXIES: "127.0.0.1,::1,10.251.0.1,10.251.0.10,10.251.0.11,10.251.0.12"
+      TRUSTED_PROXIES: "127.0.0.1,::1,10.251.0.1,10.251.0.10,10.251.0.11,10.251.0.12,10.251.0.13"
       # infra#972: advisory oracle-reference shadow scoring. OFF by default.
       # Enable only through docker-compose.reference-shadow.yml plus
       # `--profile oracle-reference`. It never changes a reward and does not

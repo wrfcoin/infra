@@ -517,10 +517,10 @@ def prove_inbound_xff_is_logged_and_client_ip_is_the_peer(config_text: str, cont
        probing it: two or more entries ending in a public address means the
        funnel APPENDS; exactly what a client sent means PASS-THROUGH.
 
-    2. From a peer that is NOT the pinned wrfcoin-ingress gateway (here the
+    2. From a peer that is NOT the tunnel container (here the
        harness's default-bridge gateway), {client_ip} is the connection peer
        even when the header carries a plausible appended client address: only
-       the one trusted hop can set it (backend#1229; see phase 7 for that hop).
+       the one trusted hop can set it (see phase 7 for that hop).
     """
     label = "funnel-edge-xff-logging"
     name = f"wrf-edge-log-{uuid.uuid4().hex[:10]}"
@@ -990,26 +990,58 @@ def prove_frontend_csp_served(label: str, conf_text: str) -> None:
             subprocess.run(("docker", "rm", "-f", name), capture_output=True)
 
 
-def prove_ingress_gateway_gives_per_client_buckets(config_text: str, container_port: str) -> None:
-    """backend#1229: the one trusted hop yields per-visitor buckets.
+def prove_tunnel_address_gives_per_visitor_buckets(config_text: str, container_port: str) -> None:
+    """Use the visitor's address behind the tunnel, from that one peer only.
 
     Runs the edge on a scratch network pinned to the production wrfcoin-ingress
-    subnet (10.251.0.0/24), published on 127.0.0.1 exactly as in compose, so the
-    connection peer really is the 10.251.0.1 gateway that docker-proxy uses.
-    Each request carries the single X-Forwarded-For entry tailscaled writes.
-    Visitor A exhausts faucet_claim; visitor B must still be admitted, and A
-    must be refused -- one shared bucket (the pre-#1229 shape) fails the first
-    assertion, and an edge that ignored the header would fail it too.
+    subnet, at its production address, with a stub upstream that echoes the
+    headers it received. Requests come from real containers, so the connection
+    peer is what production would see:
+
+      10.251.0.13  the tunnel container: Cf-Connecting-IP keys the buckets;
+                   X-Forwarded-For does not; upstream gets "<visitor>, <tunnel>"
+      10.251.0.14  any other container: both headers ignored, one shared bucket
+      10.251.0.1   the gateway, via the published port (the Funnel route): the same
+
+    The tunnel peer is trusted to carry Cloudflare's header, so what a visitor
+    can do through it is limited to X-Forwarded-For and X-Real-IP, which
+    Cloudflare forwards as sent; that is what the rotation below sends.
     """
-    label = "funnel-edge-ingress-gateway"
+    label = "funnel-edge-tunnel"
+    tunnel_ip, other_ip, edge_ip, stub_ip = "10.251.0.13", "10.251.0.14", "10.251.0.12", "10.251.0.20"
     suffix = uuid.uuid4().hex[:10]
-    name = f"wrf-edge-gw-{suffix}"
+    edge, stub = f"wrf-edge-tun-{suffix}", f"wrf-stub-tun-{suffix}"
+    tunnel, other = f"wrf-peer-tun-{suffix}", f"wrf-peer-other-{suffix}"
     network = f"wrf-ingress-{suffix}"
+    claim_path = "/api/onboarding/faucet/claim"
+
+    def from_peer(peer: str, path: str, method: str = "GET", headers: tuple[str, ...] = ()) -> tuple[int, str]:
+        """One request from inside `peer`, with busybox wget from the edge image."""
+        header_args = [arg for header in headers for arg in ("--header", header)]
+        post_args = ["--post-data="] if method == "POST" else []
+        done = subprocess.run(
+            ("docker", "exec", peer, "wget", "-S", "-O", "-", "-T", "3", *post_args, *header_args,
+             f"http://{edge_ip}:{container_port}{path}"),
+            capture_output=True, text=True,
+        )
+        code = re.search(r"HTTP/1\.\d (\d{3})", done.stderr)
+        if code is None:
+            raise AssertionError(f"[{label}] no HTTP status from {peer}: {done.stderr.strip()}")
+        return int(code.group(1)), done.stdout
+
     with tempfile.TemporaryDirectory() as directory:
         caddy_dir = Path(directory)
         shutil.copy(EDGE / "downloads.caddy", caddy_dir / "downloads.caddy")
         (caddy_dir / "Caddyfile").write_text(config_text, encoding="utf-8")
         shutil.copy(EDGE / "public_onboarding.caddy", caddy_dir / "public_onboarding.caddy")
+        stub_dir = caddy_dir / "stub"
+        stub_dir.mkdir()
+        (stub_dir / "Caddyfile").write_text(
+            "{\n\tauto_https off\n\tadmin off\n}\n:4001 {\n\trespond \""
+            "xff={http.request.header.X-Forwarded-For}|real={http.request.header.X-Real-IP}"
+            "|cf={http.request.header.Cf-Connecting-IP}\" 200\n}\n",
+            encoding="utf-8",
+        )
         try:
             created = subprocess.run(
                 ("docker", "network", "create", "--driver", "bridge",
@@ -1022,16 +1054,22 @@ def prove_ingress_gateway_gives_per_client_buckets(config_text: str, container_p
                     f"(is a wrfcoin-ingress network already up on this host?): {created.stderr.strip()}"
                 )
             run(
-                "docker", "run", "--rm", "-d", "--name", name, "--network", network,
-                "--ip", "10.251.0.12",
-                "--add-host", "wrfcoin-testnet-backend:127.0.0.1",
-                "--add-host", "wrfcoin-testnet-frontend:127.0.0.1",
+                "docker", "run", "--rm", "-d", "--name", stub, "--network", network, "--ip", stub_ip,
+                "-v", f"{stub_dir}:/etc/caddy:ro", IMAGE, "caddy", "run", "--config", "/etc/caddy/Caddyfile",
+            )
+            run(
+                "docker", "run", "--rm", "-d", "--name", edge, "--network", network, "--ip", edge_ip,
+                "--add-host", f"wrfcoin-testnet-backend:{stub_ip}",
+                "--add-host", f"wrfcoin-testnet-frontend:{stub_ip}",
                 "-p", f"127.0.0.1::{container_port}", "-e", "ACME_EMAIL=local@example.invalid",
                 "-v", f"{caddy_dir}:/etc/caddy:ro", IMAGE,
                 "caddy", "run", "--config", "/etc/caddy/Caddyfile",
             )
+            for peer, ip in ((tunnel, tunnel_ip), (other, other_ip)):
+                run("docker", "run", "--rm", "-d", "--name", peer, "--network", network, "--ip", ip,
+                    IMAGE, "sleep", "300")
             for _ in range(30):
-                mapped = run("docker", "port", name, f"{container_port}/tcp", check=False)
+                mapped = run("docker", "port", edge, f"{container_port}/tcp", check=False)
                 if mapped:
                     try:
                         if status(mapped, "/api/not-allowed") == 404:
@@ -1040,27 +1078,81 @@ def prove_ingress_gateway_gives_per_client_buckets(config_text: str, container_p
                         pass
                 time.sleep(0.2)
             else:
-                logs = run("docker", "logs", name, check=False)
+                logs = run("docker", "logs", edge, check=False)
                 raise AssertionError(f"[{label}] edge did not come up: {logs}")
 
-            claim = lambda visitor: status(
-                mapped, "/api/onboarding/faucet/claim", "POST", (f"X-Forwarded-For: {visitor}",)
-            )
-            visitor_a = [claim("203.0.113.5") for _ in range(8)]
-            if 429 not in visitor_a:
-                raise AssertionError(f"[{label}] visitor A was never limited: {visitor_a}")
-            visitor_b = claim("198.51.100.9")
+            cf = lambda visitor: f"Cf-Connecting-IP: {visitor}"
+            claim = lambda peer, *headers: from_peer(peer, claim_path, "POST", headers)[0]
+
+            # 1. Through the tunnel, two visitors do not share a bucket.
+            visitor_a = [claim(tunnel, cf("203.0.113.5")) for _ in range(8)]
+            if 429 not in visitor_a or 429 in visitor_a[:5]:
+                raise AssertionError(f"[{label}] visitor A should get 5 admitted then 429: {visitor_a}")
+            visitor_b = claim(tunnel, cf("198.51.100.9"))
             if visitor_b == 429:
-                raise AssertionError(
-                    f"[{label}] visitor B was refused after visitor A exhausted the limit "
-                    f"(A: {visitor_a}); the gateway hop's X-Forwarded-For is not keying buckets"
-                )
-            print(
-                f"PASS [{label}] from the pinned 10.251.0.1 gateway, visitor A {visitor_a} "
-                f"is limited while visitor B gets {visitor_b}: independent buckets"
-            )
+                raise AssertionError(f"[{label}] visitor B shares visitor A's bucket (A: {visitor_a})")
+            print(f"PASS [{label}] visitor A {visitor_a} is limited while visitor B gets {visitor_b}")
+
+            # 2. Through the tunnel, a rotating X-Forwarded-For does not move the key.
+            rotated = [
+                claim(tunnel, cf("203.0.113.6"), f"X-Forwarded-For: 192.0.2.{n}, 203.0.113.6",
+                      f"X-Real-IP: 192.0.2.{n}")
+                for n in range(1, 9)
+            ]
+            if 429 not in rotated:
+                raise AssertionError(f"[{label}] X-Forwarded-For moved the key through the tunnel: {rotated}")
+            print(f"PASS [{label}] rotating X-Forwarded-For/X-Real-IP through the tunnel changed nothing: {rotated}")
+
+            # 3. Any other container is ignored, in either header.
+            other_rotated = [
+                claim(other, cf(f"192.0.2.{n}"), f"X-Forwarded-For: 192.0.2.{n}") for n in range(1, 9)
+            ]
+            if 429 not in other_rotated:
+                raise AssertionError(f"[{label}] a non-tunnel container chose its own bucket: {other_rotated}")
+            print(f"PASS [{label}] a spoofed header from another container is ignored: {other_rotated}")
+
+            # 4. So is the gateway: the route Funnel traffic and CT101 itself use.
+            gateway_rotated = [
+                status(mapped, claim_path, "POST", (cf(f"192.0.2.{n}"), f"X-Forwarded-For: 192.0.2.{n}"))
+                for n in range(1, 9)
+            ]
+            if 429 not in gateway_rotated:
+                raise AssertionError(f"[{label}] the gateway route chose its own bucket: {gateway_rotated}")
+            print(f"PASS [{label}] a spoofed header through the published port is ignored: {gateway_rotated}")
+
+            # 5. What upstream receives, on each route. /api/build is proxied to the
+            # backend and allowlisted without a gate.
+            spoof = ("X-Forwarded-For: 192.0.2.7, 203.0.113.77", "X-Real-IP: 192.0.2.8")
+            expected = {
+                "tunnel": (tunnel, (cf("203.0.113.77"), *spoof), f"xff=203.0.113.77, {tunnel_ip}|real=|cf="),
+                "other": (other, (cf("203.0.113.77"), *spoof), f"xff={other_ip}|real=|cf="),
+                # Fails closed: no usable header means the shared peer key.
+                "tunnel-no-header": (tunnel, spoof, f"xff={tunnel_ip}, {tunnel_ip}|real=|cf="),
+                "tunnel-bad-header": (tunnel, (cf("not-an-address"), *spoof), f"xff={tunnel_ip}, {tunnel_ip}|real=|cf="),
+            }
+            for route, (peer, headers, want) in expected.items():
+                code, body = from_peer(peer, "/api/build", "GET", headers)
+                if code != 200 or body.strip() != want:
+                    raise AssertionError(f"[{label}] upstream view on {route}: {code} {body!r}, want {want!r}")
+            print(f"PASS [{label}] upstream receives only the address the edge resolved, on every route")
+
+            # 6. The access log agrees, and still records the header as it arrived.
+            time.sleep(0.5)
+            log_streams = subprocess.run(("docker", "logs", edge), capture_output=True, text=True)
+            entries = []
+            for line in (log_streams.stdout + log_streams.stderr).splitlines():
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            matching = [e for e in entries if e.get("inbound_x_forwarded_for") == "192.0.2.7, 203.0.113.77"]
+            resolved = {e.get("request", {}).get("client_ip") for e in matching}
+            if resolved != {"203.0.113.77", other_ip, tunnel_ip}:
+                raise AssertionError(f"[{label}] access log client_ip values: {resolved}")
+            print(f"PASS [{label}] access log client_ip matches each route; inbound X-Forwarded-For kept as sent")
         finally:
-            subprocess.run(("docker", "rm", "-f", name), capture_output=True)
+            for container in (edge, stub, tunnel, other):
+                subprocess.run(("docker", "rm", "-f", container), capture_output=True)
             subprocess.run(("docker", "network", "rm", network), capture_output=True)
 
 
@@ -2037,12 +2129,11 @@ def main() -> None:
     else:
         raise AssertionError("RED control failed: a guard blind to literal `#` passed the traversal proof")
 
-    # Phase 4 (infra#657, #884, backend#1229): from any peer other than the
-    # pinned wrfcoin-ingress gateway -- here the harness's default-bridge
-    # gateway -- the shipped funnel edge must not let a client choose its own
-    # rate-limit bucket via X-Forwarded-For, in EITHER header shape. The
-    # pass-through shape below -- a rotating spoof with nothing appended -- is
-    # the one #885's `private_ranges` + strict did not close.
+    # Phase 4 (infra#657, #884): from any peer other than the tunnel container
+    # -- here the harness's default-bridge gateway -- the shipped funnel edge
+    # must not let a client choose its own rate-limit bucket, in any header
+    # shape. The pass-through shape below -- a rotating spoof with nothing
+    # appended -- is the one #885's `private_ranges` + strict did not close.
     funnel_config = (EDGE / "Caddyfile.funnel").read_text(encoding="utf-8")
     prove_xff_cannot_reset_the_limit(
         "funnel-edge-xff-appended", funnel_config, "8444"
@@ -2053,9 +2144,15 @@ def main() -> None:
         "8444",
         header_for=lambda n: f"X-Forwarded-For: 203.0.113.{n}",
     )
+    prove_xff_cannot_reset_the_limit(
+        "funnel-edge-cf-connecting-ip",
+        funnel_config,
+        "8444",
+        header_for=lambda n: f"Cf-Connecting-IP: 203.0.113.{n}",
+    )
 
     # Phase 5 (RED control for phase 4): widen the shipped single-hop trust to
-    # #885's `private_ranges` and the pass-through bypass MUST succeed (the
+    # `private_ranges` and the Cf-Connecting-IP bypass MUST succeed (the
     # harness peer is a private address). Without this control phase 4 could
     # pass for an unrelated reason -- a limiter that refused everything, say --
     # and would keep passing if someone widened the trusted set.
@@ -2065,27 +2162,27 @@ def main() -> None:
         line.strip() for line in funnel_config.splitlines()
         if line.strip().startswith("trusted_proxies") and not line.strip().startswith("trusted_proxies_strict")
     ]
-    if active_trust != ["trusted_proxies static 10.251.0.1/32"]:
+    if active_trust != ["trusted_proxies static 10.251.0.13/32"]:
         raise AssertionError(
             "RED control could not be built: Caddyfile.funnel must trust exactly "
-            f"`trusted_proxies static 10.251.0.1/32` (backend#1229), found {active_trust}; "
+            f"`trusted_proxies static 10.251.0.13/32`, found {active_trust}; "
             "phase 4 would be testing a different configuration than it claims."
         )
     retrusted = funnel_config.replace(
-        "trusted_proxies static 10.251.0.1/32", "trusted_proxies static private_ranges", 1
+        "trusted_proxies static 10.251.0.13/32", "trusted_proxies static private_ranges", 1
     )
     try:
         prove_xff_cannot_reset_the_limit(
             "RED-retrusted",
             retrusted,
             "8444",
-            header_for=lambda n: f"X-Forwarded-For: 203.0.113.{n}",
+            header_for=lambda n: f"Cf-Connecting-IP: 203.0.113.{n}",
         )
     except AssertionError:
-        print("PASS [RED control] widening trust to private_ranges re-opens the pass-through bypass, as measured")
+        print("PASS [RED control] widening trust to private_ranges lets a client choose its bucket, as measured")
     else:
         raise AssertionError(
-            "RED control failed: the pass-through spoof was refused even WITH "
+            "RED control failed: the spoofed header was refused even WITH "
             "private_ranges trusted, so phase 4 is not testing what it claims"
         )
 
@@ -2095,11 +2192,22 @@ def main() -> None:
     # records the inbound header as received.
     prove_inbound_xff_is_logged_and_client_ip_is_the_peer(funnel_config, "8444")
 
-    # Phase 7 (backend#1229): from the pinned wrfcoin-ingress gateway -- the
-    # only peer tailscaled's funnel traffic can arrive from -- the header
-    # tailscaled wrote IS honoured, so two visitors get independent buckets and
-    # the backend receives "<client>, <gateway>".
-    prove_ingress_gateway_gives_per_client_buckets(funnel_config, "8444")
+    # Phase 7: from the tunnel container, and only from it, Cloudflare's header
+    # is honoured, so two visitors get independent buckets and the backend
+    # receives "<visitor>, <tunnel>".
+    prove_tunnel_address_gives_per_visitor_buckets(funnel_config, "8444")
+
+    # Phase 7b (RED control for phase 7): trust the whole subnet instead of the
+    # one address and another container's header MUST start choosing its bucket.
+    try:
+        prove_tunnel_address_gives_per_visitor_buckets(
+            funnel_config.replace("trusted_proxies static 10.251.0.13/32", "trusted_proxies static 10.251.0.0/24", 1),
+            "8444",
+        )
+    except AssertionError as error:
+        print(f"PASS [RED control] trusting the subnet fails the tunnel proof: {error}")
+    else:
+        raise AssertionError("RED control failed: subnet-wide trust passed the tunnel proof")
 
 
 if __name__ == "__main__":
