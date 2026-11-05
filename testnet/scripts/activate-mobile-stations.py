@@ -12,22 +12,33 @@ import signal
 import shlex
 import stat
 import subprocess
+import sys
 import tempfile
 from urllib.parse import urlsplit
 
 # core4#3388: CALIBRATED_MOBILE_STATION_BATCH_ROWS; actual CLI bytes remain authoritative.
-CHAIN_ID = os.environ.get('WRFCOIN_CHAIN_ID', '777')
+# Chain 888 is the live testnet. Another id is for a throwaway rehearsal chain only:
+# the node's own /network/info must report this id, so an override cannot reach 888.
+LIVE_CHAIN_ID = '888'
+CHAIN_ID = os.environ.get('WRFCOIN_CHAIN_ID', LIVE_CHAIN_ID)
 SAFE_ROWS = 21
 MAX_BYTES = 65536
 WINDOW = 150
 BUILD_AGE = 100
 SUBMIT_AGE = 120
-CLI_SHA = '604af0308e57d9ae82b75da9b8845fb7f440e2ed55a7f15671dd92d4b0d0a3d7'
-# core4 release every producer must run before anything is signed or submitted.
-RELEASE_REVISION = '620902bf7b01cf09b11b2bb0ff5a22571e7cb694'
 REVISION_LABEL = 'org.opencontainers.image.revision'
 PRODUCER_COUNT = 3
-PUBLIC_PATHS = ('/readyz', '/network/info')  # tokenless on core4 620902bf7
+READING_MAX_AGE = 300  # a producer revision taken on another host goes stale after this
+READING_MAX_SKEW = 30  # hosts' clocks may differ by this much for such a reading
+PUBLIC_PATHS = ('/readyz', '/network/info')  # tokenless
+# `active_features` is served here, not on /transactions/oracle/status.
+FEATURES_PATH = '/transactions/oracle/pending?limit=1'
+# Every chain 888 registration depends on these. All were scheduled at genesis.
+REQUIRED_FEATURES = ('station_active_reward_gate', 'station_owner_actions',
+                     'station_owner_consent', 'station_registration_nonce')
+# From this feature a registration must carry integer coordinates, or it applies as
+# nothing at all. Neither the exporter nor this tool builds that form yet.
+UNSUPPORTED_FEATURES = ('station_coordinates_fixed_point',)
 GOV = 'e7bec166ad446314d26fb7526bfa8cec1b363b438440262fb001f7b04b20bf00'
 ROW_KEYS = {'station_id', 'owner_address', 'owner_pubkey', 'owner_signature',
             'latitude', 'longitude', 'hardware_model', 'provenance_class',
@@ -139,6 +150,28 @@ def node_json(args, directory, token, path):
     return status, response
 
 
+def active_features(args, directory, token):
+    """Names of the features in force at the height the next block mines at."""
+    status, response = node_json(args, directory, token, FEATURES_PATH)
+    require(status == 200, 'feature read refused; cannot choose the registration format')
+    features = data_object(response).get('active_features')
+    require(isinstance(features, list) and all(isinstance(f, str) for f in features),
+            'feature read shape invalid; cannot choose the registration format')
+    return features
+
+
+def feature_gate(args, directory, token):
+    """Stop unless this chain's features are the ones this tool can register under."""
+    features = active_features(args, directory, token)
+    for name in UNSUPPORTED_FEATURES:
+        require(name not in features, f'{name} is active; this tool cannot build that form; nothing signed')
+    if CHAIN_ID == LIVE_CHAIN_ID:
+        for name in REQUIRED_FEATURES:
+            require(name in features, f'required feature {name} is not active; nothing signed')
+        require(args.registration_format != 'v1', 'chain 888 refuses the v1 format; nothing signed')
+    print(f'FEATURES: {len(features)} active; required set present')
+
+
 def registration_format(args, directory, token):
     """v1 or v2: which governance registration format the node accepts right now.
 
@@ -149,11 +182,7 @@ def registration_format(args, directory, token):
     """
     if args.registration_format in ('v1', 'v2'):
         return args.registration_format
-    status, response = node_json(args, directory, token, '/transactions/oracle/status')
-    require(status == 200, 'feature read refused; cannot choose the registration format')
-    features = data_object(response).get('active_features')
-    require(isinstance(features, list) and all(isinstance(f, str) for f in features),
-            'feature read shape invalid; cannot choose the registration format')
+    features = active_features(args, directory, token)
     return 'v2' if 'station_registration_nonce' in features else 'v1'
 
 
@@ -272,7 +301,7 @@ def submit_batch(args, directory, token, submit, stamp, rows):
 def row_states(args, directory, token, rows):
     """Per-row read-back state: 'pending', 'observed' or 'unverified'.
 
-    FAIL CLOSED. core4 620902bf7 has no route that says a specific registration
+    FAIL CLOSED. core4 has no route that says a specific registration
     applied: the station record keeps no registration tx id or inclusion height,
     the owner ledger has no last-applied-registration identity, and
     `/transactions/{id}/status` says only that a tx is in a block, while an
@@ -330,6 +359,26 @@ def handoff_list(batch_id, rows, states):
         print(f'HANDOFF ROW {index}/{len(rows)}: {row["station_id"]} owner {short_owner(row["owner_address"])} {state}')
 
 
+def synced(args, row):
+    """1 if the backend shows this row on_chain, else 0. Reads only."""
+    # Station IDs were validated before they became SQL literals. No DB mutation.
+    sql = ("SELECT count(*) FROM mobile_station_registrations WHERE station_id="
+           f"'{row['station_id']}' AND owner_address='{row['owner_address']}' AND status='on_chain'")
+    raw = command(['docker', 'exec', args.postgres_container, 'psql', '-U', 'wrfcoin',
+                   '-d', 'wrfcoin', '-At', '-c', sql], 'backend status read failed').strip()
+    require(raw in ('0', '1'), 'backend row status invalid')
+    return int(raw)
+
+
+def report_sync_once(args, rows):
+    """Evidence for the readback only: it never turns UNVERIFIED into a pass."""
+    try:
+        print(f'SYNC NOW: {sum(synced(args, row) for row in rows)}/{len(rows)} on_chain '
+              '(sync runs on a timer; a low count here is normal; not a pass)')
+    except Stop:
+        print('SYNC NOW: not read')
+
+
 def poll(args, directory, token, rows, receipt=None):
     batch_id = directory.name
     for attempt in range(1, 7):
@@ -349,21 +398,17 @@ def poll(args, directory, token, rows, receipt=None):
         if receipt:
             receipt('unverified', states)
         handoff_list(batch_id, rows, states)
+        report_sync_once(args, rows)
         raise Unverified(f'{states.count("unverified")}/{len(rows)} rows UNVERIFIED: stations are on '
                          'the node but no route shows this registration applied; this is NOT a pass; '
                          'give the HANDOFF list and the receipt to the manager for readback, then '
                          'record it with --mark-reconciled; do not resubmit')
-    # Station IDs were validated before they became SQL literals. No DB mutation.
     for attempt in range(1, 13):
         count = 0
         for index, row in enumerate(rows, 1):
-            sql = ("SELECT count(*) FROM mobile_station_registrations WHERE station_id="
-                   f"'{row['station_id']}' AND owner_address='{row['owner_address']}' AND status='on_chain'")
-            raw = command(['docker', 'exec', args.postgres_container, 'psql', '-U', 'wrfcoin',
-                           '-d', 'wrfcoin', '-At', '-c', sql], 'backend status read failed').strip()
-            require(raw in ('0', '1'), 'backend row status invalid')
-            count += int(raw)
-            print(f'ROW {index}/{len(rows)}: ' + ('on_chain' if raw == '1' else 'pending sync'))
+            found = synced(args, row)
+            count += found
+            print(f'ROW {index}/{len(rows)}: ' + ('on_chain' if found else 'pending sync'))
         print(f'SYNC: {count}/{len(rows)} on_chain; attempt {attempt}')
         if count == len(rows):
             if receipt:
@@ -379,13 +424,14 @@ def poll(args, directory, token, rows, receipt=None):
     raise Stop('backend sync pending; ask manager; never update DB or resubmit blindly')
 
 
-def parse_producers(values):
-    """`--producer NAME=CONTAINER` or `NAME=DOCKER_HOST::CONTAINER`, exactly three, distinct names.
+def parse_producers(values, readings=()):
+    """`--producer NAME=CONTAINER` or `NAME=DOCKER_HOST::CONTAINER`, plus any
+    `--producer-reading`, adding up to exactly three distinct names.
 
     Endpoints are operator inputs, never defaults: the tool has no producer
     address of its own.
     """
-    require(len(values) == PRODUCER_COUNT, 'exactly three --producer inputs are required')
+    require(len(values) + len(readings) == PRODUCER_COUNT, 'exactly three producers are required')
     producers = {}
     for value in values:
         name, separator, target = value.partition('=')
@@ -400,22 +446,64 @@ def parse_producers(values):
     return producers
 
 
-def producer_fence(producers):
-    """Refuse unless ALL producers report the exact release image revision.
+def parse_readings(values, names=()):
+    """`--producer-reading NAME=REVISION@UNIX_SECONDS`: a revision read on another host."""
+    readings = {}
+    for value in values:
+        match = re.fullmatch(r'([A-Za-z0-9._-]{1,64})=([^@]*)@([0-9]{1,15})', value)
+        require(match and match.group(1) not in readings and match.group(1) not in names,
+                '--producer-reading must be NAME=REVISION@UNIX_SECONDS; names distinct')
+        readings[match.group(1)] = (match.group(2), int(match.group(3)))
+    return readings
 
-    core4 620902bf7 exposes no tokenless build revision (`/network/info` has only
-    the crate version; `/network/upgrade` carries the signed notice's commit, not
-    the running binary's), so the revision is read from each producer's container
-    image label. Any missing label, failed read or different revision stops the
-    run before a signature or submission.
+
+def producer_fence(producers, readings=None):
+    """Refuse unless all three producers run one and the same build, read live.
+
+    Nothing is pinned: a pinned revision goes stale at the next release and then
+    refuses every run. Agreement is what matters here, because a split producer set
+    is a rolling upgrade in progress. The revision comes from each container's image
+    label. Any missing label, stopped container or failed read stops the run before a
+    signature or submission.
+
+    The key host cannot always reach every producer, so a revision read on another
+    host may be passed in as a reading. It must be recent and full length, and a
+    reading never replaces the direct read of the node this run submits to.
     """
+    readings = readings or {}
+    revisions = {}
     for name, (host, container) in producers.items():
         argv = ['docker'] + (['--host', host] if host else []) + [
-            'inspect', '--format', '{{index .Config.Labels "' + REVISION_LABEL + '"}}', container]
-        revision = command(argv, 'producer revision read failed; nothing signed').strip()
-        require(revision == RELEASE_REVISION,
-                f'producer {name} is not on release {RELEASE_REVISION[:9]}; nothing signed')
-    print(f'FENCE: {len(producers)}/{PRODUCER_COUNT} producers on {RELEASE_REVISION[:9]}')
+            'inspect', '--format',
+            '{{.State.Running}}|{{index .Config.Labels "' + REVISION_LABEL + '"}}', container]
+        running, _, revision = command(argv, 'producer revision read failed; nothing signed').strip().partition('|')
+        require(running == 'true', f'producer {name} is not running; nothing signed')
+        revisions[name] = revision
+    current = now() if readings else 0
+    for name, (revision, taken) in readings.items():
+        require(-READING_MAX_SKEW <= current - taken <= READING_MAX_AGE,
+                f'producer {name} reading is stale; take it again; nothing signed')
+        revisions[name] = revision
+    for name, revision in revisions.items():
+        require(re.fullmatch(r'[0-9a-f]{40}', revision), f'producer {name} has no revision; nothing signed')
+    require(len(set(revisions.values())) == 1, 'producers run different builds; nothing signed')
+    print(f'FENCE: {len(revisions)}/{PRODUCER_COUNT} producers on {next(iter(revisions.values()))[:9]}')
+
+
+def confirm_yes(count):
+    """The owner's YES: nothing can be undone after this. A terminal is required."""
+    require(sys.stdin.isatty(), 'a real activation needs a terminal for the YES; nothing signed')
+    print(f'ABOUT TO SIGN AND SUBMIT: up to {count} stations to chain {CHAIN_ID}. There is no undo.', flush=True)
+    print('Type YES to continue: ', end='', flush=True)
+    require(sys.stdin.readline().strip() == 'YES', 'owner did not type YES; nothing signed')
+
+
+def grid_coordinate(value, limit):
+    """True only for a number inside limit that sits on the 0.1 degree grid."""
+    if type(value) not in (int, float) or abs(value) > limit:
+        return False
+    tenths = value * 10
+    return abs(tenths - round(tenths)) < 1e-9
 
 
 def receipt_writer(args, batch_id, stamp, fmt, rows):
@@ -427,12 +515,14 @@ def receipt_writer(args, batch_id, stamp, fmt, rows):
     marker = args.complete_marker
     current = {'stamp': stamp}
 
-    def write(status, states=None, stamp=None):
+    def write(status, states=None, stamp=None, transaction_ids=None):
         if stamp is not None:
             current['stamp'] = stamp  # a restamped rebuild signs and POSTs this one
+        if transaction_ids is not None:
+            current['transaction_ids'] = transaction_ids  # what the manager reads back
         body = {'version': 'msr_batch_receipt_v1', 'batch_id': batch_id, 'status': status,
                 'submitted_at': current['stamp'], 'registration_format': fmt,
-                'complete_marker': marker,
+                'complete_marker': marker, 'transaction_ids': current.get('transaction_ids', []),
                 'rows': [{'station_id': r['station_id'], 'owner_prefix': short_owner(r['owner_address']),
                           'expected_nonce': r.get('expected_nonce'),
                           'state': (states[i] if states else 'unknown')}
@@ -489,7 +579,11 @@ def mark_reconciled(args):
 def activate(args):
     os.umask(0o077)
     require(1 <= args.limit <= SAFE_ROWS, 'limit must be 1..21; split larger groups')
-    producers = parse_producers(args.producer)
+    producers = parse_producers(args.producer, args.producer_reading)
+    readings = parse_readings(args.producer_reading, producers)
+    require(not readings or any(not host and container == args.node_container
+                                for host, container in producers.values()),
+            'a producer reading needs a direct read of the node this run submits to')
     url = urlsplit(args.node_url)
     require(url.scheme in ('http', 'https') and url.hostname and not url.username and
             not url.password and not url.query and not url.fragment and url.path in ('', '/'),
@@ -500,8 +594,9 @@ def activate(args):
     with Path(args.cli).open('rb') as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(chunk)
-    require(re.fullmatch(r'[0-9a-f]{64}', args.cli_sha) and digest.hexdigest() == args.cli_sha,
-            'CLI digest mismatch')
+    # The digest comes from the release's build receipt, never from the binary itself.
+    require(args.cli_sha and re.fullmatch(r'[0-9a-f]{64}', args.cli_sha), '--cli-sha is required')
+    require(digest.hexdigest() == args.cli_sha, 'CLI digest mismatch')
     key = Path(args.governance_key)
     require(key.is_file() and stat.S_IMODE(key.stat().st_mode) == 0o600,
             'governance key must exist with mode 0600')
@@ -510,7 +605,7 @@ def activate(args):
                     'clock sync preflight failed').strip() == 'yes', 'clock is not synchronized')
     if args.submitted_at is not None:
         age(args.submitted_at)  # Refuse an already-expired stamp before export or signing.
-    producer_fence(producers)  # before any token read, signature or submission
+    producer_fence(producers, readings)  # before any token read, signature or submission
     require(container_env(args.backend_container).get('STATION_CHAIN_SYNC_ENABLED') == 'true',
             'backend chain sync is not enabled')
     token = container_env(args.node_container).get('WRFCOIN_OPERATOR_TOKEN', '')
@@ -531,6 +626,7 @@ def activate(args):
         require(len(dates) == 1, 'node clock evidence unavailable')
         remote_time = email.utils.parsedate_to_datetime(dates[0].strip()).timestamp()
         require(abs(remote_time - now()) <= 5, 'node and key-host clocks differ')
+        feature_gate(args, directory, token)
         fmt = registration_format(args, directory, token)
         print(f'FORMAT: {fmt} registrations')
         # v2 preflight: already-registered db_only rows need sync/readback, not another POST.
@@ -548,6 +644,8 @@ def activate(args):
                                 '/transactions/station/registrations/' + station)
             require(status == 404, 'pending station already registered or read refused; ask manager')
         print('PREFLIGHT PASS: clock, node, sync, CLI and key modes')
+        if not args.dry_run:
+            confirm_yes(len(preview))  # before the stamp: the signing window must not run during it
         stamp = args.submitted_at if args.submitted_at is not None else now()
         batch_id = directory.name
         exported = '/tmp/' + batch_id + '.json'
@@ -583,6 +681,9 @@ def activate(args):
                         row['data_quality_tier'] == 'unverified' and row['provenance_class'] == 'real' and
                         re.fullmatch(r'mob-[0-9a-f]{32}', row['station_id']) and
                         re.fullmatch(r'0x[0-9a-fA-F]{40}', row['owner_address']), 'batch row invalid')
+                # Public forever once mined: a stranger's location never goes finer than 0.1 degree.
+                require(grid_coordinate(row['latitude'], 90) and grid_coordinate(row['longitude'], 180),
+                        'batch row is not on the 0.1 degree grid; nothing signed')
             print(f'EXPORTED: {len(rows)} rows')
             require(not args.require_count or len(rows) == args.limit,
                     'requested batch count unavailable; nothing signed or submitted')
@@ -603,8 +704,11 @@ def activate(args):
                 submit = build(args, directory, token, rows, stamp, fmt)
                 print(f'RESTAMPED: {len(rows)} rows; one rebuild; no prior POST')
             receipt('submit-attempted', stamp=stamp)  # before the POST: an ambiguous POST leaves a record
-            submit_batch(args, directory, token, submit, stamp, rows)
-            receipt('submitted', stamp=stamp)
+            admitted = submit_batch(args, directory, token, submit, stamp, rows)
+            ids = admitted.get('transaction_ids')
+            receipt('submitted', stamp=stamp, transaction_ids=[
+                i for i in ids if isinstance(i, str) and re.fullmatch(r'[0-9a-fA-F]{1,128}', i)
+            ] if isinstance(ids, list) else [])
             # Coordinate-bearing local files removed before potentially long inclusion/sync polls.
             for path in ('cli.json', 'artifact.json', 'submit.json', 'http.json', 'http.headers'):
                 (directory / path).unlink(missing_ok=True)
@@ -621,12 +725,15 @@ def stage(args):
     require(1 <= args.limit <= SAFE_ROWS, 'limit must be 1..21; split larger groups')
     require(not args.dry_run and args.submitted_at is None,
             'staging requires fresh runtime stamps and separate dry-run steps')
+    require(not args.producer_reading, 'staged steps run later, so a reading would go stale; use --producer')
     parse_producers(args.producer)
+    require(args.cli_sha and re.fullmatch(r'[0-9a-f]{64}', args.cli_sha), '--cli-sha must be a full digest')
     os.umask(0o077)
     directory = Path(args.stage_dir).absolute()
     directory.mkdir(mode=0o700)  # Never replace a previous staged owner run.
     launcher = Path(__file__).absolute()
     common = ['python3', str(launcher), '--require-count', '--cli', str(Path(args.cli).absolute()),
+              '--cli-sha', args.cli_sha,
               '--governance-key', str(Path(args.governance_key).absolute()), '--governance-pubkey', args.governance_pubkey,
               '--node-url', args.node_url, '--backend-container', args.backend_container,
               '--node-container', args.node_container, '--postgres-container', args.postgres_container]
@@ -636,8 +743,6 @@ def stage(args):
         common.append('--restamp-once')
     if args.registration_format != 'auto':
         common += ['--registration-format', args.registration_format]
-    if args.cli_sha_explicit:
-        common += ['--cli-sha', args.cli_sha]
     batches = (args.count + args.limit - 1) // args.limit
     instructions = ['# Owner-staged phone activation', '',
                     'Run each line on the governance key host, in order. Inspect scripts first.',
@@ -684,6 +789,8 @@ def main():
     parser.add_argument('--postgres-container', default='wrfcoin-testnet-postgres')
     parser.add_argument('--producer', action='append', default=[],
                         help='NAME=CONTAINER or NAME=DOCKER_HOST::CONTAINER; give exactly three')
+    parser.add_argument('--producer-reading', action='append', default=[],
+                        help='NAME=REVISION@UNIX_SECONDS, a revision read on another host just now')
     parser.add_argument('--receipt-dir')
     parser.add_argument('--complete-marker')
     parser.add_argument('--mark-reconciled', metavar='BATCH_ID')
@@ -697,9 +804,6 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r'[1-9][0-9]*', CHAIN_ID) or CHAIN_ID == '1':
         parser.error('invalid testnet chain id')
-    args.cli_sha_explicit = args.cli_sha is not None
-    if args.cli_sha is None:
-        args.cli_sha = CLI_SHA
     def interrupted(_signal, _frame):
         raise Stop('interrupted; read back before any new run')
     signal.signal(signal.SIGTERM, interrupted)

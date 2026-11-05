@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import pty
 import subprocess
 import sys
 import tempfile
@@ -12,9 +13,9 @@ REPO = Path(sys.argv.pop(1)).resolve()
 FAKE = r'''#!/usr/bin/env python3
 import sys,os,json,pathlib,email.utils,stat,signal
 p=pathlib.Path(os.environ['FAKE_STATE']);s=json.loads(p.read_text());a=sys.argv[1:];name=pathlib.Path(sys.argv[0]).name
-s['events'].append([name,a]);scenario=s['scenario'];now=1790000000+s['elapsed']
+s['events'].append([name,a]);scenario=s['scenario'];now=1790000000+s['elapsed'];CHAIN=os.environ['WRFCOIN_CHAIN_ID']
 def save():p.write_text(json.dumps(s))
-def row(i=0):return dict(station_id='mob-'+format(i+1,'032x'),owner_address='0x'+format(i+1,'040x'),owner_pubkey='c'*64,owner_signature='d'*128,latitude=44.9,longitude=-93.2,hardware_model='phone-barometer',provenance_class='real',data_quality_tier='unverified',submitted_at=s.get('stamp',now))
+def row(i=0):return dict(station_id='mob-'+format(i+1,'032x'),owner_address='0x'+format(i+1,'040x'),owner_pubkey='c'*64,owner_signature='d'*128,latitude=44.95 if scenario=='live-off-grid' else 44.9,longitude=-93.2,hardware_model='phone-barometer',provenance_class='real',data_quality_tier='unverified',submitted_at=s.get('stamp',now))
 if name=='date':print(now)
 elif name=='timedatectl':print('no' if scenario=='clock' else 'yes')
 elif name=='sleep':s['elapsed']+=int(a[0])
@@ -22,7 +23,8 @@ elif name=='docker':
  if a[0]=='inspect' and 'org.opencontainers.image.revision' in ' '.join(a):
   # Producer fence: every producer reports the release revision unless a scenario ages one.
   if scenario=='producer-read-error' and a[-1]=='prod-c':save();sys.exit(1)
-  print('0'*40 if scenario=='producer-old' and a[-1]=='prod-b' else '620902bf7b01cf09b11b2bb0ff5a22571e7cb694')
+  if scenario=='producer-stopped' and a[-1]=='prod-b':print('false|'+'a'*40);save();sys.exit(0)
+  print('true|'+('0'*40 if scenario=='producer-old' and a[-1]=='prod-b' else 'a'*40))
  elif a[0]=='inspect':
   if 'backend' in a[-1]:print(json.dumps(['STATION_CHAIN_SYNC_ENABLED='+('false' if scenario=='sync-off' else 'true')]))
   else:print(json.dumps(['WRFCOIN_OPERATOR_TOKEN=TOKEN_SENTINEL_PRIVATE']))
@@ -34,7 +36,7 @@ elif name=='docker':
   if scenario=='export-fail':save();sys.exit(1)
  elif 'cat' in a:
   if scenario=='cat-fail':print('KEY_SENTINEL_PRIVATE');save();sys.exit(1)
-  print(json.dumps(s['rows'] if '-cli.json' in a[-1] else dict(version='mobile_station_registration_export_v1',chainId='777',networkId='testnet',stations=s['rows'])))
+  print(json.dumps(s['rows'] if '-cli.json' in a[-1] else dict(version='mobile_station_registration_export_v1',chainId=CHAIN,networkId='testnet',stations=s['rows'])))
  elif 'rm' in a:
   s['cleanups']+=1
   if scenario=='cleanup-fail':print('ENV_SENTINEL_PRIVATE');save();sys.exit(1)
@@ -54,7 +56,7 @@ elif name=='wrfcoin':
  if scenario.startswith('post-age-'):
   s['elapsed']+=110 if s['builds']==1 else int(scenario.rsplit('-',1)[1])
  if scenario=='build-fail':print('TOKEN_SENTINEL_PRIVATE 44.9876543');save();sys.exit(1)
- out=pathlib.Path(a[a.index('--out')+1]);out.write_text(json.dumps(dict(version='station_registration_artifact_v1',chain_id='777',network_id='testnet',transactions=[dict(station_id=x['station_id'],submitted_at=x['submitted_at']) for x in rows])))
+ out=pathlib.Path(a[a.index('--out')+1]);out.write_text(json.dumps(dict(version='station_registration_artifact_v1',chain_id=CHAIN,network_id='testnet',transactions=[dict(station_id=x['station_id'],submitted_at=x['submitted_at']) for x in rows])))
  if scenario=='huge-artifact':out.write_text(out.read_text()+' '*65536)
  if scenario=='interrupted':save();os.kill(os.getppid(),signal.SIGTERM);sys.exit(1)
  print(json.dumps(dict(self_verified=scenario!='unverified',artifact=str(out),registrations=[])))
@@ -69,14 +71,18 @@ elif name=='curl':
  status=200;body={}
  if url.endswith('/readyz'):
   status=503 if scenario=='health' else 200;body={'ready':True}
- elif url.endswith('/transactions/oracle/status'):body=dict(active_features=[])
- elif url.endswith('/network/info'):body=dict(chain_id='999' if scenario=='identity' else '777',network_id='testnet',chain_height=123)
+ elif url.endswith('/transactions/oracle/pending?limit=1'):
+  required=['station_active_reward_gate','station_owner_actions','station_owner_consent','station_registration_nonce']
+  body=dict(active_features=[] if not scenario.startswith('live') else required[:-1] if scenario=='live-feature-missing' else required+['station_coordinates_fixed_point'] if scenario=='live-fixed-point' else required)
+ elif url.endswith('/owner-ledger'):
+  status=404;body=dict(ok=False,error=dict(code='NOT_FOUND',message='station is not registered'))
+ elif url.endswith('/network/info'):body=dict(chain_id='999' if scenario=='identity' else CHAIN,network_id='testnet',chain_height=123)
  elif '--data-binary' in a:
   data=json.loads(pathlib.Path(a[a.index('--data-binary')+1][1:]).read_text());assert set(data)=={'chain_id','network_id','transactions'}
   # The fake node models the protocol window, not the wrapper's POST margin.
   assert 0<=now-data['transactions'][0]['submitted_at']<=150
   s['posts']+=1;status=422 if scenario=='rejection' else 201
-  body=dict(accepted=2 if scenario=='accepted-mismatch' else len(s['rows']))
+  body=dict(accepted=2 if scenario=='accepted-mismatch' else len(s['rows']),transaction_ids=['ab'*32 for _ in s['rows']])
   if scenario.startswith('ambiguous'):save();sys.exit(28)
  else:
   preflight=s['posts']==0
@@ -92,7 +98,20 @@ save()
 
 
 class OwnerFlow(unittest.TestCase):
-    def run_flow(self, scenario='ok', extra=(), staged=False, relative_paths=False):
+    @staticmethod
+    def answered(argv, answer, **options):
+        """Run with a terminal on stdin that already holds the owner's answer."""
+        if answer is None:
+            return subprocess.run(argv, stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=30, **options)
+        master, slave = pty.openpty()
+        try:
+            os.write(master, answer.encode() + b'\n')
+            return subprocess.run(argv, stdin=slave, text=True, capture_output=True, timeout=30, **options)
+        finally:
+            os.close(slave)
+            os.close(master)
+
+    def run_flow(self, scenario='ok', extra=(), staged=False, relative_paths=False, answer='YES'):
         with tempfile.TemporaryDirectory(prefix='sol-a-activation-test-') as temp:
             root = Path(temp)
             tools = root / 'bin'
@@ -107,14 +126,16 @@ class OwnerFlow(unittest.TestCase):
             key.chmod(0o644 if scenario=='key-mode' else 0o600)
             state = root / 'state.json'
             state.write_text(json.dumps(dict(scenario=scenario,elapsed=0,events=[],posts=0,builds=0,cleanups=0,build_stamps=[])))
-            env = dict(os.environ, PATH=str(tools)+':'+os.environ['PATH'], FAKE_STATE=str(state), TMPDIR=str(root))
+            # Other flows run the v1 path on a throwaway chain id; `live` scenarios run chain 888.
+            env = dict(os.environ, PATH=str(tools)+':'+os.environ['PATH'], FAKE_STATE=str(state), TMPDIR=str(root),
+                       WRFCOIN_CHAIN_ID='888' if scenario.startswith('live') else '777')
             cli_arg = str((tools/'wrfcoin').relative_to(root)) if relative_paths else str(tools/'wrfcoin')
             key_arg = str(key.relative_to(root)) if relative_paths else str(key)
             argv = ['bash', str(REPO/'testnet/scripts/activate-mobile-stations.sh'), '--cli', cli_arg, '--cli-sha', hashlib.sha256(fake.read_bytes()).hexdigest(), '--governance-key', key_arg, '--producer', 'a=prod-a', '--producer', 'b=prod-b', '--producer', 'c=prod-c', *extra]
             steps = root/'owner steps'
             if staged:
                 argv += ['--stage-dir',str(steps),'--count','23']
-            result = subprocess.run(argv, cwd=root, env=env, text=True, capture_output=True, timeout=30)
+            result = self.answered(argv, answer, cwd=root, env=env)
             if staged:
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 self.assertEqual(json.loads(state.read_text())['events'],[], 'staging must be offline')
@@ -129,7 +150,7 @@ class OwnerFlow(unittest.TestCase):
                 self.assertIn('--receipt-dir',run_text);self.assertIn('batch-1.complete',run_text)
                 self.assertNotIn('--receipt-dir',(steps/'001-dry-run.sh').read_text())
                 def run_step(name):
-                    return subprocess.run(['bash',str(steps/name)],env=env,text=True,capture_output=True,timeout=30)
+                    return self.answered(['bash',str(steps/name)], answer, env=env)
                 self.assertNotEqual(run_step('003-dry-run.sh').returncode,0)
                 self.assertNotEqual(run_step('002-activate.sh').returncode,0)
                 self.assertEqual(json.loads(state.read_text())['events'],[])
@@ -163,9 +184,60 @@ class OwnerFlow(unittest.TestCase):
             self.assertNotIn('KEY_SENTINEL_PRIVATE', result.stdout+result.stderr)
             self.assertNotIn('ENV_SENTINEL_PRIVATE', result.stdout+result.stderr)
             self.assertNotIn('44.9876543', result.stdout+result.stderr)
-            self.assertNotIn('mob-00000000000000000000000000000001', result.stdout+result.stderr)
+            if result.returncode != 3:  # exit 3 is the one case that lists station IDs, for readback
+                self.assertNotIn('mob-00000000000000000000000000000001', result.stdout+result.stderr)
+            if scenario == 'live-readback' and data['posts']:
+                receipt = json.loads(next(root.glob('msr-receipts/*.receipt.json')).read_text())
+                self.assertEqual(receipt['transaction_ids'], ['ab'*32])
+                self.assertEqual(receipt['status'], 'unverified')
             self.assertFalse(list(root.glob('msr-activation-*')), 'private files must be cleaned')
             return result, data
+
+    def assert_nothing_signed(self, result, state, text):
+        self.assertEqual(result.returncode, 1, result.stdout+result.stderr)
+        self.assertIn(text, result.stdout)
+        self.assertEqual((state['builds'], state['posts']), (0, 0))
+
+    def test_chain_888_builds_v2_and_hands_off_for_readback(self):
+        result, state = self.run_flow('live-readback')
+        self.assertEqual(result.returncode, 3, result.stdout+result.stderr)
+        self.assertIn('FORMAT: v2 registrations', result.stdout)
+        self.assertIn('FEATURES: 4 active', result.stdout)
+        self.assertIn('ACTIVATION UNVERIFIED', result.stdout)
+        self.assertIn('SYNC NOW: 1/1 on_chain', result.stdout)
+        self.assertNotIn('ACTIVATION OBSERVED', result.stdout)
+        self.assertEqual(state['posts'], 1)
+        built=[a for name,a in state['events'] if name=='wrfcoin'][0]
+        self.assertEqual(built[built.index('--chain-id')+1],'888')
+
+    def test_chain_888_dry_run_needs_no_yes_and_changes_nothing(self):
+        result, state = self.run_flow('live-readback', extra=['--dry-run'], answer=None)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('DRY RUN PASS', result.stdout)
+        self.assertEqual((state['builds'], state['posts']), (0, 0))
+
+    def test_chain_888_refuses_a_missing_required_feature(self):
+        self.assert_nothing_signed(*self.run_flow('live-feature-missing'), 'station_registration_nonce is not active')
+
+    def test_chain_888_refuses_the_form_it_cannot_build(self):
+        self.assert_nothing_signed(*self.run_flow('live-fixed-point'), 'station_coordinates_fixed_point is active')
+
+    def test_chain_888_refuses_v1(self):
+        self.assert_nothing_signed(*self.run_flow('live-readback', extra=['--registration-format','v1']), 'refuses the v1 format')
+
+    def test_a_location_finer_than_the_grid_is_never_signed(self):
+        self.assert_nothing_signed(*self.run_flow('live-off-grid'), '0.1 degree grid')
+
+    def test_anything_but_yes_signs_nothing(self):
+        for answer in ('no', 'yes', ''):
+            with self.subTest(answer=answer):
+                self.assert_nothing_signed(*self.run_flow('live-readback', answer=answer), 'did not type YES')
+
+    def test_no_terminal_signs_nothing(self):
+        self.assert_nothing_signed(*self.run_flow('live-readback', answer=None), 'needs a terminal')
+
+    def test_a_stopped_producer_refuses(self):
+        self.assert_nothing_signed(*self.run_flow('producer-stopped'), 'not running')
 
     def test_complete_order_and_counts(self):
         result, state = self.run_flow()
@@ -343,7 +415,7 @@ class OwnerFlow(unittest.TestCase):
             result=subprocess.run(['bash',str(REPO/'testnet/scripts/activate-mobile-stations.sh'),'--cli',str(cli),
                 '--governance-key',str(key),'--producer','a=prod-a'],text=True,capture_output=True,timeout=30)
             self.assertEqual(result.returncode,1)
-            self.assertIn('exactly three --producer',result.stdout)
+            self.assertIn('exactly three producers',result.stdout)
 
     def test_remote_node_token_requires_https(self):
         result,state=self.run_flow(extra=('--node-url','http://example.invalid:8556'))
