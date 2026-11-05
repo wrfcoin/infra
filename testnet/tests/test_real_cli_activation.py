@@ -145,14 +145,14 @@ class RealCliActivation(unittest.TestCase):
     @classmethod
     def owner_row(cls, station):
         """A batch row. The owner's ownership signature is produced by the real
-        CLI (single-registration mode) so it is bound to chain 777/testnet."""
+        CLI (single-registration mode) so it is bound to chain 888/testnet."""
         path, public = cls.keys[station]
         address = onchain_address(public)
         out = cls.dir / (station + '-own.json')
         env = dict(cls.base_env, WRFCOIN_ORACLE_GOVERNANCE_PUBKEYS=cls.gov_pub)
         run = subprocess.run(
             [CLI, 'station', 'build-registration', '--station-id', station, '--owner-address', address,
-             '--owner-key', str(path), '--governance-key', str(cls.keys['gov'][0]), '--chain-id', '777',
+             '--owner-key', str(path), '--governance-key', str(cls.keys['gov'][0]), '--chain-id', mod.CHAIN_ID,
              '--network-id', 'testnet', '--latitude', '46.7', '--longitude', '-92.1',
              '--elevation-meters', '10', '--hardware-model', 'phone-barometer',
              '--data-quality-tier', 'unverified', '--submitted-at', '1900000000', '--out', str(out)],

@@ -1,92 +1,101 @@
-# Owner command: activate a batch of phone stations
+# Owner command: activate a batch of phone stations (chain 888)
 
-The owner runs `testnet/scripts/activate-mobile-stations.sh` on the host with the
-governance key. CT101 is the documented default. The host can be changed using the
-container, node URL and key-path arguments; the wrapper does not use SSH or `pct`.
-Running this command signs and submits registrations to chain 777/testnet. The
-review point is before invoking it. A successful submission has no local undo.
+A phone can register itself, but only a registration signed with the governance key
+makes its station earn. Until the owner runs this command, the phone stays
+`db_only`, its readings are refused with `STATION_NOT_ACTIVE`, and the app says it
+is waiting. This is the owner's batch for the first outside users.
 
-This implements the export → build → project → submit → inclusion → backend-sync
-order in the LEAD-verified
-`wrfcoin/docs/plans/overnight-2026-09-24/mobile-station-activation-owner-block-v2.md`.
-The earlier manual block remains the manager's source record. This wrapper
-captures every tool's output privately and reports stages and counts only.
+Running it signs and submits registrations to chain 888/testnet, and **a successful
+submission has no undo**. The tool asks the owner to type YES in a terminal first.
+It reports stages and counts only.
 
-## Prepare on the chosen key host
+## The one command, from the workstation
 
-The manager must have completed the r17 deployment and checked its image/revision
-and mobile export/sync configuration. The backend must expose the CLI batch
-export flags and have `STATION_CHAIN_SYNC_ENABLED=true`. The calibrated export
-guard (backend#1374) is recommended: the wrapper passes `--limit 21` and enforces
-the returned count itself. Invitees need the APK with quantized reveals
-(mobile#362), and the backend needs the matching quantization (backend#1343).
-Use the manager's deployment and CLI-staging blocks; this wrapper stages neither.
-Keep activation outside the E0/redeploy/restart window.
+The governance key host can't reach the other two producers, so the workstation reads
+those and hands the readings over. `activate-mobile-stations-888.sh` reads them, does a
+dry run on the key host, reads them again, then starts the real run, which asks for YES.
+Hosts are inputs; the script names none.
 
-**This tool does not schedule features.** It submits registrations only. The
-`station_registration_nonce`, `station_owner_consent`, `station_owner_actions`
-and `station_active_reward_gate` schedule extension (height, run-up, horizon,
-entry count, signed receipt) is a separate, separately reviewed packet.
+```bash
+bash testnet/scripts/activate-mobile-stations-888.sh \
+  --key-host '<command that runs a program on the key host, with a terminal>' \
+  --tool-dir <this repo's testnet/scripts on the key host> \
+  --key-host-producer <name>=wrfcoin-testnet-node \
+  --reader <name2>='docker' \
+  --reader <name3>='<command that runs docker on the third producer>' \
+  --cli <CLI path on the key host> --cli-sha <digest from the build receipt> --limit 21
+```
 
-**Three-producer fence (required, fail closed).** Every run, including dry-runs,
-takes exactly three `--producer NAME=CONTAINER` (or
-`NAME=DOCKER_HOST::CONTAINER` for a producer on another Docker host) inputs and
-reads each container's `org.opencontainers.image.revision` label BEFORE any token
-read, signature or submission. It stops unless all three equal
-`620902bf7b01cf09b11b2bb0ff5a22571e7cb694`; a missing label, an old revision or
-a failed read on any one refuses. Three names for the same host+container are
-rejected: three reads of one producer cannot establish three revisions. Endpoints are inputs, never defaults. (core4
-`620902bf7` exposes no tokenless build revision: `/network/info` reports only
-the crate version and `/network/upgrade` the signed notice's commit, not the
-running binary's, so the image label is the reading.)
+Copy `activate-mobile-stations.py` to the key host first, from the commit you reviewed.
+A batch is 21 rows at most. Use a small `--limit` for the first batch.
 
-Install this script and its adjacent Python file together in the infra checkout
-on the key host. It requires Bash, Python3.8+, Docker, curl, `date`, `sleep` and
-`timedatectl`. NTP must report synchronized. The node's HTTP Date must be within
-five seconds of the host clock; `/readyz` must return200 and `/network/info` must
-report chain777/testnet and a positive height. A missing clock header stops the
-command. On a host without systemd, arrange a reviewed clock-check implementation
-before use; do not substitute a fake for an actual activation.
+## What has to be true, and what checks it
 
-The default governance key path is
-`/root/oracle-ceremony/oracle-governance.key`, mode0600. The wrapper checks its
-mode; only the trusted CLI reads its contents. Its public key is the v2 block's
-`e7bec166ad446314d26fb7526bfa8cec1b363b438440262fb001f7b04b20bf00`.
-The staged CLI is checked against the full SHA256
-`604af0308e57d9ae82b75da9b8845fb7f440e2ed55a7f15671dd92d4b0d0a3d7`, built from
-core4 620902bf7 per the authoring lane (`cargo build --release`, not
-byte-reproducible; that origin is not independently verified; stage that exact file).
-**The owner must stage an artifact whose SHA256 matches this pin, with its build
-receipt.** Two digests exist for core4 `620902bf7`, and neither build is
-byte-reproducible: `604af030...` (the pin, origin of that artifact not
-independently verified) and `b76a8a9aaaf8ad554ebd2786ca3ec2385e59484c483c768f64e37b26cdb1de87`
-(an independent reviewer's `cargo build --release --locked --offline -p wrfcoin_cli
---bin wrfcoin` of that commit; it passed the real-CLI tests). The tool uses the
-pin `604af030...`; the reviewer's build is recorded for comparison only and is
-used only if the manager passes it with `--cli-sha`.
-`--cli-sha` is for a replacement the manager has independently verified and trusted. Never fill it from an untrusted binary's own digest.
+Every run checks these before any signature, dry runs included:
+
+| Check | How | If not |
+|---|---|---|
+| Three producers on one build | Each container must be running and carry a full `org.opencontainers.image.revision` label. All three must match each other. **No revision is pinned**, so a new release needs no edit here | Stop. Mismatched builds mean a rolling upgrade is in progress |
+| Required features active | `active_features` from `/transactions/oracle/pending` must list `station_active_reward_gate`, `station_owner_actions`, `station_owner_consent` and `station_registration_nonce` | Stop |
+| A form this tool can build | `station_coordinates_fixed_point` must not be active. From that feature a registration needs integer coordinates or it applies as nothing, and neither the exporter nor this tool builds them yet | Stop |
+| Chain identity | `/network/info` must report 888/testnet and a positive height, and the export and the signed artifact must agree | Stop |
+| Trusted CLI | `--cli-sha` is required and must match. Take it from the build receipt of the release, never from the binary's own digest. Its `station build-registration` must accept `--batch` with `expected_nonce` | Stop |
+| Governance key | The file must exist with mode 0600. Only the CLI reads it | Stop |
+| Clocks | NTP synchronized, and the node's HTTP Date within five seconds of the host | Stop |
+| Backend | `STATION_CHAIN_SYNC_ENABLED=true`, and the backend exposes the export script | Stop |
+| Location | Every row sits on the 0.1 degree grid. On-chain coordinates are public forever | Stop, nothing signed |
+
+A producer reading taken on another host (`--producer-reading NAME=REVISION@UNIX_SECONDS`)
+is good for five minutes. It can't replace the direct read of the node this run submits to.
+Where the key host can reach every producer, pass three `--producer` inputs instead;
+staged runs require that, because a reading would go stale before the step runs.
+
+**This tool does not schedule features and doesn't change key custody.** The default key
+path is `/root/oracle-ceremony/oracle-governance.key` and its public key is
+`e7bec166ad446314d26fb7526bfa8cec1b363b438440262fb001f7b04b20bf00`, the same key
+`chain-888.conf` lists for governance.
 
 Default containers are `wrfcoin-testnet-backend`, `wrfcoin-testnet-node` and
-`wrfcoin-testnet-postgres`; the node URL defaults to `http://127.0.0.1:8556`.
-The PostgreSQL read uses database/user `wrfcoin`. `Host: 127.0.0.1` follows the
-v2 block's node allowlist for loopback URLs only. For remote HTTPS URLs, curl
-uses the URL's host without an override, allowing a fronting proxy to route it.
-HTTP is permitted only for loopback hosts; a remote node requires HTTPS.
-The owner decides whether the chosen key host can reach these containers and
-this endpoint.
+`wrfcoin-testnet-postgres`; the node URL defaults to `http://127.0.0.1:8556`. A remote
+node requires HTTPS.
+
+## What a dry run touches
+
+A dry run signs nothing and sends no POST. It reads container labels and env, public and
+gated node routes, and one `SELECT` from Postgres. It also runs the export script without
+`--mark-submitted`, which writes no database row but does write two short-lived files in the
+backend container's `/tmp`, deleted straight after.
+
+## What a run ends with on chain 888: always exit 3
+
+Chain 888 uses the v2 registration format, and no route can say a given registration
+applied. So a real run on 888 never prints `ACTIVATION OBSERVED`. It prints
+`ACTIVATION UNVERIFIED`, a HANDOFF list, one `SYNC NOW` count and exits 3. **That is the
+expected end of a good run, not a failure. Don't resubmit.**
+
+Then read back each row, with the receipt's `transaction_ids`:
+
+1. `GET /transactions/<id>/status` shows the transaction in a block.
+2. `GET /transactions/station/registrations/<station>/owner-ledger` shows `owner_nonce`
+   advanced to `expected_nonce + 1`. A v2 registration that was refused is mined as a no-op
+   and leaves the nonce alone.
+3. `GET /transactions/station/registrations/<station>` shows the right owner, `real`, active.
+4. The backend shows the row `on_chain` once its sync has run, and the phone's status follows.
+
+Only then record it with `--mark-reconciled` (below).
 
 ## Run one batch
 
 ### Stage one-line owner steps for N phones
 
-From the installed infra checkout on the governance key host, create a new private
+Only where the key host can reach all three producers. From the installed infra checkout on the governance key host, create a new private
 step directory. For 30 phones this writes four scripts: dry-run then activation
 for 21 rows, followed by dry-run then activation for nine rows.
 
 ```bash
-bash testnet/scripts/activate-mobile-stations.sh --cli /root/msr-cli/wrfcoin-msr-b21b0b8dc \
+bash testnet/scripts/activate-mobile-stations.sh --cli <CLI path> --cli-sha <digest from the build receipt> \
   --producer <name1>=<container1> --producer <name2>=<container2> --producer <name3>=<container3> \
-  --stage-dir /root/msr-steps-r19 --count 30
+  --stage-dir /root/msr-steps-batch1 --count 30
 ```
 
 Staging is offline: it writes scripts and a README without invoking Docker,
@@ -99,10 +108,10 @@ Inspect the generated files, then run the one-line commands in its README,
 in order:
 
 ```bash
-bash /root/msr-steps-r19/001-dry-run.sh
-bash /root/msr-steps-r19/002-activate.sh
-bash /root/msr-steps-r19/003-dry-run.sh
-bash /root/msr-steps-r19/004-activate.sh
+bash /root/msr-steps-batch1/001-dry-run.sh
+bash /root/msr-steps-batch1/002-activate.sh
+bash /root/msr-steps-batch1/003-dry-run.sh
+bash /root/msr-steps-batch1/004-activate.sh
 ```
 
 `--count` is the requested total; each staged step requires its full batch count.
@@ -128,11 +137,11 @@ The sync read checks each station's owner binding and status independently.
 No station IDs, coordinates or credentials are printed. These rows are progress
 evidence for the current batch; the final aggregate line still requires all rows.
 
-From the staged infra checkout on CT101, after the manager's preparation:
+From the staged infra checkout on the key host:
 
 ```bash
 bash testnet/scripts/activate-mobile-stations.sh \
-  --cli /root/msr-cli/wrfcoin-msr-b21b0b8dc --limit 21 \
+  --cli <CLI path> --cli-sha <digest from the build receipt> --limit 21 \
   --producer <name1>=<container1> --producer <name2>=<container2> --producer <name3>=<container3>
 ```
 
@@ -142,6 +151,8 @@ size remains authoritative: the wrapper checks the artifact before submission.
 Smaller limits are useful for the first batch. Other owner options are
 `--governance-key`, `--governance-pubkey`, `--node-url`, `--backend-container`,
 `--node-container` and `--postgres-container`; `--help` lists them.
+
+Each real run asks for YES after preflight, before the signing window opens. Anything but YES stops it, and so does running without a terminal. In a staged step that attempt counts as used, so stage a new directory.
 
 Preflight reads the oldest pending IDs and requires HTTP404 for each. If any
 `db_only` station is already registered, it stops for manager readback/sync.
@@ -185,7 +196,7 @@ seconds, choose the fallback explicitly at invocation:
 
 ```bash
 bash testnet/scripts/activate-mobile-stations.sh \
-  --cli /root/msr-cli/wrfcoin-msr-b21b0b8dc --limit 21 --restamp-once
+  --cli <CLI path> --cli-sha <digest from the build receipt> --limit 21 --restamp-once
 ```
 
 Restamping changes every row's timestamp and signs a fresh artifact before the
@@ -201,7 +212,7 @@ After 201 the wrapper reads each station's ID, owner, `real` provenance and
 active state, up to six rounds with 60-second waits, then the batch's database
 `on_chain` count up to twelve rounds with 60-second waits.
 
-**What the success line means.** `ACTIVATION OBSERVED: K/K stations active in the
+**What the success line means (v1 rehearsal chains only).** `ACTIVATION OBSERVED: K/K stations active in the
 node registry and on_chain in the backend` says only that those K stations are
 active in the registry and registered to their owners, and that the backend
 shows them `on_chain`. It is an observation of station state. It is NOT proof
@@ -291,7 +302,7 @@ nonce. A v1 batch built after that point is refused at submission
 format itself.
 
 - `--registration-format auto` (default) reads the node's `active_features`
-  (`/transactions/oracle/status`, the height the next block mines at) and builds
+  (`/transactions/oracle/pending`, the height the next block mines at) and builds
   v2 when `station_registration_nonce` is active, otherwise v1. So `auto` stays
   v1 until the feature has actually activated; it cannot show v2 earlier. It prints
   `FORMAT: v1|v2 registrations`. `v1` / `v2` force a format for a rehearsal.
@@ -305,43 +316,15 @@ format itself.
   nonce, another station's answer) **stops the run before anything is signed**:
   a guessed nonce would be mined as a silent no-op. The nonce is read again on a
   restamped rebuild.
-- v2 needs a CLI whose `build-registration` accepts `expected_nonce` per batch
-  row. The built-in `--cli-sha` pin below is the core4 `620902bf7` build, which
-  does; the pin is always enforced and no extra flag is needed.
-- `/readyz` and `/network/info` are public on core4 `620902bf7` and are read
+- v2 needs a CLI whose `build-registration` accepts `expected_nonce` per batch row.
+- `/readyz` and `/network/info` are public and are read
   WITHOUT an `Authorization` header. Reader-gated routes (station registry,
   owner ledger, oracle status) keep the bearer, passed through curl config on
   stdin only.
 
-Ordering (do not reorder): (1) core4 `620902bf7` is running on all three
-producers and the CLI is staged; (2) THIS change merges, while the feature is
-still unscheduled (auto keeps building v1, so nothing changes); (3) the
-separate scheduling packet schedules the features; (4) `auto` stays v1 until
-the activation height has passed and the node reports
-`station_registration_nonce` active; only then does it print `FORMAT: v2`.
-(A forced `--registration-format v2` before activation is refused by the node.) Do not run a registration
-batch in the blocks around the activation height: a batch admitted just before it
-can be mined after it. After activation every v1 pipeline stops working at once.
-
 `testnet/scripts/revendor-core4-fixture.py` re-vendors core4's golden vectors
 (`testnet/fixtures/core4/`) with a full-commit provenance manifest; re-run it
 with `--rev` set to the core4 merge commit on main before this change merges.
-
-## When the v2 activation run may happen (r20.2 rolling-upgrade conditions)
-
-Per `r23/rolling-upgrade-b31-to-main-audit.md`, B3.1 to main (core4 `620902bf7`)
-is rolling-safe only with these conditions. Run this script in v2 mode only
-when ALL of them hold:
-
-1. All three nodes are verified running core4 `620902bf7`. The tool enforces
-   this itself (the three-producer fence above); `PROTOCOL_VERSION` is 3 on both
-   B3.1 and main, so the protocol version cannot tell them apart.
-2. The features are scheduled by the separate packet AND have activated
-   (`GET /transactions/oracle/status` lists `station_registration_nonce` as
-   active). Until then `--registration-format auto` stays on v1.
-3. The first v2 registration or owner transaction is the point where rolling
-   back to B3.1 stops being possible: the first non-empty owner ledger writes
-   v11 checkpoints that B3.1 binaries refuse. Do not run it as a trial.
 
 ## Real-CLI smoke (opt-in)
 
@@ -365,7 +348,7 @@ a stale-nonce submit that the stub refuses (HTTP 422,
 must surface as `Stop: submission refused`, plus the read-back after a 201: a
 registration the node accepted and then dropped at apply is never counted.
 
-**The tool cannot tell which registration applied.** core4 `620902bf7` has no
+**The tool cannot tell which registration applied.** core4 has no
 route that identifies an applied registration: the station record keeps no
 registration tx id or inclusion height, the owner ledger has no last-applied
 registration identity, and `/transactions/{id}/status` only says a tx is in a

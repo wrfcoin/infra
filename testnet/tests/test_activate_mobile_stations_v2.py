@@ -3,6 +3,7 @@
 against a stubbed node. Stdlib only. No docker, key or real node is touched."""
 import importlib.util
 import json
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -84,9 +85,9 @@ class V2Registration(unittest.TestCase):
 
     # --- format selection -------------------------------------------------
     def test_auto_picks_v1_before_and_v2_after_activation(self):
-        Node.routes['/transactions/oracle/status'] = status(['domain_separated_preimages'])
+        Node.routes[mod.FEATURES_PATH] = status(['domain_separated_preimages'])
         self.assertEqual(mod.registration_format(self.args, self.dir, 'tok'), 'v1')
-        Node.routes['/transactions/oracle/status'] = status(['x', 'station_registration_nonce'])
+        Node.routes[mod.FEATURES_PATH] = status(['x', 'station_registration_nonce'])
         self.assertEqual(mod.registration_format(self.args, self.dir, 'tok'), 'v2')
 
     def test_explicit_format_does_not_read_the_node(self):
@@ -97,7 +98,7 @@ class V2Registration(unittest.TestCase):
 
     def test_feature_read_failures_stop_the_run(self):
         for reply in [(500, {}), (404, {}), (200, {'active_features': 'nope'}), (200, {'active_features': [1]}), (200, [])]:
-            Node.routes['/transactions/oracle/status'] = reply
+            Node.routes[mod.FEATURES_PATH] = reply
             with self.assertRaises(mod.Stop):
                 mod.registration_format(self.args, self.dir, 'tok')
 
@@ -159,7 +160,7 @@ class V2Registration(unittest.TestCase):
 FAKE_CLI = """#!/usr/bin/env python3
 import json, os, sys
 a = sys.argv
-assert a[a.index('--chain-id') + 1] == os.environ.get('WRFCOIN_CHAIN_ID', '777')
+assert a[a.index('--chain-id') + 1] == os.environ.get('WRFCOIN_CHAIN_ID', '888')
 batch = json.load(open(a[a.index('--batch') + 1]))
 out = a[a.index('--out') + 1]
 import urllib.request
@@ -167,7 +168,7 @@ urllib.request.urlopen(os.environ['FAKE_NODE_URL'] + '/__cli__/' + batch[0]['sta
 open(os.environ['FAKE_CLI_RECORD'], 'a').write(json.dumps(batch) + '\\n')
 fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(fd, 'w') as f:
-    json.dump({'version': 'station_registration_artifact_v1', 'chain_id': os.environ.get('WRFCOIN_CHAIN_ID', '777'),
+    json.dump({'version': 'station_registration_artifact_v1', 'chain_id': os.environ.get('WRFCOIN_CHAIN_ID', '888'),
                'network_id': 'testnet', 'transactions': [{} for _ in batch]}, f)
 print(json.dumps({'data': {'self_verified': True}}))
 """
@@ -254,7 +255,7 @@ class ReadBack(unittest.TestCase):
         Node.routes, Node.seen = {}, []
         self.tmp = tempfile.TemporaryDirectory(prefix='msr-test-')
         self.addCleanup(self.tmp.cleanup)
-        self.args = SimpleNamespace(node_url=f'http://127.0.0.1:{self.server.server_address[1]}',
+        self.args = SimpleNamespace(postgres_container='pg', node_url=f'http://127.0.0.1:{self.server.server_address[1]}',
                                     fresh_stations=set())  # ignored by the tool; kept for the reviewer's harness
 
     def registered(self, station, nonce, active=True, **extra):
@@ -361,7 +362,7 @@ class ManagerHandoff(unittest.TestCase):
         os.chmod(self.tmp.name, 0o700)
         self.work = Path(self.tmp.name) / 'msr-activation-abc12345'
         self.work.mkdir(mode=0o700)
-        self.args = SimpleNamespace(node_url=f'http://127.0.0.1:{self.server.server_address[1]}',
+        self.args = SimpleNamespace(postgres_container='pg', node_url=f'http://127.0.0.1:{self.server.server_address[1]}',
                                     receipt_dir=str(Path(self.tmp.name) / 'receipts'),
                                     complete_marker=str(Path(self.tmp.name) / 'receipts' / 'batch-1.complete'),
                                     mark_reconciled=None, confirmed_rows=None)
@@ -457,40 +458,78 @@ class TokenlessPublicReads(unittest.TestCase):
         Node.routes, Node.seen, Node.auth = {}, [], {}
         Node.routes['/readyz'] = (200, {'ready': True})
         Node.routes['/network/info'] = (200, {})
-        Node.routes['/transactions/oracle/status'] = status([])
+        Node.routes[mod.FEATURES_PATH] = status([])
         args = SimpleNamespace(node_url=f'http://127.0.0.1:{self.server.server_address[1]}')
         with tempfile.TemporaryDirectory(prefix='msr-test-') as tmp:
             os.chmod(tmp, 0o700)
-            for path in ('/readyz', '/network/info', '/transactions/oracle/status'):
+            for path in ('/readyz', '/network/info', mod.FEATURES_PATH):
                 mod.http(args, Path(tmp), 'SECRET-TOKEN', 'GET', path)
         self.assertIsNone(Node.auth['/readyz'])
         self.assertIsNone(Node.auth['/network/info'])
-        self.assertEqual(Node.auth['/transactions/oracle/status'], 'Bearer SECRET-TOKEN')
+        self.assertEqual(Node.auth[mod.FEATURES_PATH], 'Bearer SECRET-TOKEN')
 
 
 class ProducerFence(unittest.TestCase):
-    """All three producers must report the release revision; anything else refuses."""
+    """All three producers must report one live revision; anything else refuses."""
 
-    GOOD = '620902bf7b01cf09b11b2bb0ff5a22571e7cb694'
+    GOOD = 'a' * 40
     INPUTS = ['alpha=prod-a', 'beta=ssh://beta.example::prod-b', 'gamma=prod-c']
 
-    def run_fence(self, revisions, inputs=None):
+    def run_fence(self, revisions, inputs=None, readings=None):
         tmp = tempfile.TemporaryDirectory(prefix='msr-fence-')
         self.addCleanup(tmp.cleanup)
         bindir = Path(tmp.name)
         fake = bindir / 'docker'
         fake.write_text('#!/usr/bin/env python3\nimport json,os,sys\n'
                         'c=sys.argv[-1]\nr=json.loads(os.environ["FAKE_REVISIONS"]).get(c)\n'
-                        'if r is None: sys.exit(1)\nprint(r)\n')
+                        'if r is None: sys.exit(1)\nprint(r if "|" in r else "true|" + r)\n')
         fake.chmod(0o755)
         old = dict(os.environ)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old)))
         os.environ['PATH'] = str(bindir) + ':' + os.environ['PATH']
         os.environ['FAKE_REVISIONS'] = json.dumps(revisions)
-        mod.producer_fence(mod.parse_producers(inputs or self.INPUTS))
+        mod.producer_fence(mod.parse_producers(inputs or self.INPUTS, list(readings or ())),
+                           mod.parse_readings(readings or ()))
 
-    def test_all_three_on_the_release_passes(self):
+    def test_all_three_on_one_build_passes(self):
         self.run_fence({'prod-a': self.GOOD, 'prod-b': self.GOOD, 'prod-c': self.GOOD})
+
+    def test_no_revision_is_pinned_so_a_new_release_passes(self):
+        new = 'b' * 40
+        self.run_fence({'prod-a': new, 'prod-b': new, 'prod-c': new})
+        self.assertNotIn('RELEASE_REVISION', SCRIPT.read_text())
+
+    def test_a_split_set_refuses_even_when_each_revision_is_valid(self):
+        with self.assertRaises(mod.Stop):
+            self.run_fence({'prod-a': self.GOOD, 'prod-b': 'b' * 40, 'prod-c': self.GOOD})
+
+    def test_a_stopped_container_refuses(self):
+        with self.assertRaises(mod.Stop):
+            self.run_fence({'prod-a': self.GOOD, 'prod-b': 'false|' + self.GOOD, 'prod-c': self.GOOD})
+
+    def reading_clock(self, value):
+        original = mod.now
+        mod.now = lambda: value
+        self.addCleanup(lambda: setattr(mod, 'now', original))
+
+    def test_readings_from_other_hosts_count_when_fresh_and_equal(self):
+        self.reading_clock(1000)
+        self.run_fence({'prod-a': self.GOOD}, inputs=['a=prod-a'],
+                       readings=[f'b={self.GOOD}@900', f'c={self.GOOD}@1010'])
+
+    def test_a_bad_reading_refuses(self):
+        self.reading_clock(1000)
+        for reading in (f'c={self.GOOD}@600', f'c={self.GOOD}@1100', 'c=@990', f'c={"b" * 40}@990', 'c=short@990'):
+            with self.subTest(reading=reading):
+                with self.assertRaises(mod.Stop):
+                    self.run_fence({'prod-a': self.GOOD}, inputs=['a=prod-a'],
+                                   readings=[f'b={self.GOOD}@990', reading])
+
+    def test_a_reading_cannot_share_a_name_or_exceed_three(self):
+        with self.assertRaises(mod.Stop):
+            mod.parse_readings([f'a={self.GOOD}@1'], names={'a': ('', 'x')})
+        with self.assertRaises(mod.Stop):
+            mod.parse_producers(self.INPUTS, [f'd={self.GOOD}@1'])
 
     def test_one_old_node_refuses(self):
         for old in ('0' * 40, '', self.GOOD[:9], self.GOOD.upper(), '<no value>'):
@@ -525,12 +564,85 @@ class ProducerFence(unittest.TestCase):
                                    SCRIPT.read_text().replace('127.0.0.1', '')))
 
 
-class CliPinGuard(unittest.TestCase):
-    def test_the_pin_is_kept_and_v2_no_longer_demands_an_explicit_digest(self):
+class CliDigest(unittest.TestCase):
+    def test_no_digest_is_built_in(self):
         text = SCRIPT.read_text()
-        self.assertIn("CLI_SHA = '604af0308e57d9ae82b75da9b8845fb7f440e2ed55a7f15671dd92d4b0d0a3d7'", text)
-        self.assertNotIn('the default pin is the v1 build', text)
-        self.assertNotIn("require(args.cli_sha_explicit, 'v2 registrations", text)
+        self.assertNotIn('CLI_SHA', text)
+        self.assertIn("'--cli-sha is required'", text)
+
+
+class LiveChain(unittest.TestCase):
+    def test_the_default_is_chain_888_and_old_pins_are_gone(self):
+        text = SCRIPT.read_text()
+        self.assertIn("LIVE_CHAIN_ID = '888'", text)
+        for stale in ("'777'", '620902bf', '604af030'):
+            self.assertNotIn(stale, text)
+
+    def test_grid_check(self):
+        for value in (44.9, -93.2, 0, 90, -179.9, 0.1):
+            self.assertTrue(mod.grid_coordinate(value, 180), value)
+        for value in (44.95, 44.987, 181, '44.9', None, True):
+            self.assertFalse(mod.grid_coordinate(value, 180), value)
+
+
+class WorkstationWrapper(unittest.TestCase):
+    """The workstation script reads two producers, dry-runs, then activates. All fakes."""
+
+    WRAPPER = SCRIPT.with_name('activate-mobile-stations-888.sh')
+    REV = 'c' * 40
+
+    def run_wrapper(self, reader_two=None, tool_exit=0, **overrides):
+        tmp = tempfile.TemporaryDirectory(prefix='msr-wrap-')
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        log = root / 'calls'
+        (root / 'host').write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> ' + str(log) +
+                                   f'\nexit {tool_exit}\n')
+        (root / 'host').chmod(0o755)
+        reader = root / 'reader'
+        reader.write_text(f'#!/usr/bin/env bash\necho {self.REV}\n')
+        reader.chmod(0o755)
+        args = dict(key_host=str(root / 'host'), tool_dir='/opt/tool', direct='n=node', cli='/opt/cli', sha='d' * 64)
+        args.update(overrides)
+        argv = ['bash', str(self.WRAPPER), '--key-host', args['key_host'], '--tool-dir', args['tool_dir'],
+                '--key-host-producer', args['direct'], '--reader', f'a={reader}',
+                '--reader', reader_two or f'b={reader}', '--cli', args['cli'], '--cli-sha', args['sha']]
+        result = subprocess.run(argv, text=True, capture_output=True, timeout=30)
+        return result, log.read_text().splitlines() if log.exists() else []
+
+    def test_dry_run_comes_first_then_the_real_run_with_fresh_readings(self):
+        result, calls = self.run_wrapper()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 2)
+        self.assertIn('--dry-run', calls[0])
+        self.assertNotIn('--dry-run', calls[1])
+        for call in calls:
+            self.assertIn('--producer n=node', call)
+            self.assertIn(f'--producer-reading a={self.REV}@', call)
+            self.assertIn(f'--producer-reading b={self.REV}@', call)
+            self.assertIn('--cli-sha ' + 'd' * 64, call)
+
+    def test_a_failed_dry_run_stops_before_the_real_run(self):
+        result, calls = self.run_wrapper(tool_exit=1)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertIn('--dry-run', calls[0])
+
+    def test_a_failed_reader_reaches_nothing(self):
+        result, calls = self.run_wrapper(reader_two='b=false')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('producer b', result.stdout)
+        self.assertEqual(calls, [])
+
+    def test_a_value_unsafe_for_a_remote_shell_is_refused(self):
+        result, calls = self.run_wrapper(cli='/opt/cli; touch x')
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(calls, [])
+
+    def test_no_host_is_named(self):
+        import re
+        text = self.WRAPPER.read_text()
+        self.assertFalse(re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', text))
 
 
 if __name__ == '__main__':
