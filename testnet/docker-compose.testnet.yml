@@ -1162,6 +1162,13 @@ services:
       # touch consensus, and the scorer is not yet at consensus parity
       # (oracle-reference#9, backend#1169).
       REFERENCE_SHADOW: ${REFERENCE_SHADOW:-0}
+      # Auto-ban: a client address that collects this many rate-limit refusals
+      # within an hour is blocked for RATE_LIMIT_BLOCK_DURATION seconds. The
+      # backend default is 5. Once the edge passes the real visitor address
+      # through the tunnel (#109), the ban applies per visitor, and several
+      # phones or people behind one carrier or household address share it, so
+      # 5 is too easy to reach by accident. 20 still stops a scripted client.
+      RATE_LIMIT_BLOCK_THRESHOLD: ${RATE_LIMIT_BLOCK_THRESHOLD:-20}
       ORACLE_REFERENCE_URL: ${ORACLE_REFERENCE_URL:-http://oracle-reference:8010}
       ORACLE_REFERENCE_TIMEOUT_MS: ${ORACLE_REFERENCE_TIMEOUT_MS:-5000}
       # infra#973: the achievement-payout reconciler. OFF by default. When true
