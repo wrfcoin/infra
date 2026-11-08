@@ -61,6 +61,10 @@ updates:
     schedule: { interval: weekly }
     groups: { npm-dependencies: { patterns: ["*"] } }
   - package-ecosystem: npm
+    directory: /testnet/services/bond-admission
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
+  - package-ecosystem: npm
     directory: /testnet/services/synthetic-collector
     schedule: { interval: weekly }
     groups: { npm-dependencies: { patterns: ["*"] } }
