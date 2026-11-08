@@ -79,7 +79,7 @@ function fakeNode() {
 
 function fakeCli() {
   const calls = [];
-  const cli = { calls, refuseCheck: null, failSign: false };
+  const cli = { calls, refuseCheck: null, failSign: false, answer: null };
   cli.run = async (args) => {
     calls.push(args);
     const flag = (name) => args[args.indexOf(name) + 1];
@@ -91,11 +91,14 @@ function fakeCli() {
     }
     if (cli.failSign) return { ok: false, message: 'no' };
     const out = flag('--out');
+    // As core4 writes it: the tx id in the artifact is the hash's bytes.
+    const txid = crypto.createHash('sha256').update(`tx-${r.station_id}`).digest();
     fs.writeFileSync(out, JSON.stringify({
       chain_id: '888', network_id: 'testnet',
-      transactions: [{ id: `tx-${r.station_id}`, station_id: r.station_id, submitted_at: Number(flag('--submitted-at')) }],
+      transactions: [{ id: [...txid], station_id: r.station_id, submitted_at: Number(flag('--submitted-at')) }],
     }));
-    return { ok: true, data: { signed: true } };
+    const data = { signed: true, self_verified: true, station_id: r.station_id, transaction_id: txid.toString('hex') };
+    return { ok: true, data: cli.answer ? cli.answer(data) : data };
   };
   return cli;
 }
@@ -219,6 +222,15 @@ test('a good request is held 24 h, then signed once and submitted', async () => 
   assert.ok(!saved.includes('203.0.113.7'));
   assert.ok(!saved.includes('122.4'));
   assert.ok(!saved.includes(r1.owner_signature));
+
+  // The id comes from the CLI's answer, as 64 hex.
+  const expectedId = crypto.createHash('sha256').update(`tx-${r1.station_id}`).digest('hex');
+  assert.equal(s.store.snapshot()[0].transactionId, expectedId);
+  await withServer(s.service, async (base) => {
+    const status = await (await fetch(`${base}/station-registrar/requests/${r1.station_id}`)).json();
+    assert.equal(status.data.status, 'submitted');
+    assert.equal(status.data.transactionId, expectedId);
+  });
 
   // In flight: nothing else moves until it is seen on chain.
   assert.equal((await s.service.tick()).reason, 'in-flight');
@@ -443,4 +455,21 @@ test('the client address comes from the edge only when the edge is trusted', () 
 test('the CLI child gets PATH and HOME only', () => {
   assert.deepEqual(cliEnv({ PATH: '/bin', HOME: '/h', STATION_REGISTRAR_NODE_TOKEN: 'x', STATION_REGISTRAR_IP_SALT: 'y' }),
     { PATH: '/bin', HOME: '/h' });
+});
+
+test('a signer answer without a hex transaction id, or for another station, is not submitted', async () => {
+  for (const answer of [
+    (data) => ({ ...data, transaction_id: undefined }),
+    (data) => ({ ...data, transaction_id: 'ab'.repeat(31) }),
+    (data) => ({ ...data, transaction_id: 'AB'.repeat(32) }),
+    (data) => ({ ...data, station_id: policy.mobileStationId(owner(), 0) }),
+  ]) {
+    const s = setup();
+    await withServer(s.service, async (base) => { await post(base, row()); });
+    s.clock.now = (T0 + 90000) * 1000;
+    s.cli.answer = answer;
+    assert.equal((await s.service.tick()).action, 'review');
+    assert.equal(s.store.snapshot()[0].code, 'SIGN_FAILED');
+    assert.equal(s.chain.posts.length, 0);
+  }
 });
