@@ -54,7 +54,7 @@ def test_zero_workflows_is_not_a_pass(tmp_path):
     assert guard.findings(tmp_path)
 
 
-def test_helper_change_runs_both_service_probes(tmp_path):
+def test_helper_change_runs_every_service_probe(tmp_path):
     workflow = yaml.safe_load((ROOT / ".github/workflows/node-probes-gate.yml").read_text())
     assert "scripts/ci-node-install.sh" in workflow[True]["pull_request"]["paths"]
     step = next(step for step in workflow["jobs"]["node-probes"]["steps"] if step.get("id") == "changed")
@@ -65,7 +65,7 @@ def test_helper_change_runs_both_service_probes(tmp_path):
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "PR": "123", "GITHUB_REPOSITORY": "synthetic/infra", "GITHUB_OUTPUT": str(output)}
     result = subprocess.run(["bash", "-c", step["run"]], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert output.read_text().splitlines() == ["gate_self=true", "explorer=true", "faucet=true"]
+    assert output.read_text().splitlines() == ["gate_self=true", "explorer=true", "faucet=true", "admission=true"]
 
 
 def test_real_npm_dependency_postinstall_cannot_run(tmp_path):
