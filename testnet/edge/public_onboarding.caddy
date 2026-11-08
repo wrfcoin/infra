@@ -1197,6 +1197,63 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Make a forecast from the website (epic 7; backend#58 website-forecast-routes.ts, frontend /forecast/new).
+	# The status read is public; the draft, the signed submit and the caller's own list need a wallet login
+	# Bearer (the backend verifies it and reads the forecaster from it). Exact paths, no query, JSON writes:
+	# draft 2 KiB, submit 8 KiB (the backend's own body caps). The backend relays the signed commit to the node
+	# under ONE Contributor credential for every visitor, so the per-visitor edge zone forecast_write below is
+	# the main guard on that credential's node quota. 404 until WEBSITE_FORECAST_ENABLED=true.
+	@public_readonly_forecasts_status {
+		method GET
+		path /api/forecasts/status
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_forecasts_status {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_forecasts_mine {
+		method GET
+		path /api/forecasts/mine
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @public_forecasts_mine {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_forecasts_draft {
+		method POST
+		path /api/forecasts/draft
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_forecasts_draft {
+		request_body {
+			max_size 2048
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_forecasts_submit {
+		method POST
+		path /api/forecasts/submit
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+		header Content-Type application/json
+	}
+	handle @public_forecasts_submit {
+		request_body {
+			max_size 8192
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Direct submission, trusted operator families, and all future API routes
 	# fail closed before frontend nginx can proxy them to the backend.
 	handle /api/* {
@@ -1309,7 +1366,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/*
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/*
 			}
 			key {client_ip}
 			events 30
@@ -1364,6 +1421,19 @@
 			}
 			key {client_ip}
 			events 6
+			window 1m
+		}
+		# Website forecasts (backend#58): each draft or submit can end in a node relay under the site's one
+		# Contributor credential, so writes get their own per-visitor zone on top of public_read. A person
+		# makes at most 8 forecasts a station a day (4 leads x 2 variables), each a draft plus a submit.
+		# The backend limits again (30/min per client, 10 writes per 10 min per wallet, one per day).
+		zone forecast_write {
+			match {
+				method POST
+				path /api/forecasts/draft /api/forecasts/submit
+			}
+			key {client_ip}
+			events 10
 			window 1m
 		}
 		# The snapshot archive is the one large object on this edge; a joiner
