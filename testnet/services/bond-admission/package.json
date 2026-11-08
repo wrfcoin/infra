@@ -1,0 +1,15 @@
+{
+  "license": "MIT OR Apache-2.0",
+  "name": "wrfcoin-testnet-bond-admission",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WRFCoin testnet bond admission co-sign service (default off)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "redis": "^6.3.0"
+  }
+}
