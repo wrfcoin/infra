@@ -186,6 +186,10 @@ services:
       the outbound NOAA nearby-station lookup) and the detail reads admit
       none or exactly `limit=1`, and earnings admits none (`?limit=` would size a
       per-commit core4 reward-evidence fan-out); anything else 404s at the edge.
+      (Epic 8, backend#60) GET /api/stations/st_<12 hex>/compare is admitted behind the
+      same gate and public-read limiter: alias only and no query string, because it fans
+      out to core4 and NWS; it returns aggregates only (nearby median from at least 3
+      stations), never another station's id or coordinates.
       (backend#1456, owner ruling 2026-10-06) GET /api/weather/leaderboard is admitted
       read-only behind the same PUBLIC_READONLY_API gate and public-read limiter, with
       the query locked to exactly

@@ -451,6 +451,23 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Epic 8 ("How does my station compare?", backend station-detail-routes.ts
+	# GET /api/stations/<alias>/compare): the station's newest chain reading next to
+	# the median of nearby stations and the nearest NWS observation. Its own matcher:
+	# ALIAS ONLY (st_ + 12 hex, the only form anonymous callers can use anyway) and NO
+	# query string, because the backend fans out to core4 and NWS (both cached per
+	# station / per 0.1-degree cell server-side). Same gate as its siblings (OFF unless
+	# the edge env has PUBLIC_READONLY_API=on exactly), GET only, counted in public_read.
+	@public_readonly_station_compare {
+		method GET
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/compare$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_station_compare {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Owner ruling 2026-10-06 (backend#1456, frontend#535): the public weather
 	# leaderboard (earnings tab) is read-only public. Same gate as the station
 	# reads (OFF unless the edge env has PUBLIC_READONLY_API=on exactly), GET

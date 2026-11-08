@@ -55,6 +55,7 @@ DENIED_PUBLIC_READS = (
     "/api/stations/abc/quality",
     "/api/stations/abc/submissions",
     "/api/stations/abc/earnings",
+    "/api/stations/st_0123456789ab/compare",
 )
 # infra#983 — Stage 1.5 station reads behind PUBLIC_READONLY_API. Admitted
 # (upstream 502) ONLY when the edge container's env is exactly `on`; 404 when
@@ -111,6 +112,29 @@ READONLY_EARNINGS_SIBLINGS_DENIED = (
     "/api/stations/abc/Earnings",
     f"/api/stations/{'s' * 65}/earnings",
     "/api/stations/a.b/earnings",
+)
+# Epic 8 ("How does my station compare?") — GET /api/stations/<alias>/compare, same gate,
+# its own container (own rate-limit budget). ALIAS ONLY and NO query: the backend fans out to
+# core4 and NWS, so the raw-id and query shapes its siblings admit are refused here.
+READONLY_COMPARE_READS = (
+    "/api/stations/st_0123456789ab/compare",
+    "/api/stations/st_ffffffffffff/compare",
+)
+READONLY_COMPARE_QUERY_DENIED = (
+    "/api/stations/st_0123456789ab/compare?limit=1",
+    "/api/stations/st_0123456789ab/compare?x=1",
+    "/api/stations/st_0123456789ab/compare?lat=40&lng=-100",
+)
+READONLY_COMPARE_NON_GET_METHODS = ("POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD")
+READONLY_COMPARE_SIBLINGS_DENIED = (
+    "/api/stations/abc/compare",
+    "/api/stations/KMAWELLE-12_x/compare",
+    "/api/stations/st_0123456789AB/compare",
+    "/api/stations/st_0123456789a/compare",
+    "/api/stations/st_0123456789abc/compare",
+    "/api/stations/st_0123456789ab/compare/",
+    "/api/stations/st_0123456789ab/compare/x",
+    "/api/stations/st_0123456789ab/comparex",
 )
 # backend#1456 / frontend#535 (owner ruling 2026-10-06) — the weather leaderboard, same gate, its own
 # containers (public_read is 30 requests/min per client). The ONE admitted grammar, in this order:
@@ -1773,6 +1797,16 @@ def main() -> None:
             non_get_methods=READONLY_EARNINGS_NON_GET_METHODS, non_get_paths=1,
         )
     prove_readonly_gate("direct-edge-earnings", config, "8080", None, reads=READONLY_EARNINGS_READS)
+    # Epic 8: the station compare read, same gate, in its own container (own rate-limit budget).
+    for value in READONLY_GATE_OFF_VALUES:
+        prove_readonly_gate("funnel-edge-compare", funnel_text, "8444", value, reads=READONLY_COMPARE_READS)
+    for label, text, port in (("funnel-edge-compare", funnel_text, "8444"), ("direct-edge-compare", config, "8080")):
+        prove_readonly_gate(
+            label, text, port, "on", reads=READONLY_COMPARE_READS,
+            siblings=READONLY_COMPARE_SIBLINGS_DENIED, query_denied=READONLY_COMPARE_QUERY_DENIED, non_get_from=0,
+            non_get_methods=READONLY_COMPARE_NON_GET_METHODS, non_get_paths=1,
+        )
+    prove_readonly_gate("direct-edge-compare", config, "8080", None, reads=READONLY_COMPARE_READS)
     # backend#1456: the leaderboard. Container 1 proves toggle-off, admitted shapes, non-GET and siblings;
     # container 2 (own rate-limit budget) proves the query lock refuses every denied shape.
     for value in READONLY_GATE_OFF_VALUES:

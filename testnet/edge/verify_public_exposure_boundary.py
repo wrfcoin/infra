@@ -172,6 +172,12 @@ EXPECTED = {
         "path_regexp ^/api/stations/[A-Za-z0-9_-]{1,64}/earnings$",
         BACKEND,
     ),
+    # Epic 8: station compare, alias only, no query (backend fans out to core4 + NWS).
+    "public_readonly_station_compare": (
+        "GET",
+        "path_regexp ^/api/stations/st_[0-9a-f]{12}/compare$",
+        BACKEND,
+    ),
     # Owner ruling 2026-10-06 (backend#1456, frontend#535): the weather leaderboard is
     # public read-only, behind the same gate and with an exact-grammar query lock.
     "public_readonly_weather_leaderboard": ("GET", "path_regexp ^/api/weather/leaderboard$", BACKEND),
@@ -313,6 +319,7 @@ GATED = frozenset({
     "public_readonly_stations",
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
+    "public_readonly_station_compare",
     "public_readonly_weather_leaderboard",
     "public_readonly_earnings_leaderboard",
     "public_readonly_operator_profile",
@@ -424,6 +431,8 @@ READONLY_QUERY_LOCK = {
     "public_readonly_station_detail": 'expression `{query} == "" || {query} == "limit=1"`',
     # earnings takes NO query (the frontend sends none; `limit` sizes a core4 read fan-out).
     "public_readonly_station_earnings": 'expression `{query} == ""`',
+    # compare takes NO query (the frontend sends none; it fans out to core4 + NWS).
+    "public_readonly_station_compare": 'expression `{query} == ""`',
     "public_readonly_weather_leaderboard": LEADERBOARD_QUERY_LOCK,
     "public_readonly_earnings_leaderboard": EARNINGS_QUERY_LOCK,
     "public_readonly_operator_profile": 'expression `{query} == ""`',
@@ -957,6 +966,28 @@ def self_test() -> None:
         "backend#1232 earnings station-id length widened to 65+": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("{1,64}/earnings$", "{1,65}/earnings$"),
+        ),
+        "epic8 compare query lock removed (any query admitted)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "compare$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "epic8 compare gate removed (read admitted unconditionally)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "compare$\n",
+            ),
+        ),
+        "epic8 compare widened to raw station ids": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("st_[0-9a-f]{12}/compare$", "[A-Za-z0-9_-]{1,64}/compare$"),
+        ),
+        "epic8 compare regex unanchored (prefix admit)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/compare$\n", "/compare\n"),
         ),
         "backend#1456 leaderboard gate removed (read admitted unconditionally)": (
             "testnet/edge/public_onboarding.caddy",

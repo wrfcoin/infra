@@ -35,8 +35,9 @@ gated_rows=$(grep -cF 'OFF unless the edge env has `PUBLIC_READONLY_API=on`' "${
 # The passkey payout-notification flow adds three POSTs (challenge, subscribe, unsubscribe).
 # Account protections (frontend#55) add four wallet routes (security-key and send-allowlist, read + action).
 # Website forecasts (backend#58) add four: the status read, own list, draft and signed submit.
-if [[ "$gated_rows" != 55 ]]; then
-  echo "FAIL: expected 55 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
+# Epic 8 adds the station compare read (backend#60).
+if [[ "$gated_rows" != 56 ]]; then
+  echo "FAIL: expected 56 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
   exit 1
 fi
 sed '/vars {env.PUBLIC_READONLY_API} on/d' "${ROOT}/testnet/edge/public_onboarding.caddy" >"$tmp/ungated.caddy"
