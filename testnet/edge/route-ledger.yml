@@ -254,11 +254,13 @@ services:
       and /historical/* stay 404. Wallet and governance reads count in the public-read
       limiter; weather has its own tight weather_noaa zone (10 per minute per client IP)
       because each call fans out to NOAA/NWS and the backend keeps no response cache.
-      GET /api/blockchain/blocks/{height} (single-block detail) also stays
-      OFF this list: unlike the list route, it passes through raw block
-      transactions/metadata, which embeds per-address reward_entries for
-      reward-bearing blocks — same hazard class, caught by cross-provider
-      review before merge.
+      GET /api/blockchain/blocks/{height} (single-block detail) is admitted only
+      behind the PUBLIC_READONLY_API gate (@public_readonly_block_detail: digits
+      only, no query, GET), for the public block page (owner 2026-11-08). The
+      backend serves anonymous callers the backend#65 allowlist projection:
+      header, transactions without senders, block-level metadata aggregates,
+      no address, station id or per-identity amount. It was excluded before
+      that fix because raw metadata carried per-address reward data.
       GET /status.json is a static redacted uptime document served directly
       by the edge; POST and sibling paths remain fail-closed 404s.
       (infra#968) GET-only build stamp and capability inventory for the

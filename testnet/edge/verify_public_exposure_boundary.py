@@ -117,13 +117,8 @@ EXPECTED = {
     # owner/reward fields: the anonymous projection still serializes exact
     # coordinates. Browser-side rounding cannot protect the edge response.
     #
-    # Also excluded: GET /api/blockchain/blocks/{height} (single-block detail).
-    # Cross-provider review (Luna, Codex) caught that the backend handler
-    # passes through raw block `transactions` and `metadata`, and core4 embeds
-    # per-address `reward_entries` in that metadata for reward-bearing blocks
-    # — the same #1841/#1113 hazard class. Do not re-add a `chain_block_detail`
-    # entry here without a safe-projection fix in the backend AND an explicit
-    # owner decision.
+    # GET /api/blockchain/blocks/{height} is NOT in this ungated list: it is the gated
+    # @public_readonly_block_detail matcher (backend#65 allowlist projection, owner 2026-11-08).
     "chain_status": ("GET", "path /api/blockchain/status", BACKEND),
     "chain_blocks": ("GET", "path /api/blockchain/blocks", BACKEND),
     "chain_transactions": ("GET", "path /api/blockchain/transactions", BACKEND),
@@ -173,6 +168,12 @@ EXPECTED = {
         BACKEND,
     ),
     # Epic 8: station compare, alias only, no query (backend fans out to core4 + NWS).
+    # Public block page: one block by height, digits only, no query (backend#65 projection).
+    "public_readonly_block_detail": (
+        "GET",
+        "path_regexp ^/api/blockchain/blocks/[0-9]{1,10}$",
+        BACKEND,
+    ),
     "public_readonly_station_compare": (
         "GET",
         "path_regexp ^/api/stations/st_[0-9a-f]{12}/compare$",
@@ -324,6 +325,7 @@ GATED = frozenset({
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
     "public_readonly_station_compare",
+    "public_readonly_block_detail",
     "public_readonly_weather_leaderboard",
     "public_readonly_earnings_leaderboard",
     "public_readonly_operator_profile",
@@ -439,6 +441,7 @@ READONLY_QUERY_LOCK = {
     "public_readonly_station_earnings": 'expression `{query} == ""`',
     # compare takes NO query (the frontend sends none; it fans out to core4 + NWS).
     "public_readonly_station_compare": 'expression `{query} == ""`',
+    "public_readonly_block_detail": 'expression `{query} == ""`',
     "public_readonly_weather_leaderboard": LEADERBOARD_QUERY_LOCK,
     "public_readonly_earnings_leaderboard": EARNINGS_QUERY_LOCK,
     "public_readonly_operator_profile": 'expression `{query} == ""`',
@@ -984,6 +987,32 @@ def self_test() -> None:
         "backend#1232 earnings station-id length widened to 65+": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("{1,64}/earnings$", "{1,65}/earnings$"),
+        ),
+        "block detail query lock removed (any query admitted)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "blocks/[0-9]{1,10}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "blocks/[0-9]{1,10}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "block detail gate removed (read admitted unconditionally)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "blocks/[0-9]{1,10}$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "blocks/[0-9]{1,10}$\n",
+            ),
+        ),
+        "block detail widened to any segment": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("blocks/[0-9]{1,10}$", "blocks/[^/]+$"),
+        ),
+        "block detail regex unanchored (prefix admit)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("blocks/[0-9]{1,10}$\n", "blocks/[0-9]{1,10}\n"),
+        ),
+        "block detail widened beyond GET": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@public_readonly_block_detail {\n\t\tmethod GET", "@public_readonly_block_detail {\n\t\tmethod GET POST"),
         ),
         "epic8 compare query lock removed (any query admitted)": (
             "testnet/edge/public_onboarding.caddy",

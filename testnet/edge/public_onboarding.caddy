@@ -313,17 +313,12 @@
 	# below is therefore GATED OFF (@public_readonly_* — PUBLIC_READONLY_API).
 	# GET /api/v1/stations/status also remains excluded.
 	#
-	# Also explicitly NOT admitted: GET /api/blockchain/blocks/{height} (a
-	# single-block detail read). Unlike the list route below, the backend
-	# handler (blockchain-routes.js:166-236) passes through the block's raw
-	# `transactions` array and full `metadata` unfiltered. Core4's block
-	# metadata embeds `reward_entries` (proof_of_publishing.rs) — address,
-	# amount, station_id, provenance_class — for any reward-bearing block, so
-	# this route would leak the exact #1841/#1113 class of per-address
-	# financial data through a "chain explorer" name. Cross-provider review
-	# (Luna, Codex) caught this before merge; do not re-add without a
-	# safe-projection fix in the backend handler AND an explicit owner
-	# decision, revising this comment and the route ledger together.
+	# GET /api/blockchain/blocks/{height} (single-block detail) used to be excluded here: the
+	# backend passed the block's raw metadata through, which carries per-address reward data.
+	# backend#65 replaced that with an allowlist projection (reviewed scalars only, per-identity
+	# lists as counts and totals, unknown keys dropped), and the owner approved the public block
+	# page (2026-11-08). It is now admitted by @public_readonly_block_detail below: gated, GET,
+	# digits only, no query. Do NOT deploy that matcher before backend#65 is live.
 	@chain_status {
 		method GET
 		path /api/blockchain/status
@@ -465,6 +460,21 @@
 		expression `{query} == ""`
 	}
 	handle @public_readonly_station_compare {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Public block page (/explore/block/:height, owner approval 2026-11-08). One block by height:
+	# backend blockchain-routes.js GET /blocks/:height with the backend#65 allowlist projection
+	# (header, an allowlisted transaction list without senders, and block-level metadata
+	# aggregates; no address, station id or per-identity amount). Digits only (1 to 10), NO
+	# query, GET only, same gate as its siblings, counted in public_read (/api/blockchain/*).
+	@public_readonly_block_detail {
+		method GET
+		path_regexp ^/api/blockchain/blocks/[0-9]{1,10}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_block_detail {
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
