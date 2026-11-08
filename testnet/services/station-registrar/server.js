@@ -373,7 +373,13 @@ function createService({ config, store, runCli, node, now = () => Date.now() }) 
       const out = path.join(dir, 'signed.json');
       fs.writeFileSync(file, JSON.stringify(record.row), { mode: 0o600 });
       const result = await runCli([...cliArgs(file), '--submitted-at', String(at), '--key-file', config.keyFile, '--out', out]);
-      if (!result.ok || result.data?.signed !== true) return { signed: false };
+      // The CLI's answer names the signed tx: its id as 64 hex (the artifact
+      // serializes the id as bytes) and the station it signed for.
+      const transactionId = result.data?.transaction_id;
+      if (!result.ok || result.data?.signed !== true || !HEX64.test(transactionId || '')
+        || result.data?.station_id !== record.stationId) {
+        return { signed: false };
+      }
       let artifact;
       try {
         artifact = JSON.parse(fs.readFileSync(out, 'utf8'));
@@ -395,8 +401,7 @@ function createService({ config, store, runCli, node, now = () => Date.now() }) 
       }
       const accepted = unwrap(answer.body)?.accepted;
       if (answer.status === 201 && accepted === 1) {
-        const id = transactions[0]?.id ?? transactions[0]?.transaction_id;
-        return { signed: true, submitted: 'yes', transactionId: typeof id === 'string' ? id : undefined };
+        return { signed: true, submitted: 'yes', transactionId };
       }
       if (answer.status >= 400 && answer.status < 500) return { signed: true, submitted: 'refused' };
       return { signed: true, submitted: 'unknown' };

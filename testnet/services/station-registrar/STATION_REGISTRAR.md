@@ -114,13 +114,17 @@ are deleted after 30 days.
   owner_proof: "valid"}}` or `{ok: false, error: {message}}`.
 - with `--submitted-at <unix> --key-file <file> --out <file>`: signs one v2
   registration as the registrar key, refuses unless that key is pinned for the
-  genesis, writes `{chain_id, network_id, transactions: [one]}` and answers
-  `{ok: true, data: {signed: true}}`.
+  genesis, writes `{chain_id, network_id, submitted_at, transactions: [one]}`
+  and answers `{ok: true, data: {signed: true, station_id, transaction_id,
+  registrar_pubkey}}`. The service records `transaction_id` (64 hex) from this
+  answer; the artifact's own `id` field is the hash as bytes. An answer
+  without a hex `transaction_id`, or for another station, is treated as a
+  signer failure: nothing is submitted and releases pause.
 
-**This command is not in core4 yet** (`station build-registration` refuses a
-key that is not in the governance allowlist). It is a core4 CLI change that
-must land before this service can sign; until then every `--check` fails and
-the service accepts nothing (fail closed).
+The command is core4's `station registrar-sign` (core4 #140). A build whose
+table pins no registrar key for the genesis refuses every call, `--check`
+included, so until the release that pins Tony's keys the service accepts
+nothing (fail closed).
 
 ## Configuration
 
