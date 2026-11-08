@@ -1214,6 +1214,37 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Self-serve node bonding (epic 6; backend bond-admission-routes.ts -> infra services/bond-admission).
+	# POST: one Deposit/Update packet plus the node's peer proof of its public address; the service checks it
+	# with the core4 CLI, dials the node, applies the limits and returns the co-signed packet. No bearer (the
+	# node operator has no site login; the packet's own signatures and the 24 h connected node are the proof),
+	# JSON only, 48 KiB (the backend's own cap), exact path, no query. Each POST can cost the service a P2P
+	# dial, so writes get their own small zone bond_admission below. GET recent: the last 100 admissions,
+	# public chain fields only. The backend answers 404 until BOND_ADMISSION_PROXY_ENABLED=true.
+	@public_bond_admission {
+		method POST
+		path /api/bond-admission
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_bond_admission {
+		request_body {
+			max_size 49152
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_bond_admission_recent {
+		method GET
+		path /api/bond-admission/recent
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_bond_admission_recent {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Make a forecast from the website (epic 7; backend#58 website-forecast-routes.ts, frontend /forecast/new).
 	# The status read is public; the draft, the signed submit and the caller's own list need a wallet login
 	# Bearer (the backend verifies it and reads the forecaster from it). Exact paths, no query, JSON writes:
@@ -1383,7 +1414,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/*
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent
 			}
 			key {client_ip}
 			events 30
@@ -1438,6 +1469,17 @@
 			}
 			key {client_ip}
 			events 6
+			window 1m
+		}
+		# Self-serve bonding (epic 6): each admission POST can make the service dial the node over P2P and run
+		# the core4 CLI twice. A real operator sends one or two; the service itself admits 2 a day.
+		zone bond_admission {
+			match {
+				method POST
+				path /api/bond-admission
+			}
+			key {client_ip}
+			events 3
 			window 1m
 		}
 		# Website forecasts (backend#58): each draft or submit can end in a node relay under the site's one

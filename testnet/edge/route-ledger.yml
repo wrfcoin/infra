@@ -187,6 +187,12 @@ services:
       the outbound NOAA nearby-station lookup) and the detail reads admit
       none or exactly `limit=1`, and earnings admits none (`?limit=` would size a
       per-commit core4 reward-evidence fan-out); anything else 404s at the edge.
+      (Epic 6, backend bond-admission-routes.ts) POST /api/bond-admission (JSON, 48 KiB, no
+      bearer: the packet's own signatures and a 24 h connected node are the proof) and GET
+      /api/bond-admission/recent (public chain fields only) are admitted behind the same gate, exact
+      paths, no query. The POST also has its own bond_admission zone (3/min per client), since each
+      one can cost the service a P2P dial. The backend answers 404 until
+      BOND_ADMISSION_PROXY_ENABLED=true.
       (Epic 8, backend#60) GET /api/stations/st_<12 hex>/compare is admitted behind the
       same gate and public-read limiter: alias only and no query string, because it fans
       out to core4 and NWS; it returns aggregates only (nearby median from at least 3

@@ -224,6 +224,10 @@ EXPECTED = {
     # Epic 7 website forecasts (backend#58): public status; own list, draft and signed submit need a wallet
     # Bearer; JSON writes capped at the backend's own body limits (draft 2 KiB, submit 8 KiB).
     "public_readonly_forecasts_status": ("GET", "path /api/forecasts/status", BACKEND),
+    # Epic 6 self-serve bonding (backend bond-admission-routes.ts): JSON packet + peer proof, no bearer,
+    # 48 KiB (the backend's cap); the recent list is a public read.
+    "public_bond_admission": ("POST", "path /api/bond-admission", ("request_body {", "max_size 49152", "}", *BACKEND)),
+    "public_readonly_bond_admission_recent": ("GET", "path /api/bond-admission/recent", BACKEND),
     "public_forecasts_mine": ("GET", "path /api/forecasts/mine", BACKEND),
     "public_forecasts_draft": ("POST", "path /api/forecasts/draft", ("request_body {", "max_size 2048", "}", *BACKEND)),
     "public_forecasts_submit": ("POST", "path /api/forecasts/submit", ("request_body {", "max_size 8192", "}", *BACKEND)),
@@ -339,6 +343,8 @@ GATED = frozenset({
     "public_duels_write",
     "public_duel_record",
     "public_readonly_forecasts_status",
+    "public_bond_admission",
+    "public_readonly_bond_admission_recent",
     "public_forecasts_mine",
     "public_forecasts_draft",
     "public_forecasts_submit",
@@ -393,7 +399,7 @@ BEARER_LOCK = {
     "public_forecasts_submit": 'header Authorization "Bearer *"',
 }
 # JSON-body writes: the matcher also pins Content-Type (last directive).
-JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_notifications_unsubscribe",
+JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_bond_admission", "public_notifications_unsubscribe",
     "public_notifications_passkey_challenge", "public_notifications_passkey_subscribe", "public_notifications_passkey_unsubscribe",
     "public_wallet_security_key_actions", "public_wallet_send_allowlist_actions",
 })
@@ -454,6 +460,8 @@ READONLY_QUERY_LOCK = {
     "public_duels_write": 'expression `{query} == ""`',
     "public_duel_record": 'expression `{query} == ""`',
     "public_readonly_forecasts_status": 'expression `{query} == ""`',
+    "public_bond_admission": 'expression `{query} == ""`',
+    "public_readonly_bond_admission_recent": 'expression `{query} == ""`',
     "public_forecasts_mine": 'expression `{query} == ""`',
     "public_forecasts_draft": 'expression `{query} == ""`',
     "public_forecasts_submit": 'expression `{query} == ""`',
@@ -669,7 +677,7 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write", "bond_admission"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
@@ -696,7 +704,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/*",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent",
             "}",
             "key {client_ip}",
             "events 30",
@@ -728,6 +736,16 @@ def verify(root: Path = ROOT) -> None:
             "}",
             "key {client_ip}",
             "events 6",
+            "window 1m",
+        ],
+        # Epic 6: bond admission writes (each may cost the service a P2P dial and two CLI runs).
+        "bond_admission": [
+            "match {",
+            "method POST",
+            "path /api/bond-admission",
+            "}",
+            "key {client_ip}",
+            "events 3",
             "window 1m",
         ],
         # backend#58: website forecast writes (each may relay to the node under the site's one credential).
@@ -1361,6 +1379,32 @@ def self_test() -> None:
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 8192",
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 1048576",
             ),
+        ),
+        "bond admission ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/bond-admission\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/bond-admission\n"),
+        ),
+        "bond admission body cap raised": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @public_bond_admission {\n\t\trequest_body {\n\t\t\tmax_size 49152",
+                "handle @public_bond_admission {\n\t\trequest_body {\n\t\t\tmax_size 1048576",
+            ),
+        ),
+        "bond admission query lock removed": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/bond-admission\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "path /api/bond-admission\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "bond admission zone loosened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/bond-admission\n\t\t\t}\n\t\t\tkey {client_ip}\n\t\t\tevents 3", "path /api/bond-admission\n\t\t\t}\n\t\t\tkey {client_ip}\n\t\t\tevents 1000"),
+        ),
+        "bond admission recent ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/bond-admission/recent\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/bond-admission/recent\n"),
         ),
         "forecast submit without a wallet bearer": (
             "testnet/edge/public_onboarding.caddy",
