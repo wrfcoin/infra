@@ -107,12 +107,22 @@ effective epoch, time). No addresses. Everything in it is public on chain anyway
 | `BOND_ADMISSION_MAX_IN_FLIGHT` | `2` (more get 429 `ADMISSION_BUSY`) |
 | `PORT` | `8094` |
 
-## Not in this change
+## Image (compose profile `bond-admission`)
 
-- No Dockerfile, compose entry, backend proxy or edge route. The service needs the core4
-  CLI built with the pinned keys, so its image comes with the release that pins them.
-- Nothing is enabled. The chain refuses every admission co-sign until `bond_admission_key`
-  is scheduled and active.
+`docker compose --profile bond-admission` starts `wrfcoin-bond-admission`. It has no host port; only the backend
+proxy reaches it (`BOND_ADMISSION_URL=http://wrfcoin-bond-admission:8094` on the backend).
+
+1. Build the release CLI on CT102 inside the same base as the node image (Debian bookworm, glibc), from the core4
+   revision that pins the admission keys. Copy it to `testnet/services/bond-admission/bin/wrfcoin`; that directory
+   is git-ignored.
+2. Build with `BOND_ADMISSION_CLI_SHA256=<sha256 of that file>`. The build refuses a missing or different hash and
+   checks that the binary starts.
+3. Key: the online seed file, owned by uid 1001, mode 0600, in a host directory named by `BOND_ADMISSION_KEY_DIR`,
+   mounted read-only at `/run/bond-admission`. A missing directory or file means every co-sign is refused (503).
+4. Set `BOND_ADMISSION_IP_SALT` (16+ chars) in the host env file. `BOND_ADMISSION_ENABLED` stays `false` until the
+   owner switches it on.
+
+The container runs read-only, no capabilities, `/tmp` tmpfs only.
 
 ## Tests
 

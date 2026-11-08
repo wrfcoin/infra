@@ -33,6 +33,7 @@ services:
   ipfs-kubo:           { exposure: never }   # ipfs-storage: private administrative API
   storage-node:        { exposure: never }   # ipfs-storage: internal app client only
   softhsm-init:        { exposure: never }
+  wrfcoin-bond-admission: { exposure: never }   # no host port; only the backend proxy reaches it (backend bond-admission-routes)
   softhsm-seed-init:   { exposure: never }   # seed profile: RETIRED on CT101 2026-09-27 (infra#1057 Q4), kept for rollback
   db-migrate:          { exposure: never }
   weather-collector:   { exposure: never }

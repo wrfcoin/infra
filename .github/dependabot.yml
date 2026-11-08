@@ -173,6 +173,13 @@ updates:
       - dependency-name: "node"
         update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
+    directory: /testnet/services/bond-admission
+    schedule: { interval: weekly }
+    groups: { docker-base-images: { patterns: ["*"] } }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
     directory: /testnet/services/sdr-ingest
     schedule: { interval: weekly }
     groups: { docker-base-images: { patterns: ["*"] } }
