@@ -128,6 +128,10 @@
         "reason": "Current-main launch-path regression; source inspection confirms synthetic inputs, daemonless renders or stubbed external calls only."
       },
       {
+        "path": "scripts/tests/test_node_dashboard.py",
+        "reason": "Portable dashboard decoder/epoch/release unit tests; transports are stubbed, no live host required."
+      },
+      {
         "path": "scripts/tests/test_node_image_ship_features.py",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
@@ -438,10 +442,6 @@
       {
         "path": "scripts/tests/test_mango_attester_bridge_network.py",
         "reason": "Reads private Mango and node-service-host overlays."
-      },
-      {
-        "path": "scripts/tests/test_node_dashboard.py",
-        "reason": "Dashboard implementation is excluded from the public snapshot."
       },
       {
         "path": "scripts/tests/test_oracle_attester_deploy.py",

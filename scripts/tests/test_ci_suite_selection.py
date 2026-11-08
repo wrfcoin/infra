@@ -37,9 +37,10 @@ class SuiteSelection(unittest.TestCase):
         private = {x['path'] for rows in self.manifest['private'].values() for x in rows}
         self.assertFalse(hosted & private)
         for path in ('test_testnet_ipfs_profile.py', 'test_weather_archive_profile.py',
-                     'test-block-heartbeat-compose.sh', 'test-upgrade-notice-overlays.sh'):
+                     'test-block-heartbeat-compose.sh', 'test-upgrade-notice-overlays.sh',
+                     'test_node_dashboard.py'):
             self.assertIn('scripts/tests/' + path, hosted)
-        for path in ('test_node_dashboard.py', 'test-real-cli-smoke.sh', 'test-real-cli-activation.sh'):
+        for path in ('test-real-cli-smoke.sh', 'test-real-cli-activation.sh'):
             self.assertIn('scripts/tests/' + path, private)
 
     def test_new_unclassified_suite_refuses_before_execution(self):
