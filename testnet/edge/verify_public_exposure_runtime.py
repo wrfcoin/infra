@@ -1588,6 +1588,24 @@ WEBSITE_FORECAST_CASES = (
     ("GET", f"{_WF}/x/../status", (), 400),
 )
 
+# Epic 6 self-serve bonding (backend bond-admission-routes.ts): JSON packet POST with no bearer; the
+# recent list is a public read. Exact paths, no query.
+_BA = "/api/bond-admission"
+BOND_ADMISSION_CASES = (
+    ("POST", _BA, _JSON, 502),
+    ("GET", f"{_BA}/recent", (), 502),
+    ("POST", _BA, (), 404),  # JSON only
+    ("POST", f"{_BA}?x=1", _JSON, 404),
+    ("GET", f"{_BA}/recent?limit=5", (), 404),
+    ("GET", _BA, (), 404),
+    ("POST", f"{_BA}/recent", _JSON, 404),
+    ("PUT", _BA, _JSON, 404),
+    ("POST", f"{_BA}/", _JSON, 404),
+    ("POST", f"{_BA}/sign", _JSON, 404),  # the co-sign is the service's, never a public route
+    ("GET", "/api/bond-admissions", (), 404),  # the service's own path is not admitted
+    ("GET", f"{_BA}/x/../recent", (), 400),
+)
+
 # Passkey-wallet payout notifications (backend feat/passkey-payout-subscribe): no JWT, so no Bearer; the
 # body carries a WebAuthn assertion over a single-use nonce. JSON only, exact paths, no query.
 _NP = f"{_N}/passkey"
@@ -1866,6 +1884,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-duels", text, port, "on", DUEL_CASES, 16)
         prove_parity_reads(f"{label}-website-forecasts-gate", text, port, None, WEBSITE_FORECAST_CASES[:4], 12)
         prove_parity_reads(f"{label}-website-forecasts", text, port, "on", WEBSITE_FORECAST_CASES, 8)
+        prove_parity_reads(f"{label}-bond-admission-gate", text, port, None, BOND_ADMISSION_CASES[:2], 12)
+        prove_parity_reads(f"{label}-bond-admission", text, port, "on", BOND_ADMISSION_CASES, 6)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1909,6 +1929,11 @@ def main() -> None:
             caddy_src.replace("path /api/forecasts/submit\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
                               "path /api/forecasts/submit\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n"),
             WEBSITE_FORECAST_CASES,
+        ),
+        "bond admission query lock removed": (
+            caddy_src.replace("path /api/bond-admission\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                              "path /api/bond-admission\n\t\tvars {env.PUBLIC_READONLY_API} on\n"),
+            BOND_ADMISSION_CASES,
         ),
         "proof card widened to any segment": (
             caddy_src.replace("^/api/proofs/[0-9a-f]{64}$", "^/api/proofs/[^/]+$"), PROOF_CARD_CASES,
