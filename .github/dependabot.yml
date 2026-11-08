@@ -68,6 +68,10 @@ updates:
     directory: /testnet/services/synthetic-collector
     schedule: { interval: weekly }
     groups: { npm-dependencies: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /testnet/services/station-registrar
+    schedule: { interval: weekly }
+    groups: { npm-dependencies: { patterns: ["*"] } }
 
   # NODE LTS POLICY IGNORE (infra#745, owner decision 2026-08-04).
   #

@@ -395,6 +395,10 @@
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
       {
+        "path": "scripts/tests/test-station-registrar-service.sh",
+        "reason": "Portable service regression; stand-in CLI and node, test keys only, no live host required."
+      },
+      {
         "path": "scripts/tests/test-storage-compose-ipfs-only.sh",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },

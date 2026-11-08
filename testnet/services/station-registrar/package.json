@@ -1,0 +1,12 @@
+{
+  "license": "MIT OR Apache-2.0",
+  "name": "wrfcoin-testnet-station-registrar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WRFCoin testnet phone station registrar service (default off)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
