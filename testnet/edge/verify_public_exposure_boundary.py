@@ -215,6 +215,12 @@ EXPECTED = {
     "public_duel_record": (
         "POST", "path_regexp ^/api/duels/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/record$", ("request_body {", "max_size 8192", "}", *BACKEND),
     ),
+    # Epic 7 website forecasts (backend#58): public status; own list, draft and signed submit need a wallet
+    # Bearer; JSON writes capped at the backend's own body limits (draft 2 KiB, submit 8 KiB).
+    "public_readonly_forecasts_status": ("GET", "path /api/forecasts/status", BACKEND),
+    "public_forecasts_mine": ("GET", "path /api/forecasts/mine", BACKEND),
+    "public_forecasts_draft": ("POST", "path /api/forecasts/draft", ("request_body {", "max_size 2048", "}", *BACKEND)),
+    "public_forecasts_submit": ("POST", "path /api/forecasts/submit", ("request_body {", "max_size 8192", "}", *BACKEND)),
     # Station theft protection (core4#3345/#3347, infra#1095). Both address a station by its public
     # ALIAS only (st_ + 12 lowercase hex), with no query string. The relay is a POST (the backend
     # authenticates per kind and never signs or alters the tx) behind an 8 KiB body cap and its own
@@ -325,6 +331,10 @@ GATED = frozenset({
     "public_duels_mine",
     "public_duels_write",
     "public_duel_record",
+    "public_readonly_forecasts_status",
+    "public_forecasts_mine",
+    "public_forecasts_draft",
+    "public_forecasts_submit",
     "public_readonly_network_nodes",
     "public_readonly_competitions",
     "public_notifications_config",
@@ -371,9 +381,12 @@ BEARER_LOCK = {
     "oracle_submit_prepare": 'header Authorization "Bearer *"',
     "oracle_submit_data_multipart": 'header Authorization "Bearer *"',
     "oracle_submit_data": 'header Authorization "Bearer *"',
+    "public_forecasts_mine": 'header Authorization "Bearer *"',
+    "public_forecasts_draft": 'header Authorization "Bearer *"',
+    "public_forecasts_submit": 'header Authorization "Bearer *"',
 }
 # JSON-body writes: the matcher also pins Content-Type (last directive).
-JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_notifications_unsubscribe",
+JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_notifications_unsubscribe",
     "public_notifications_passkey_challenge", "public_notifications_passkey_subscribe", "public_notifications_passkey_unsubscribe",
     "public_wallet_security_key_actions", "public_wallet_send_allowlist_actions",
 })
@@ -431,6 +444,10 @@ READONLY_QUERY_LOCK = {
     "public_duels_mine": 'expression `{query} == ""`',
     "public_duels_write": 'expression `{query} == ""`',
     "public_duel_record": 'expression `{query} == ""`',
+    "public_readonly_forecasts_status": 'expression `{query} == ""`',
+    "public_forecasts_mine": 'expression `{query} == ""`',
+    "public_forecasts_draft": 'expression `{query} == ""`',
+    "public_forecasts_submit": 'expression `{query} == ""`',
     "public_readonly_network_nodes": 'expression `{query} == ""`',
     # frontend COMPETITIONS_PATH / COMPETITION_CURRENT_PATH / competitionWeekPath(): never a query.
     "public_readonly_competitions": 'expression `{query} == ""`',
@@ -643,7 +660,7 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
@@ -670,7 +687,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/*",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/*",
             "}",
             "key {client_ip}",
             "events 30",
@@ -702,6 +719,16 @@ def verify(root: Path = ROOT) -> None:
             "}",
             "key {client_ip}",
             "events 6",
+            "window 1m",
+        ],
+        # backend#58: website forecast writes (each may relay to the node under the site's one credential).
+        "forecast_write": [
+            "match {",
+            "method POST",
+            "path /api/forecasts/draft /api/forecasts/submit",
+            "}",
+            "key {client_ip}",
+            "events 10",
             "window 1m",
         ],
         # infra#1095: the owner-action relay's own tight per-IP zone.
@@ -1303,6 +1330,28 @@ def self_test() -> None:
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 8192",
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 1048576",
             ),
+        ),
+        "forecast submit without a wallet bearer": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path /api/forecasts/submit\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "path /api/forecasts/submit\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "forecast draft body cap raised": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @public_forecasts_draft {\n\t\trequest_body {\n\t\t\tmax_size 2048",
+                "handle @public_forecasts_draft {\n\t\trequest_body {\n\t\t\tmax_size 1048576",
+            ),
+        ),
+        "forecast status ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/forecasts/status\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/forecasts/status\n"),
+        ),
+        "forecast write zone loosened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/forecasts/draft /api/forecasts/submit\n\t\t\t}\n\t\t\tkey {client_ip}\n\t\t\tevents 10", "path /api/forecasts/draft /api/forecasts/submit\n\t\t\t}\n\t\t\tkey {client_ip}\n\t\t\tevents 1000"),
         ),
         "duel record ungated": (
             "testnet/edge/public_onboarding.caddy",

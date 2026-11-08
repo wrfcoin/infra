@@ -43,6 +43,11 @@ ENV VITE_WRFCOIN_NETWORK_ID=$VITE_WRFCOIN_NETWORK_ID
 # deliberate fail-closed, never a silent guess.
 ARG VITE_WALLET_AUTH_ORIGIN=
 ENV VITE_WALLET_AUTH_ORIGIN=$VITE_WALLET_AUTH_ORIGIN
+# Block explorer base URL (frontend src/config/network.ts EXPLORER_BASE_URL): links a transaction hash to
+# <base>/tx/<hash> and an address to <base>/address/<addr>. Empty (the default) shows plain text, no link.
+# A public URL, not a switch, so the flags guard does not judge it.
+ARG VITE_EXPLORER_URL=
+ENV VITE_EXPLORER_URL=$VITE_EXPLORER_URL
 
 # Internal-surface switches (infra#974, frontend#348/#381). Empty (the default)
 # is the public site. They may be exactly `true` ONLY in a staging build:

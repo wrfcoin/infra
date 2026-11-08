@@ -161,6 +161,12 @@ services:
       POST /api/duels[/<uuid>/accept|forecast] with a wallet Bearer, 4 KiB; POST
       /api/duels/<uuid>/record, JSON, 8 KiB, no bearer). Each backend route answers 404 until its
       own flag (FORECAST_VERIFICATION_ENABLED, FRIEND_CHALLENGES_ENABLED, FORECAST_DUELS_ENABLED).
+      Website forecasts (epic 7, backend#58) add, behind the same gate, exact paths, no query:
+      GET /api/forecasts/status (public); GET /api/forecasts/mine and POST /api/forecasts/draft
+      (JSON, 2 KiB) and /api/forecasts/submit (JSON, 8 KiB) with a wallet Bearer. All four count in
+      public_read; the two writes also in their own forecast_write zone (10/min per client), the
+      per-visitor guard on the one Contributor credential the backend relays every visitor's commit
+      under. The backend answers 404 until WEBSITE_FORECAST_ENABLED=true.
       Admission source tests do not establish deployment or settlement.
       Everything else 404s at the edge. GET /api/weather/stations stays OFF:
       backend#1113 strips owner/reward fields, but the anonymous response still

@@ -1543,6 +1543,27 @@ DUEL_CASES = (
     ("GET", f"{_DU}/x/../{_DID}", (), 400),
 )
 
+# Epic 7 website forecasts (backend#58 website-forecast-routes.ts, frontend /forecast/new): public status;
+# own list, draft and signed submit with a wallet Bearer; JSON writes; exact paths, no query.
+_WF = "/api/forecasts"
+WEBSITE_FORECAST_CASES = (
+    ("GET", f"{_WF}/status", (), 502),
+    ("GET", f"{_WF}/mine", PARITY_BEARER, 502),
+    ("POST", f"{_WF}/draft", _BJ, 502),
+    ("POST", f"{_WF}/submit", _BJ, 502),
+    ("GET", f"{_WF}/mine", (), 404),  # the own list needs the wallet bearer
+    ("POST", f"{_WF}/draft", _JSON, 404),
+    ("POST", f"{_WF}/submit", _JSON, 404),
+    ("POST", f"{_WF}/submit", PARITY_BEARER, 404),  # JSON only
+    ("GET", f"{_WF}/status?x=1", (), 404),
+    ("GET", f"{_WF}/mine?limit=5", PARITY_BEARER, 404),
+    ("POST", f"{_WF}/submit?x=1", _BJ, 404),
+    ("GET", _WF, (), 404),
+    ("POST", f"{_WF}/reveal", _BJ, 404),  # the reveal is the backend worker's, never a public route
+    ("PUT", f"{_WF}/submit", _BJ, 404),
+    ("GET", f"{_WF}/x/../status", (), 400),
+)
+
 # Passkey-wallet payout notifications (backend feat/passkey-payout-subscribe): no JWT, so no Bearer; the
 # body carries a WebAuthn assertion over a single-use nonce. JSON only, exact paths, no query.
 _NP = f"{_N}/passkey"
@@ -1809,6 +1830,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-challenges", text, port, "on", CHALLENGE_CASES, 16)
         prove_parity_reads(f"{label}-duels-gate", text, port, None, DUEL_CASES[:7], 12)
         prove_parity_reads(f"{label}-duels", text, port, "on", DUEL_CASES, 16)
+        prove_parity_reads(f"{label}-website-forecasts-gate", text, port, None, WEBSITE_FORECAST_CASES[:4], 12)
+        prove_parity_reads(f"{label}-website-forecasts", text, port, "on", WEBSITE_FORECAST_CASES, 8)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
@@ -1847,6 +1870,11 @@ def main() -> None:
             caddy_src.replace("path /api/forecast-verification/forecasts\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Content-Type application/json\n",
                               "path /api/forecast-verification/forecasts\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n"),
             FORECAST_CHECK_CASES,
+        ),
+        "website forecast submit without a wallet bearer": (
+            caddy_src.replace("path /api/forecasts/submit\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                              "path /api/forecasts/submit\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n"),
+            WEBSITE_FORECAST_CASES,
         ),
         "proof card widened to any segment": (
             caddy_src.replace("^/api/proofs/[0-9a-f]{64}$", "^/api/proofs/[^/]+$"), PROOF_CARD_CASES,
