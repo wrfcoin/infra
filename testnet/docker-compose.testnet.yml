@@ -1012,6 +1012,76 @@ services:
         max-file: "3"
 
   # =========================================================================
+  # Bond admission (services/bond-admission/BOND_ADMISSION.md). Default OFF.
+  # Own profile, so no existing `up` starts it. Co-signs node bond Deposits and
+  # Updates with the pinned bond admission key (core4 bond_admission_key) after
+  # its rules pass. No host port: only the backend proxy reaches it.
+  # Before building: copy the release CLI to services/bond-admission/bin/wrfcoin
+  # and set BOND_ADMISSION_CLI_SHA256 to its sha256 (the build refuses otherwise).
+  # The admission seed is a read-only bind mount, owned by uid 1001, mode 0600.
+  # =========================================================================
+
+  wrfcoin-bond-admission:
+    image: wrfcoin/bond-admission:testnet
+    build:
+      context: ..
+      dockerfile: testnet/services/bond-admission/Dockerfile
+      args:
+        <<: *infra-build-args
+        WRFCOIN_CLI_SHA256: ${BOND_ADMISSION_CLI_SHA256:-}
+    container_name: wrfcoin-testnet-bond-admission
+    restart: unless-stopped
+    profiles: ["bond-admission"]
+    environment:
+      PORT: "8094"
+      BOND_ADMISSION_ENABLED: ${BOND_ADMISSION_ENABLED:-false}
+      WRFCOIN_NETWORK_ID: testnet
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      BOND_ADMISSION_NODE_URL: http://wrfcoin-node:8556
+      BOND_ADMISSION_READER_TOKEN: ${BOND_ADMISSION_READER_TOKEN:-${WRFCOIN_READER_TOKEN:-}}
+      # Path INSIDE the container. The host directory is BOND_ADMISSION_KEY_DIR below.
+      BOND_ADMISSION_KEY_FILE: /run/bond-admission/admission-online.seed
+      # Required (>= 16 chars) for the salted address hash; empty = 503 (fail closed).
+      BOND_ADMISSION_IP_SALT: ${BOND_ADMISSION_IP_SALT:-}
+      BOND_ADMISSION_SOFT_CEILING: ${BOND_ADMISSION_SOFT_CEILING:-16}
+      BOND_ADMISSION_DAILY_CAP: ${BOND_ADMISSION_DAILY_CAP:-2}
+      BOND_ADMISSION_MIN_INTERVAL_SECONDS: ${BOND_ADMISSION_MIN_INTERVAL_SECONDS:-21600}
+      BOND_ADMISSION_MIN_PEER_AGE_SECONDS: ${BOND_ADMISSION_MIN_PEER_AGE_SECONDS:-86400}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      BOND_ADMISSION_PREFIX: "bond-admission:"
+    volumes:
+      # Absent directory = no key = every co-sign refused (503), never a crash.
+      - ${BOND_ADMISSION_KEY_DIR:-./bond-admission-key-absent}:/run/bond-admission:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      wrfcoin-node:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Packet files live here for one request each; HOME=/tmp for the CLI.
+      - /tmp:noexec,nosuid,size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # =========================================================================
   # WRFCoin Backend API (Node.js main_api_server)
   # =========================================================================
 

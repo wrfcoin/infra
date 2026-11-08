@@ -1,0 +1,4 @@
+# The core4 CLI binary is copied here by the deploy kit before `docker compose build`.
+# It is never committed. See ../BOND_ADMISSION.md, "Image".
+*
+!.gitignore
