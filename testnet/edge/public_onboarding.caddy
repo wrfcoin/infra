@@ -989,6 +989,32 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Advisory governance reads (core4 advisory_governance; backend
+	# governance-routes.ts /advisory/proposals[/:id]): signed text proposals,
+	# never executed, with no per-address data beyond the public proposer. The
+	# list takes no query, or limit=<1..100>&offset=<digits> (the status filter
+	# is not admitted). The detail id is the chain-derived adv-<16 lowercase hex>.
+	# The node's submit route and the eligibility read stay 404 here.
+	@public_readonly_governance_advisory_proposals {
+		method GET
+		path /api/governance/advisory/proposals
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == "" || {query}.matches('^limit=([1-9]|[1-9][0-9]|100)&offset=[0-9]{1,6}$')`
+	}
+	handle @public_readonly_governance_advisory_proposals {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@public_readonly_governance_advisory_proposal {
+		method GET
+		path_regexp ^/api/governance/advisory/proposals/adv-[0-9a-f]{16}$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_governance_advisory_proposal {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	@public_readonly_governance_treasury {
 		method GET
 		path /api/governance/treasury
