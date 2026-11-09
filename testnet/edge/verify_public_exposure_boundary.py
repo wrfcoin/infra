@@ -54,6 +54,14 @@ EXPECTED = {
         "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/reward-progress$",
         BACKEND,
     ),
+    # A website station owner's ownership proof for the on-chain registration batch (backend
+    # weather-routes.js POST /stations/:id/ownership-proof): wallet session required, own station only,
+    # 404 while the backend switch is off. POST only, body capped at 8 KiB, `onboarding` rate zone.
+    "station_ownership_proof": (
+        "POST",
+        "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$",
+        BACKEND_CAPPED_8KIB,
+    ),
     # Owner ruling 2026-10-02 (frontend#463, W28): the signed-in wallet's OWN phone-station status.
     # weather-routes.js GET /stations/mobile -> getMobileStationStatus(req.user.address): 401 without a
     # wallet session, 404 NOT_REGISTERED, else only the caller's row (station id, status, 0.1-degree cell,

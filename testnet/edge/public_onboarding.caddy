@@ -211,6 +211,26 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# The owner's wallet hands in its ownership proof for one of its website
+	# stations: a public key and a signature over the chain's station ownership
+	# message, kept for the next on-chain registration batch (backend
+	# weather-routes.js POST /stations/:id/ownership-proof). The backend needs
+	# the wallet session, checks the station belongs to that wallet, and answers
+	# 404 while WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED is off. It never
+	# registers anything on chain. POST only, exact path shape, body at most
+	# 8 KiB (the real body is about 250 bytes). Counted by the `onboarding`
+	# rate zone below (/api/weather/stations*).
+	@station_ownership_proof {
+		method POST
+		path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$
+	}
+	handle @station_ownership_proof {
+		request_body {
+			max_size 8KiB
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# The signed-in wallet's OWN phone-station status (owner ruling 2026-10-02,
 	# frontend#463, W28). weather-routes.js GET /stations/mobile calls
 	# getMobileStationStatus(req.user.address): 401 without a wallet session,

@@ -21,6 +21,7 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `POST` | `/api/weather/stations` | route-specific |
 | `POST` | `regex: ^/api/stations/st_[0-9a-f]{12}/owner-actions$` | route-specific (station alias path only; wallet JWT equal to a signer for transfer, owner action and recovery cancel, signature-only for recovery execute; the signed tx is forwarded unaltered; body at most 8 KiB; own rate zone 10 per 10 min per IP); query string must be exactly none (anything else 404s) |
 | `GET` | `regex: ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/reward-progress$` | none/read-only |
+| `POST` | `regex: ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$` | wallet JWT (own station only); stores a public ownership proof, registers nothing on chain; 404 while the backend switch is off; body at most 8 KiB at the edge |
 | `GET` | `/api/weather/stations/mobile` | wallet JWT (own station only); read-only; query string must be exactly none (anything else 404s) |
 | `POST` | `/api/weather/stations/mobile/challenge` | wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend authenticates the wallet and rate-limits per wallet); phone station registration challenge; query string must be exactly none (anything else 404s) |
 | `POST` | `/api/weather/stations/mobile` | wallet JWT (the edge proxies it only with an `Authorization: Bearer` header; the backend authenticates the wallet and rate-limits per wallet); phone station registration; query string must be exactly none (anything else 404s) |

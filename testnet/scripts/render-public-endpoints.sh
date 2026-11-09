@@ -122,6 +122,12 @@ for matcher in matchers:
                     "and recovery cancel, signature-only for recovery execute; the signed tx is forwarded unaltered; "
                     "body at most 8 KiB; own rate zone 10 per 10 min per IP)"
                 )
+            # Website station ownership proof: weather-routes.js authenticates and checks the owner.
+            if matcher["name"] == "station_ownership_proof":
+                auth = (
+                    "wallet JWT (own station only); stores a public ownership proof, registers nothing on chain; "
+                    "404 while the backend switch is off; body at most 8 KiB at the edge"
+                )
             # Self-serve bond grant (spec 2026-10-23 section 2): the edge's own limits on the backend proxy.
             if matcher["name"] == "faucet_bond_grant":
                 auth = "route-specific (body at most 8 KiB at the edge; shared faucet rate zone 5 per minute per IP)"

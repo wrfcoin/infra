@@ -29,6 +29,42 @@ bash testnet/scripts/activate-mobile-stations-888.sh \
 Copy `activate-mobile-stations.py` to the key host first, from the commit you reviewed.
 A batch is 21 rows at most. Use a small `--limit` for the first batch.
 
+## Stations connected on the website: the same command with `--source website`
+
+A station connected on the website (an Ambient station, say) is in the same position as a
+phone: the backend has it, but it earns only after a governance-signed registration. Add
+`--source website` to the command above and the batch is taken from those stations instead:
+
+```bash
+bash testnet/scripts/activate-mobile-stations-888.sh <the same inputs> --source website --limit 5
+```
+
+What is different from a phone batch, and nothing else is:
+
+| | Phone (default) | `--source website` |
+|---|---|---|
+| Waiting list | `mobile_station_registrations`, `db_only` | `website_station_chain_registrations`, `db_only` |
+| Who is on it | A phone that registered in the app | A website station whose owner's 12-word wallet has handed in its ownership proof. A passkey-owned station is not on it: the chain can't check a passkey owner yet |
+| Export script in the backend container | `scripts/export-mobile-station-registrations.ts` | `scripts/export-website-station-registrations.ts`. It never changes a row |
+| Station ids | `mob-` + 32 hex, derived from the wallet | Whatever the website issued (usually `pws-<station name>-<6 hex>`), never `mob-` |
+| Chain record | `phone-barometer`, `unverified`, `real` | `personal-weather-station`, `unverified`, `real`, no elevation |
+| Backend switch that must be on | `STATION_CHAIN_SYNC_ENABLED` | that, and `WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED` |
+| Station ids on screen | Only in the exit 3 handoff list | In the dry run, and again just before the YES |
+
+**Read the station ids before typing YES.** A website station id usually contains the name
+its owner typed, and a station id is public on chain for good. The dry run prints
+`ROW i/N: eligible; ... station id <id>` for every row, and the real run prints
+`WILL BE PUBLIC ON CHAIN i/N: station id <id>` above the YES prompt. If an id shouldn't be
+public, don't type YES; ask the manager.
+
+Positions follow the same rule as phones: the export writes the 0.1 degree grid point only,
+and this tool refuses a row that is finer. Nothing here prints a position, an owner address,
+a key or a signature.
+
+After the batch, the same exit 3 handoff and readback apply. The station's page says
+"earning" only after the backend's chain sync has seen the station in the chain registry;
+the batch tool doesn't set that and neither does the export.
+
 ## What has to be true, and what checks it
 
 Every run checks these before any signature, dry runs included:
