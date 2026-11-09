@@ -113,6 +113,29 @@ READONLY_EARNINGS_SIBLINGS_DENIED = (
     f"/api/stations/{'s' * 65}/earnings",
     "/api/stations/a.b/earnings",
 )
+# Public block page (owner 2026-11-08, backend#65): GET /api/blockchain/blocks/<height>, same gate,
+# its own container. Digits only and NO query string.
+READONLY_BLOCK_READS = (
+    "/api/blockchain/blocks/1",
+    "/api/blockchain/blocks/19077",
+    "/api/blockchain/blocks/9999999999",
+)
+READONLY_BLOCK_QUERY_DENIED = (
+    "/api/blockchain/blocks/1?x=1",
+    "/api/blockchain/blocks/1?raw=true",
+    "/api/blockchain/blocks/1?limit=1",
+)
+READONLY_BLOCK_NON_GET_METHODS = ("POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD")
+READONLY_BLOCK_SIBLINGS_DENIED = (
+    "/api/blockchain/blocks/abc",
+    "/api/blockchain/blocks/-1",
+    "/api/blockchain/blocks/1.5",
+    "/api/blockchain/blocks/0x10",
+    "/api/blockchain/blocks/12345678901",
+    "/api/blockchain/blocks/1/",
+    "/api/blockchain/blocks/1/transactions",
+    "/api/blockchain/blocks/latest",
+)
 # Epic 8 ("How does my station compare?") — GET /api/stations/<alias>/compare, same gate,
 # its own container (own rate-limit budget). ALIAS ONLY and NO query: the backend fans out to
 # core4 and NWS, so the raw-id and query shapes its siblings admit are refused here.
@@ -1815,6 +1838,16 @@ def main() -> None:
             non_get_methods=READONLY_EARNINGS_NON_GET_METHODS, non_get_paths=1,
         )
     prove_readonly_gate("direct-edge-earnings", config, "8080", None, reads=READONLY_EARNINGS_READS)
+    # Public block page: the block-by-height read, same gate, in its own container.
+    for value in READONLY_GATE_OFF_VALUES:
+        prove_readonly_gate("funnel-edge-block", funnel_text, "8444", value, reads=READONLY_BLOCK_READS)
+    for label, text, port in (("funnel-edge-block", funnel_text, "8444"), ("direct-edge-block", config, "8080")):
+        prove_readonly_gate(
+            label, text, port, "on", reads=READONLY_BLOCK_READS,
+            siblings=READONLY_BLOCK_SIBLINGS_DENIED, query_denied=READONLY_BLOCK_QUERY_DENIED, non_get_from=0,
+            non_get_methods=READONLY_BLOCK_NON_GET_METHODS, non_get_paths=1,
+        )
+    prove_readonly_gate("direct-edge-block", config, "8080", None, reads=READONLY_BLOCK_READS)
     # Epic 8: the station compare read, same gate, in its own container (own rate-limit budget).
     for value in READONLY_GATE_OFF_VALUES:
         prove_readonly_gate("funnel-edge-compare", funnel_text, "8444", value, reads=READONLY_COMPARE_READS)

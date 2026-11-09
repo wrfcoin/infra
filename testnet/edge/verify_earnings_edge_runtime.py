@@ -49,7 +49,9 @@ DENIED = (
     PROFILE.replace("c_0123456789abcdef01234567", "c_" + "a" * 25),
     PROFILE.replace("c_0123456789abcdef01234567", "c_" + "A" * 24),
     "/api/operators", "/api/operators/identities", "/api/operators/c_0123456789abcdef01234567",
-    "/api/blockchain/blocks/1", "/api/chain/block/1",
+    # /api/blockchain/blocks/<height> is the gated public block read (backend#65 projection), proven in
+    # verify_public_exposure_runtime.py; its sibling shapes and the raw core4 path stay denied here.
+    "/api/blockchain/blocks/1?raw=true", "/api/blockchain/blocks/latest", "/api/chain/block/1",
     "/api/node-control/identities", "/api/producer-set", "/api/attesters",
 )
 NONCANONICAL = (
