@@ -526,6 +526,10 @@
         "reason": "Suite and owner-only live-capable verifier excluded; fixtures only here."
       },
       {
+        "path": "scripts/tests/test-website-station-activation.sh",
+        "reason": "Portable source/fixture regression; every external command is a fake; no owner credentials or live host required."
+      },
+      {
         "path": "scripts/tests/test-zfs-autosnap.sh",
         "reason": "Suite and private host ZFS implementation excluded."
       },
