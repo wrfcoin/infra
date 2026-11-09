@@ -994,7 +994,8 @@
 	# never executed, with no per-address data beyond the public proposer. The
 	# list takes no query, or limit=<1..100>&offset=<digits> (the status filter
 	# is not admitted). The detail id is the chain-derived adv-<16 lowercase hex>.
-	# The node's submit route and the eligibility read stay 404 here.
+	# The node's own submit and eligibility routes are never exposed; the backend
+	# relay and its two signer reads are admitted below.
 	@public_readonly_governance_advisory_proposals {
 		method GET
 		path /api/governance/advisory/proposals
@@ -1012,6 +1013,47 @@
 		expression `{query} == ""`
 	}
 	handle @public_readonly_governance_advisory_proposal {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Advisory governance relay (owner decision 2026-11-09; backend governance-routes.ts
+	# /advisory/actions): a 12-word or passkey wallet proposes or votes from the website. The
+	# signed action in the body is the authorization and core4 verifies it, so NO bearer (a
+	# passkey wallet holds no JWT), as for the passkey send. The backend admits only a signed
+	# advisory action (never a transaction), wraps it as the core4 CLI does and relays it under
+	# its Contributor credential. Backend paths are dormant (404) unless
+	# ADVISORY_GOVERNANCE_RELAY_ENABLED=true. Exact paths; 16 KiB covers three 4 KiB hex fields.
+	# Writes get their own zone governance_advisory_write below (on top of public_read).
+	@public_governance_advisory_actions {
+		method POST
+		path_regexp ^/api/governance/advisory/actions$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_governance_advisory_actions {
+		request_body {
+			max_size 16384
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	# The signer's two reads: its account nonce, and whether it may vote on one proposal.
+	@public_governance_advisory_nonce {
+		method GET
+		path_regexp ^/api/governance/advisory/accounts/0x[0-9a-f]{40}/nonce$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_governance_advisory_nonce {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+	@public_governance_advisory_eligibility {
+		method GET
+		path_regexp ^/api/governance/advisory/proposals/adv-[0-9a-f]{16}/eligibility$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query}.matches('^address=0x[0-9a-f]{40}$')`
+	}
+	handle @public_governance_advisory_eligibility {
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
@@ -1529,6 +1571,18 @@
 			}
 			key {client_ip}
 			events 10
+			window 1m
+		}
+		# Advisory governance relay (backend governance-routes.ts): each write may relay to the node
+		# under the site's one Contributor credential. A person proposes rarely and votes once per
+		# proposal; the backend limits again (20 per 15 min per IP, 10 per 15 min per account).
+		zone governance_advisory_write {
+			match {
+				method POST
+				path /api/governance/advisory/actions
+			}
+			key {client_ip}
+			events 5
 			window 1m
 		}
 		# The snapshot archive is the one large object on this edge; a joiner
