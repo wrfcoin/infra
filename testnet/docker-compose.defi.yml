@@ -2,12 +2,12 @@
 services:
   wrfcoin-defi:
     profiles: [defi]
-    image: wrfcoin/defi-node:testnet-simulator-b71a90b1322d
+    image: wrfcoin/defi-node:testnet-simulator-1e6a20d216a0
     pull_policy: never
     build:
       context: ./services/defi
       args:
-        DEFI_REVISION: b71a90b1322d83b8368ebc9fe2376768e2d4e7ac
+        DEFI_REVISION: 1e6a20d216a013e2f6b4029d773705cf54a02624
       network: none
     environment:
       DEFI_NODE_BIND: 0.0.0.0:7100
