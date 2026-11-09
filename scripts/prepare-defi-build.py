@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tomllib
 
-REVISION = "b71a90b1322d83b8368ebc9fe2376768e2d4e7ac"
+REVISION = "1e6a20d216a013e2f6b4029d773705cf54a02624"
 ROOT = Path(__file__).resolve().parents[1]
 
 
