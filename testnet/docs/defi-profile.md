@@ -1,7 +1,7 @@
 # Optional read/quote DeFi simulator (Refs #943)
 
 The `defi` profile packages `defi-protocols` revision
-`b71a90b1322d83b8368ebc9fe2376768e2d4e7ac`. ADR 0001 and ADR 0002 in that
+`1e6a20d216a013e2f6b4029d773705cf54a02624`. ADR 0001 and ADR 0002 in that
 repository authorize a standalone, noncustodial simulator for the testnet phase.
 It serves two fixture pools and deterministic quotes. Every supported response
 identifies `simulated: true`, `custodial: false`, and `settlement: "none"`.
@@ -31,8 +31,8 @@ docker image inspect \
   rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 \
   gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
 docker build --pull=false --network=none \
-  --build-arg DEFI_REVISION=b71a90b1322d83b8368ebc9fe2376768e2d4e7ac \
-  -t wrfcoin/defi-node:testnet-simulator-b71a90b1322d testnet/services/defi
+  --build-arg DEFI_REVISION=1e6a20d216a013e2f6b4029d773705cf54a02624 \
+  -t wrfcoin/defi-node:testnet-simulator-1e6a20d216a0 testnet/services/defi
 ```
 
 The preparation script reads immutable Git objects, selected public index metadata
