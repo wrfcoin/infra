@@ -106,6 +106,16 @@ services:
       passkey wallet's balance, spendable only, read with the backend's own reader token.
       Exact path behind PUBLIC_READONLY_API=on, counted by the public_read rate zone. The
       backend route answers 404 until PUBLIC_BALANCE_READ_ENABLED=true (default off).
+      Advisory governance relay (owner decision 2026-11-09; core4 advisory_governance) adds
+      POST /api/governance/advisory/actions (no bearer: the 12-word or passkey signature in the
+      body is the authorization; application/json, no query, 16KiB body cap; the backend admits
+      only a signed advisory action, wraps it as the core4 CLI does and relays it with its
+      Contributor credential; own zone governance_advisory_write, 5/minute/client IP) and two
+      signer reads, GET /api/governance/advisory/accounts/<0x40 lowercase hex>/nonce (no query)
+      and GET /api/governance/advisory/proposals/adv-<16 hex>/eligibility (query exactly
+      address=<0x40 lowercase hex>). Exact paths behind PUBLIC_READONLY_API=on; backend routes
+      404 until ADVISORY_GOVERNANCE_RELAY_ENABLED=true; the node refuses actions until the
+      feature is scheduled. The node's own submit and eligibility routes stay unexposed.
       The public forecaster pages add GET /api/forecasters with the query locked to
       `period=<7d|30d|all>&limit=<1..100>` in that order (the frontend's forecastersPath
       grammar) and GET /api/forecasters/c_<24 lowercase hex> (opaque key only, no query;

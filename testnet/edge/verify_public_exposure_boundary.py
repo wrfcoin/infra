@@ -266,6 +266,15 @@ EXPECTED = {
     "public_readonly_governance_advisory_proposals": ("GET", "path /api/governance/advisory/proposals", BACKEND),
     "public_readonly_governance_advisory_proposal": ("GET", "path_regexp ^/api/governance/advisory/proposals/adv-[0-9a-f]{16}$", BACKEND),
     "public_readonly_governance_treasury": ("GET", "path /api/governance/treasury", BACKEND),
+    # Owner decision 2026-11-09: website advisory propose/vote relay. NO bearer (the signed action is the
+    # authorization; a passkey wallet holds no JWT), exact paths, 16 KiB cap, own write zone.
+    "public_governance_advisory_actions": (
+        "POST",
+        "path_regexp ^/api/governance/advisory/actions$",
+        ("request_body {", "max_size 16384", "}", *BACKEND),
+    ),
+    "public_governance_advisory_nonce": ("GET", "path_regexp ^/api/governance/advisory/accounts/0x[0-9a-f]{40}/nonce$", BACKEND),
+    "public_governance_advisory_eligibility": ("GET", "path_regexp ^/api/governance/advisory/proposals/adv-[0-9a-f]{16}/eligibility$", BACKEND),
     # weather-routes.js l.188 / l.193: coordinates at exactly one decimal (the app's 0.1-degree cell).
     "public_readonly_weather_current": (
         "GET",
@@ -371,6 +380,9 @@ GATED = frozenset({
     "public_readonly_governance_proposal",
     "public_readonly_governance_advisory_proposals",
     "public_readonly_governance_advisory_proposal",
+    "public_governance_advisory_actions",
+    "public_governance_advisory_nonce",
+    "public_governance_advisory_eligibility",
     "public_readonly_governance_treasury",
     "public_readonly_weather_current",
     "public_readonly_weather_forecast",
@@ -408,6 +420,7 @@ BEARER_LOCK = {
 JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_bond_admission", "public_notifications_unsubscribe",
     "public_notifications_passkey_challenge", "public_notifications_passkey_subscribe", "public_notifications_passkey_unsubscribe",
     "public_wallet_security_key_actions", "public_wallet_send_allowlist_actions",
+    "public_governance_advisory_actions",
 })
 # The ONLY query the frontend sends (useWeatherLeaderboard / GlobalLeaderboard): metric, period, limit,
 # in that order, no geo (the backend 400s earnings+geo and anonymous geo is never admitted), limit 1..30.
@@ -500,6 +513,9 @@ READONLY_QUERY_LOCK = {
         "expression `{query} == \"\" || {query}.matches('^limit=([1-9]|[1-9][0-9]|100)&offset=[0-9]{1,6}$')`"
     ),
     "public_readonly_governance_advisory_proposal": 'expression `{query} == ""`',
+    "public_governance_advisory_actions": 'expression `{query} == ""`',
+    "public_governance_advisory_nonce": 'expression `{query} == ""`',
+    "public_governance_advisory_eligibility": "expression `{query}.matches('^address=0x[0-9a-f]{40}$')`",
     "public_readonly_governance_treasury": 'expression `{query} == ""`',
     "public_readonly_weather_current": 'expression `{query} == ""`',
     # mobile weatherForecastHourlyQuery / weatherForecastDailyQuery, exactly.
@@ -688,7 +704,7 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write", "bond_admission"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write", "bond_admission", "governance_advisory_write"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
@@ -767,6 +783,16 @@ def verify(root: Path = ROOT) -> None:
             "}",
             "key {client_ip}",
             "events 10",
+            "window 1m",
+        ],
+        # Owner decision 2026-11-09: website advisory propose/vote relay writes.
+        "governance_advisory_write": [
+            "match {",
+            "method POST",
+            "path /api/governance/advisory/actions",
+            "}",
+            "key {client_ip}",
+            "events 5",
             "window 1m",
         ],
         # infra#1095: the owner-action relay's own tight per-IP zone.
