@@ -1146,6 +1146,12 @@ services:
       # Chain-station sync (backend#1288: server/services/chain-station-sync.ts).
       # Off unless STATION_CHAIN_SYNC_ENABLED=true.
       STATION_CHAIN_SYNC_ENABLED: ${STATION_CHAIN_SYNC_ENABLED:-}
+      # The collector's roster of website stations that are registered on chain
+      # (GET /api/weather/stations/collector-roster: DECRYPTED provider keys,
+      # operator token only). Off unless COLLECTOR_ROSTER_ENABLED=true. Internal:
+      # read by weather-collector-multi on this network; the public edge refuses
+      # the path (testnet/edge/verify_public_exposure_boundary.py pins that).
+      COLLECTOR_ROSTER_ENABLED: ${COLLECTOR_ROSTER_ENABLED:-}
       STATION_CHAIN_SYNC_LABELS: ${STATION_CHAIN_SYNC_LABELS:-}
       STATION_CHAIN_SYNC_LABELS_FILE: ${STATION_CHAIN_SYNC_LABELS_FILE:-}
       STATION_CHAIN_SYNC_INTERVAL_MS: ${STATION_CHAIN_SYNC_INTERVAL_MS:-}
@@ -2067,9 +2073,25 @@ services:
   # build context that gets uploaded to the daemon on every build. Mounted
   # read-only.
   #
-  # `--credentials-file` also routes around backend#1042, where
-  # GET /api/weather/stations/credentials returns 500 and the backend roster is
-  # therefore unavailable. When that is fixed this flag can go.
+  # The file is the roster of the stations the operator added by hand, and it
+  # stays. Stations connected on the WEBSITE are not in it: they come from the
+  # backend's collector roster (GET /api/weather/stations/collector-roster,
+  # website stations that are registered on chain), which this service reads
+  # only when MULTI_COLLECTOR_ROSTER_ARGS says so. Empty by default, so the
+  # command is what it was. To switch on (a deploy-kit step, after the backend
+  # has COLLECTOR_ROSTER_ENABLED=true and the mounted core4 has the flags):
+  #   MULTI_COLLECTOR_ROSTER_ARGS="--backend-roster --loop-seconds 300"
+  # Do not set it against an older core4: the script refuses flags it does not
+  # know and the service would collect nothing.
+  #  - The file wins: a backend entry for a device or station id that is in the
+  #    file is dropped.
+  #  - The backend is reached on this compose network (wrfcoin-backend:4001),
+  #    never through the public edge, which does not admit that path.
+  #  - The roster answer holds provider keys. It stays in the collector's
+  #    memory: nothing is written to a volume, the compose tree or an image.
+  #  - Backend down: the file's stations are collected as always; the backend's
+  #    from the last good answer in memory, for at most 24 hours.
+  # No depends_on for the backend, on purpose: it must never stop this service.
   weather-collector-multi:
     image: node:20-alpine
     container_name: wrfcoin-testnet-weather-collector-multi
@@ -2102,6 +2124,10 @@ services:
       WRFCOIN_OPERATOR_TOKEN: ${WRFCOIN_OPERATOR_TOKEN:?WRFCOIN_OPERATOR_TOKEN must be set}
       WRFCOIN_API_HOST: wrfcoin-node
       WRFCOIN_API_PORT: "8556"
+      # Where the backend roster is read from when MULTI_COLLECTOR_ROSTER_ARGS
+      # asks for it: the backend's service name on this network, never a public name.
+      BACKEND_HOST: wrfcoin-backend
+      BACKEND_PORT: "4001"
       # Same reasoning as weather-collector above, and the same measurement:
       # unset does not disable the commit signature, it signs the MAINNET domain
       # and every commit is rejected as "commit sender authorization failed".
@@ -2111,7 +2137,7 @@ services:
     entrypoint: /bin/sh
     command: >-
       -c "while true; do node tests/security/fetch-ambient-weather-multi.cjs
-      --credentials-file /secrets/ambient-roster.json || true; sleep 300; done"
+      --credentials-file /secrets/ambient-roster.json ${MULTI_COLLECTOR_ROSTER_ARGS:-} || true; sleep 300; done"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f fetch-ambient-weather-multi.cjs > /dev/null"]
       interval: 60s
