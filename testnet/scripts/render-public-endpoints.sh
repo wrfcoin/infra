@@ -145,6 +145,12 @@ for matcher in matchers:
                     "`Authorization: Bearer` header; stores a public ownership proof, registers nothing on chain; "
                     "404 while the backend switch is off; body at most 8 KiB at the edge"
                 )
+            # Epic 8: backend station-owner-insights-routes.ts answers only the station's owner wallet.
+            if matcher["name"] in ("station_owner_compare_history", "station_owner_site_check"):
+                auth = (
+                    "wallet JWT (the wallet that owns the station only); read-only; the edge proxies it only when "
+                    "the request carries an `Authorization: Bearer` header"
+                )
             # backend#389 payout notifications: wallet-login writes, no email or user URL, own rate zone.
             if matcher["name"].startswith("public_notifications_") and matcher["name"] != "public_notifications_config":
                 auth = (

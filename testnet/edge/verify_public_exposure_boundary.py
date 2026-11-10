@@ -193,6 +193,17 @@ EXPECTED = {
         "path_regexp ^/api/stations/st_[0-9a-f]{12}/compare$",
         BACKEND,
     ),
+    # Epic 8, station owner only: wallet Bearer, alias only, exact path, no query.
+    "station_owner_compare_history": (
+        "GET",
+        "path_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$",
+        BACKEND,
+    ),
+    "station_owner_site_check": (
+        "GET",
+        "path_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$",
+        BACKEND,
+    ),
     # Owner ruling 2026-10-06 (backend#1456, frontend#535): the weather leaderboard is
     # public read-only, behind the same gate and with an exact-grammar query lock.
     "public_readonly_weather_leaderboard": ("GET", "path_regexp ^/api/weather/leaderboard$", BACKEND),
@@ -350,6 +361,8 @@ GATED = frozenset({
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
     "public_readonly_station_compare",
+    "station_owner_compare_history",
+    "station_owner_site_check",
     "public_readonly_block_detail",
     "public_readonly_weather_leaderboard",
     "public_readonly_earnings_leaderboard",
@@ -429,6 +442,9 @@ BEARER_LOCK = {
     "oracle_submit_data_multipart": 'header Authorization "Bearer *"',
     "oracle_submit_data": 'header Authorization "Bearer *"',
     "public_forecasts_mine": 'header Authorization "Bearer *"',
+    # Epic 8: the backend answers these only to the station's owner wallet.
+    "station_owner_compare_history": 'header Authorization "Bearer *"',
+    "station_owner_site_check": 'header Authorization "Bearer *"',
     "public_forecasts_draft": 'header Authorization "Bearer *"',
     "public_forecasts_submit": 'header Authorization "Bearer *"',
 }
@@ -474,6 +490,9 @@ READONLY_QUERY_LOCK = {
     "public_readonly_station_earnings": 'expression `{query} == ""`',
     # compare takes NO query (the frontend sends none; it fans out to core4 + NWS).
     "public_readonly_station_compare": 'expression `{query} == ""`',
+    # the owner reads take NO query (the frontend sends none).
+    "station_owner_compare_history": 'expression `{query} == ""`',
+    "station_owner_site_check": 'expression `{query} == ""`',
     "public_readonly_block_detail": 'expression `{query} == ""`',
     "public_readonly_weather_leaderboard": LEADERBOARD_QUERY_LOCK,
     "public_readonly_earnings_leaderboard": EARNINGS_QUERY_LOCK,
@@ -1158,6 +1177,78 @@ def self_test() -> None:
         "epic8 compare regex unanchored (prefix admit)": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("/compare$\n", "/compare\n"),
+        ),
+        "epic8 owner compare history bearer requirement removed (visitor requests proxied)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "epic8 owner compare history query lock removed (any query admitted)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "epic8 owner compare history gate removed (read admitted unconditionally)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "compare/history$\n",
+            ),
+        ),
+        "epic8 owner compare history widened to raw station ids": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("st_[0-9a-f]{12}/compare/history$", "[A-Za-z0-9_-]{1,64}/compare/history$"),
+        ),
+        "epic8 owner compare history regex unanchored (prefix admit)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/compare/history$\n", "/compare/history\n"),
+        ),
+        "epic8 owner compare history admits POST": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "method GET\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$",
+                "method GET POST\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$",
+            ),
+        ),
+        "epic8 owner site check bearer requirement removed (visitor requests proxied)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "epic8 owner site check query lock removed (any query admitted)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "epic8 owner site check gate removed (read admitted unconditionally)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "site-check$\n",
+            ),
+        ),
+        "epic8 owner site check widened to raw station ids": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("st_[0-9a-f]{12}/site-check$", "[A-Za-z0-9_-]{1,64}/site-check$"),
+        ),
+        "epic8 owner site check regex unanchored (prefix admit)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/site-check$\n", "/site-check\n"),
+        ),
+        "epic8 owner site check admits POST": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "method GET\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$",
+                "method GET POST\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$",
+            ),
         ),
         "backend#1456 leaderboard gate removed (read admitted unconditionally)": (
             "testnet/edge/public_onboarding.caddy",

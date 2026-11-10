@@ -207,6 +207,11 @@ services:
       same gate and public-read limiter: alias only and no query string, because it fans
       out to core4 and NWS; it returns aggregates only (nearby median from at least 3
       stations), never another station's id or coordinates.
+      (Epic 8, station owner only) GET /api/stations/st_<12 hex>/compare/history and
+      /site-check are admitted behind the same gate and public-read limiter, only with an
+      Authorization Bearer header: alias only, exact path, GET only, no query string. The
+      backend answers only the wallet that owns the station (a 30-day comparison with the
+      nearest NWS station, and a private hint that the station looks moved).
       (backend#1456, owner ruling 2026-10-06) GET /api/weather/leaderboard is admitted
       read-only behind the same PUBLIC_READONLY_API gate and public-read limiter, with
       the query locked to exactly

@@ -505,6 +505,38 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Epic 8, for a station's OWNER only (backend station-owner-insights-routes.ts):
+	#   GET /api/stations/<alias>/compare/history  30-day comparison with the nearest NWS station
+	#   GET /api/stations/<alias>/site-check       private "has this station moved?" hint
+	# The backend answers only the wallet that owns the station (401 without a wallet
+	# session, 403 for another wallet, 404 while its feature flag is off), so the edge
+	# proxies these only when the request carries a Bearer credential; a visitor's request
+	# stops here. ALIAS ONLY (st_ + 12 hex), exact path, GET only, NO query string. Same
+	# gate as their siblings (OFF unless the edge env has PUBLIC_READONLY_API=on exactly),
+	# counted in public_read (/api/stations/*: 30 a minute per client, the same shape as
+	# the onboarding zone that counts reward-progress).
+	@station_owner_compare_history {
+		method GET
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_owner_compare_history {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@station_owner_site_check {
+		method GET
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_owner_site_check {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Public block page (/explore/block/:height, owner approval 2026-11-08). One block by height:
 	# backend blockchain-routes.js GET /blocks/:height with the backend#65 allowlist projection
 	# (header, an allowlisted transaction list without senders, and block-level metadata
