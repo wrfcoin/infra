@@ -263,6 +263,8 @@ EXPECTED = {
     # governance-routes.ts l.231 / l.275 (PROPOSAL_ID_RE l.273) / l.564.
     "public_readonly_governance_proposals": ("GET", "path /api/governance/proposals", BACKEND),
     "public_readonly_governance_proposal": ("GET", "path_regexp ^/api/governance/proposals/[A-Za-z0-9_-]{1,128}$", BACKEND),
+    "public_readonly_governance_advisory_proposals": ("GET", "path /api/governance/advisory/proposals", BACKEND),
+    "public_readonly_governance_advisory_proposal": ("GET", "path_regexp ^/api/governance/advisory/proposals/adv-[0-9a-f]{16}$", BACKEND),
     "public_readonly_governance_treasury": ("GET", "path /api/governance/treasury", BACKEND),
     # weather-routes.js l.188 / l.193: coordinates at exactly one decimal (the app's 0.1-degree cell).
     "public_readonly_weather_current": (
@@ -367,6 +369,8 @@ GATED = frozenset({
     "public_readonly_wallet_transactions",
     "public_readonly_governance_proposals",
     "public_readonly_governance_proposal",
+    "public_readonly_governance_advisory_proposals",
+    "public_readonly_governance_advisory_proposal",
     "public_readonly_governance_treasury",
     "public_readonly_weather_current",
     "public_readonly_weather_forecast",
@@ -492,6 +496,10 @@ READONLY_QUERY_LOCK = {
         "expression `{query} == \"\" || {query}.matches('^limit=([1-9]|[1-9][0-9]|100)&offset=[0-9]{1,6}$')`"
     ),
     "public_readonly_governance_proposal": 'expression `{query} == ""`',
+    "public_readonly_governance_advisory_proposals": (
+        "expression `{query} == \"\" || {query}.matches('^limit=([1-9]|[1-9][0-9]|100)&offset=[0-9]{1,6}$')`"
+    ),
+    "public_readonly_governance_advisory_proposal": 'expression `{query} == ""`',
     "public_readonly_governance_treasury": 'expression `{query} == ""`',
     "public_readonly_weather_current": 'expression `{query} == ""`',
     # mobile weatherForecastHourlyQuery / weatherForecastDailyQuery, exactly.
