@@ -60,6 +60,11 @@
 # The guard prints FRONTEND_CHAIN_PROTECTIONS=on|off and
 # FRONTEND_PASSKEY_BOND_PAYOUT=on|off.
 #
+# VITE_ENABLE_MULTI_WALLET (the taskbar wallet button, one session per wallet,
+# and removing a 12-word wallet from the browser; it only takes effect together
+# with VITE_ENABLE_PASSKEY_WALLET) is a public switch on the same rules. The
+# guard prints FRONTEND_MULTI_WALLET=on|off.
+#
 # Exit 0 = allowed, 1 = refused.
 #
 # usage: frontend-build-flags-guard.sh [APP_DIR]   (default: .)
@@ -68,9 +73,9 @@ set -u
 app_dir="${1:-.}"
 variant="${WRFCOIN_FRONTEND_BUILD_VARIANT-public}"
 
-# The three public switches (see above) are not internal surfaces.
+# The four public switches (see above) are not internal surfaces.
 all_flags=$(env | sed -n -E 's/^(VITE_ENABLE_[A-Za-z0-9_]*)=.*/\1/p' \
-  | sed -E '/^VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT)$/d' | sort -u)
+  | sed -E '/^VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT|MULTI_WALLET)$/d' | sort -u)
 set_flags=""
 for name in $all_flags; do
   # Read the actual value, including newlines; env's line rendering alone
@@ -86,7 +91,7 @@ for file in "$app_dir"/.env "$app_dir"/.env.*; do
   # KEY=value or KEY: value (dotenv accepts both), optionally after `export`;
   # a value of "" or '' is empty.
   found=$(sed -n -E \
-    -e "/^[[:space:]]*(export[[:space:]]+)?VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT)[[:space:]]*[:=]/d" \
+    -e "/^[[:space:]]*(export[[:space:]]+)?VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT|MULTI_WALLET)[[:space:]]*[:=]/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=][[:space:]]*(\"\"|'')?[[:space:]]*(#.*)?\$/EMPTY/" \
     -e "/^EMPTY\$/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=].*/\\2/p" "$file" | sort -u | tr '\n' ' ')
@@ -138,6 +143,8 @@ exact_true_switch VITE_ENABLE_CHAIN_PROTECTIONS "chain protections" \
   "FRONTEND_CHAIN_PROTECTIONS=on (12-word wallet protection screens built in)" "FRONTEND_CHAIN_PROTECTIONS=off"
 exact_true_switch VITE_ENABLE_PASSKEY_BOND_PAYOUT "passkey bond payout link" \
   "FRONTEND_PASSKEY_BOND_PAYOUT=on (passkey wallet links to the bond payout approval)" "FRONTEND_PASSKEY_BOND_PAYOUT=off"
+exact_true_switch VITE_ENABLE_MULTI_WALLET "multi-wallet" \
+  "FRONTEND_MULTI_WALLET=on (taskbar wallet button and one session per wallet built in)" "FRONTEND_MULTI_WALLET=off"
 
 # The public variant must not hide Send. Judged before the switch prints, so a
 # refused build never logs a state line.

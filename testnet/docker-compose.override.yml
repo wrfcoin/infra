@@ -210,6 +210,8 @@ services:
         VITE_ENABLE_CHAIN_PROTECTIONS: ${VITE_ENABLE_CHAIN_PROTECTIONS:-}
         # Passkey wallet link to the bond payout approval. Public switch: empty = off, or exactly `true`.
         VITE_ENABLE_PASSKEY_BOND_PAYOUT: ${VITE_ENABLE_PASSKEY_BOND_PAYOUT:-}
+        # Taskbar wallet button and one session per wallet. Public switch: empty = off, or exactly `true`.
+        VITE_ENABLE_MULTI_WALLET: ${VITE_ENABLE_MULTI_WALLET:-}
 
   # ---------------------------------------------------------------------------
   # DB Migrate — override base image with local build (#238)
