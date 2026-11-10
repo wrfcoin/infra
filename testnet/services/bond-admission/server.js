@@ -46,7 +46,16 @@ function int(value, fallback, min, max) {
   return Number.isSafeInteger(n) && n >= min && n <= max ? n : fallback;
 }
 
+// Strict: digits only, 48..64. Anything else (spaces, exponents, other numbers)
+// is ignored in favour of the default, and named once at startup.
+function parseIpv6PrefixBits(raw) {
+  if (raw === undefined || raw === '') return { bits: 64, ignored: null };
+  const valid = typeof raw === 'string' && /^(4[89]|5[0-9]|6[0-4])$/.test(raw);
+  return valid ? { bits: Number(raw), ignored: null } : { bits: 64, ignored: String(raw) };
+}
+
 function loadConfig(env = process.env) {
+  const ipv6Prefix = parseIpv6PrefixBits(env.BOND_ADMISSION_IPV6_PREFIX_BITS);
   return {
     enabled: env.BOND_ADMISSION_ENABLED === 'true',
     chainId: env.WRFCOIN_CHAIN_ID || '',
@@ -68,7 +77,10 @@ function loadConfig(env = process.env) {
       dailyCap: int(env.BOND_ADMISSION_DAILY_CAP, 2, 1, 100),
       minIntervalSeconds: int(env.BOND_ADMISSION_MIN_INTERVAL_SECONDS, 21600, 1, 604800),
       ipTtlSeconds: int(env.BOND_ADMISSION_IP_TTL_SECONDS, 2592000, 3600, 31536000),
+      // How much of an IPv6 address counts as one public address: 48 to 64 bits.
+      ipv6PrefixBits: ipv6Prefix.bits,
     },
+    ignoredIpv6PrefixBits: ipv6Prefix.ignored,
   };
 }
 
@@ -83,13 +95,14 @@ for (const [address, prefix] of [
 for (const [address, prefix] of [
   // IPv4-mapped (::ffff:0:0/96) is refused in parseRequest instead: a
   // BlockList ipv6 rule for it would also match every plain IPv4 address.
-  ['::', 128], ['::1', 128], ['64:ff9b::', 96], ['100::', 64], ['2001:db8::', 32],
+  // 2001::/32 (Teredo) and 2002::/16 (6to4) are tunnels over one IPv4 address.
+  ['::', 128], ['::1', 128], ['64:ff9b::', 96], ['100::', 64], ['2001::', 32], ['2001:db8::', 32], ['2002::', 16],
   ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
 ]) NOT_PUBLIC.addSubnet(address, prefix, 'ipv6');
 
 const MULTIADDR = /^\/(ip4|ip6)\/([0-9A-Fa-f:.]+)\/tcp\/(\d{1,5})\/p2p\/([1-9A-HJ-NP-Za-km-z]{40,60})$/;
 
-function parseRequest(body) {
+function parseRequest(body, ipv6PrefixBits = 64) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw new AdmissionError(400, 'INVALID_ADMISSION_REQUEST', 'Expected a JSON object');
   }
@@ -110,8 +123,10 @@ function parseRequest(body) {
   if ((family === 'ip4' && version !== 4) || (family === 'ip6' && version !== 6) || port < 1 || port > 65535) {
     throw new AdmissionError(400, 'INVALID_ADMISSION_REQUEST', 'multiaddr address or port is invalid');
   }
-  const mapped = family === 'ip6' && /^::ffff:/i.test(address);
-  if (mapped || NOT_PUBLIC.check(address, family === 'ip4' ? 'ipv4' : 'ipv6')) {
+  // An /ip6 address that is really an IPv4 one (IPv4-mapped in any spelling), or
+  // anything else in ::/80 (IPv4-compatible, unspecified, loopback), is refused.
+  const parsed = normalizeAddress(family, address);
+  if (!parsed || parsed.mapped || NOT_PUBLIC.check(address, family === 'ip4' ? 'ipv4' : 'ipv6')) {
     throw new AdmissionError(422, 'ADDRESS_NOT_PUBLIC', 'The node must announce a public address with an open port');
   }
   if (typeof peerId !== 'string' || addrPeer !== peerId) {
@@ -120,11 +135,62 @@ function parseRequest(body) {
   if (typeof peerSignature !== 'string' || !/^[0-9a-f]{128}$/.test(peerSignature)) {
     throw new AdmissionError(400, 'INVALID_ADMISSION_REQUEST', 'peerSignature must be 128 lowercase hex');
   }
-  return { transaction, peerId, multiaddr, peerSignature, address: family === 'ip6' ? address.toLowerCase() : address };
+  return {
+    transaction, peerId, multiaddr, peerSignature,
+    address: addressGroup(family, address, ipv6PrefixBits),
+    // What marks written before prefix counting hashed: the address text.
+    legacyAddress: family === 'ip6' ? address.toLowerCase() : address,
+  };
 }
 
 function normalizeHex(value) {
   return typeof value === 'string' ? value.toLowerCase().replace(/^0x/, '') : '';
+}
+
+// The eight 16-bit groups of an IPv6 address `net.isIP` accepted.
+function ipv6Groups(address) {
+  let text = address.toLowerCase();
+  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (dotted) {
+    const [a, b, c, d] = dotted.slice(2).map(Number);
+    text = `${dotted[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, tail] = text.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = tail === undefined ? left : [...left, ...Array(8 - left.length - right.length).fill('0'), ...right];
+  return groups.map((group) => parseInt(group, 16));
+}
+
+// One shape for every spelling. An IPv4-mapped IPv6 address (first five groups
+// zero, sixth ffff) IS its IPv4 address. Anything else with the first five
+// groups zero (IPv4-compatible, unspecified, loopback) is not an address a node
+// can be reached on, and so is everything outside 2000::/3: null.
+function normalizeAddress(family, address) {
+  if (family === 'ip4') return { family: 'ip4', address, mapped: false };
+  const groups = ipv6Groups(address);
+  if (groups.slice(0, 5).every((group) => group === 0)) {
+    if (groups[5] !== 0xffff) return null;
+    return { family: 'ip4', address: [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join('.'), mapped: true };
+  }
+  // Only global unicast (2000::/3) is an address a node can be reached on from
+  // outside: no IPv4-translated, NAT64, local, link-local or multicast forms.
+  if (groups[0] < 0x2000 || groups[0] > 0x3fff) return null;
+  return { family: 'ip6', groups, mapped: false };
+}
+
+// What "one public address" means for the limits. IPv4: the address itself.
+// IPv6: its network prefix (default /64), in one canonical spelling. A home
+// connection is handed a whole /64 or more, and one IPv6 address can be written
+// many ways, so the exact text would count one home as many addresses.
+function addressGroup(family, address, ipv6PrefixBits = 64) {
+  const parsed = normalizeAddress(family, address);
+  if (!parsed) throw new AdmissionError(422, 'ADDRESS_NOT_PUBLIC', 'The node must announce a public address with an open port');
+  if (parsed.family === 'ip4') return parsed.address;
+  const top = parsed.groups.slice(0, 4).reduce((value, group) => (value << 16n) | BigInt(group), 0n);
+  const kept = (top >> BigInt(64 - ipv6PrefixBits)) << BigInt(64 - ipv6PrefixBits);
+  const words = [48n, 32n, 16n, 0n].map((shift) => ((kept >> shift) & 0xffffn).toString(16));
+  return `${words.join(':')}::/${ipv6PrefixBits}`;
 }
 
 function addressHash(salt, address) {
@@ -175,7 +241,7 @@ function createNodeReader({ nodeUrl, readerToken }) {
   };
 }
 
-function createService({ config, store, runCli, readNode, now = () => new Date() }) {
+function createService({ config, store, runCli, readNode, now = () => new Date(), log = () => {} }) {
   let inFlight = 0;
 
   function configured() {
@@ -280,7 +346,7 @@ function createService({ config, store, runCli, readNode, now = () => new Date()
   async function admit(body) {
     if (!config.enabled) throw new AdmissionError(404, 'ADMISSION_DISABLED', 'Bond admission is not enabled');
     if (!configured()) throw new AdmissionError(503, 'ADMISSION_UNAVAILABLE', 'Bond admission is not configured');
-    const request = parseRequest(body);
+    const request = parseRequest(body, config.limits.ipv6PrefixBits);
     return withPacketDir(async (dir) => {
       const { file, summary } = await checkPacket(dir, request.transaction);
       if (!verifyAdmissionPeerSignature(request.peerId, request.peerSignature, {
@@ -305,6 +371,7 @@ function createService({ config, store, runCli, readNode, now = () => new Date()
         deploymentId: summary.deployment_id,
         effectiveEpoch: summary.effective_epoch,
         ipHash: addressHash(config.ipSalt, request.address),
+        legacyIpHash: addressHash(config.ipSalt, request.legacyAddress),
       };
       const reserved = deposit ? await store.reserveDeposit(reservation, now()) : await store.reserveUpdate(reservation);
       if (!reserved.ok) {
@@ -369,13 +436,18 @@ function createService({ config, store, runCli, readNode, now = () => new Date()
     }
     if (req.method === 'POST' && url.pathname === '/bond-admission') {
       if (inFlight >= config.maxInFlight) {
+        log('[bond-admission] decision=ADMISSION_BUSY');
         return sendError(res, new AdmissionError(429, 'ADMISSION_BUSY', 'The service is busy; try again shortly', { retryAfterSeconds: 30 }));
       }
       inFlight += 1;
       try {
         const body = await readBody(req);
-        return send(res, 200, { ok: true, data: await admit(body) });
+        const data = await admit(body);
+        // One line per decision: the outcome and public chain fields only. Never an address, a peer id or a key.
+        log(`[bond-admission] decision=ADMITTED action=${data.action} deployment=${data.deploymentId.slice(0, 8)} epoch=${data.effectiveEpoch}`);
+        return send(res, 200, { ok: true, data });
       } catch (error) {
+        log(`[bond-admission] decision=${error instanceof AdmissionError ? error.code : 'ADMISSION_FAILED'}`);
         return sendError(res, error);
       } finally {
         inFlight -= 1;
@@ -411,6 +483,13 @@ function readBody(req) {
   });
 }
 
+// Settings that were ignored, said once at startup.
+function startupNotes(config) {
+  if (config.ignoredIpv6PrefixBits === null || config.ignoredIpv6PrefixBits === undefined) return [];
+  const shown = JSON.stringify(config.ignoredIpv6PrefixBits.slice(0, 32));
+  return [`[bond-admission] BOND_ADMISSION_IPV6_PREFIX_BITS=${shown} is not an integer from 48 to 64; using ${config.limits.ipv6PrefixBits}`];
+}
+
 async function main() {
   const config = loadConfig();
   let store;
@@ -429,7 +508,9 @@ async function main() {
     store,
     runCli: createCliRunner(config.cli),
     readNode: createNodeReader(config),
+    log: console.log,
   });
+  for (const line of startupNotes(config)) console.log(line);
   http.createServer((req, res) => { service.handle(req, res); }).listen(config.port, () => {
     console.log(`[bond-admission] listening on ${config.port}; enabled=${config.enabled}`);
   });
@@ -443,5 +524,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  AdmissionError, addressHash, cliEnv, createCliRunner, createService, loadConfig, parseCliOutput, parseRequest,
+  AdmissionError, addressGroup, addressHash, normalizeAddress, parseIpv6PrefixBits, startupNotes, cliEnv, createCliRunner, createService, loadConfig, parseCliOutput, parseRequest,
 };
