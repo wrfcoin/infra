@@ -69,6 +69,11 @@ EXPECTED = {
     # timestamps). Exact path, GET only, no query (QUERY_LOCK). Phone registration (POST /stations/mobile)
     # and its challenge are their own Bearer-locked POST matchers below. Counted by the `onboarding` rate zone.
     "station_mobile_status": ("GET", "path /api/weather/stations/mobile", BACKEND),
+    # Owner decision 2026-11-10 ("Your stations"): the signed-in wallet's OWN stations from any browser.
+    # weather-routes.js GET /stations/mine reads only rows owned by the JWT address; 404 while the backend's
+    # MY_STATIONS_ENABLED is off; per-wallet limit at the backend. Exact path, GET only, no query
+    # (QUERY_LOCK), Bearer header only (BEARER_LOCK). Counted by the `onboarding` rate zone.
+    "station_mine": ("GET", "path /api/weather/stations/mine", BACKEND),
     # Owner ruling 2026-10-24: the phone app's four POSTs (mobile api_constants.dart mobileStationChallenge,
     # mobileStationRegister, oracleSubmitDataPrepare, oracleSubmitData). Each is POST only, EXACT path, no
     # query (QUERY_LOCK), and proxied only with an `Authorization: Bearer` header (BEARER_LOCK); the backend
@@ -413,6 +418,7 @@ GATED = frozenset({
 # (authMiddleware.js:40 accepts only the `Bearer ` prefix). Directive is last in the matcher.
 BEARER_LOCK = {
     "station_ownership_proof": 'header Authorization "Bearer *"',
+    "station_mine": 'header Authorization "Bearer *"',
     "public_wallet_send": 'header Authorization "Bearer *"',
     "public_wallet_send_nonce": 'header Authorization "Bearer *"',
     "public_wallet_security_key": 'header Authorization "Bearer *"',
@@ -553,6 +559,7 @@ READONLY_QUERY_LOCK = {
 # Ungated routes that are approved with no query string at all (owner ruling 2026-10-02, frontend#463).
 QUERY_LOCK = {
     "station_mobile_status": 'expression `{query} == ""`',
+    "station_mine": 'expression `{query} == ""`',
     "station_ownership_proof": 'expression `{query} == ""`',
     "station_owner_actions": 'expression `{query} == ""`',
     "station_mobile_challenge": 'expression `{query} == ""`',

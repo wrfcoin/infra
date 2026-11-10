@@ -131,6 +131,13 @@ for matcher in matchers:
                     "wallet JWT (own address only); read-only; the edge proxies it only when the request carries "
                     "an `Authorization: Bearer` header"
                 )
+            # "Your stations" (owner decision 2026-11-10): weather-routes.js reads by the session wallet.
+            if matcher["name"] == "station_mine":
+                auth = (
+                    "wallet JWT (own stations only, read by the session wallet); read-only; the edge proxies it "
+                    "only with an `Authorization: Bearer` header; 404 while the backend switch is off; "
+                    "per-wallet limit 60 per hour at the backend"
+                )
             # Website station ownership proof: weather-routes.js authenticates and checks the owner.
             if matcher["name"] == "station_ownership_proof":
                 auth = (

@@ -283,6 +283,17 @@ if command -v docker >/dev/null 2>&1 && docker image inspect "${CADDY_IMG}" >/de
       # shellcheck disable=SC2086
       check "S1/S2 sibling stays 404: ${v}" edge_404 $v
     done
+    # "Your stations" (owner decision 2026-11-10): exact path, GET, no query, Bearer header only.
+    to_backend_auth() { case "$(api_answer_auth "$1" "$2" "$3")" in 502|503) return 0 ;; *) return 1 ;; esac; }
+    check "GET /api/weather/stations/mine with a Bearer header reaches the backend" \
+      to_backend_auth GET /api/weather/stations/mine 'Bearer x.y.z'
+    check "GET /api/weather/stations/mine without a Bearer header stays off" edge_404_auth GET /api/weather/stations/mine ''
+    check "GET /api/weather/stations/mine with a Basic header stays off" edge_404_auth GET /api/weather/stations/mine 'Basic eDp5'
+    for v in '/api/weather/stations/mine?owner=0xabc' '/api/weather/stations/mine/' '/api/weather/stations/mine/x' \
+             '/api/weather/stations/minex'; do
+      check "edge 404s GET ${v} (query and subpath variants stay off)" edge_404_auth GET "$v" 'Bearer x.y.z'
+    done
+    check "POST /api/weather/stations/mine stays off" edge_404_auth POST /api/weather/stations/mine 'Bearer x.y.z'
     check "GET .../reward-progress still reaches the backend" to_backend GET /api/weather/stations/abc/reward-progress
     # The phone matrix runs on a FRESH throwaway edge: the station POSTs share the `onboarding` rate zone
     # (30 per minute per client IP) with the checks above, so on the same edge they would answer 429.

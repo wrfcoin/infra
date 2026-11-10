@@ -70,6 +70,14 @@
 # it needs the backend's PASSKEY_LOGIN_ENABLED) is a public switch on the same
 # rules. The guard prints FRONTEND_PASSKEY_STATION_OWNER=on|off.
 #
+# VITE_ENABLE_BOND_GUIDE ("Bond your node" on /nodes: the steps to a bonded node
+# and a progress check; it only reads public lists) is a public switch on the
+# same rules. The guard prints FRONTEND_BOND_GUIDE=on|off.
+#
+# VITE_ENABLE_MY_STATIONS ("Your stations" on /wallet: the signed-in wallet's
+# stations from any browser; it needs the backend's MY_STATIONS_ENABLED) is a
+# public switch on the same rules. The guard prints FRONTEND_MY_STATIONS=on|off.
+#
 # Exit 0 = allowed, 1 = refused.
 #
 # usage: frontend-build-flags-guard.sh [APP_DIR]   (default: .)
@@ -78,9 +86,9 @@ set -u
 app_dir="${1:-.}"
 variant="${WRFCOIN_FRONTEND_BUILD_VARIANT-public}"
 
-# The five public switches (see above) are not internal surfaces.
+# The seven public switches (see above) are not internal surfaces.
 all_flags=$(env | sed -n -E 's/^(VITE_ENABLE_[A-Za-z0-9_]*)=.*/\1/p' \
-  | sed -E '/^VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT|MULTI_WALLET|PASSKEY_STATION_OWNER)$/d' | sort -u)
+  | sed -E '/^VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT|MULTI_WALLET|PASSKEY_STATION_OWNER|BOND_GUIDE|MY_STATIONS)$/d' | sort -u)
 set_flags=""
 for name in $all_flags; do
   # Read the actual value, including newlines; env's line rendering alone
@@ -96,7 +104,7 @@ for file in "$app_dir"/.env "$app_dir"/.env.*; do
   # KEY=value or KEY: value (dotenv accepts both), optionally after `export`;
   # a value of "" or '' is empty.
   found=$(sed -n -E \
-    -e "/^[[:space:]]*(export[[:space:]]+)?VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT|MULTI_WALLET|PASSKEY_STATION_OWNER)[[:space:]]*[:=]/d" \
+    -e "/^[[:space:]]*(export[[:space:]]+)?VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT|MULTI_WALLET|PASSKEY_STATION_OWNER|BOND_GUIDE|MY_STATIONS)[[:space:]]*[:=]/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=][[:space:]]*(\"\"|'')?[[:space:]]*(#.*)?\$/EMPTY/" \
     -e "/^EMPTY\$/d" \
     -e "s/^[[:space:]]*(export[[:space:]]+)?(VITE_ENABLE_[A-Za-z0-9_]*)[[:space:]]*[:=].*/\\2/p" "$file" | sort -u | tr '\n' ' ')
@@ -152,6 +160,10 @@ exact_true_switch VITE_ENABLE_MULTI_WALLET "multi-wallet" \
   "FRONTEND_MULTI_WALLET=on (taskbar wallet button and one session per wallet built in)" "FRONTEND_MULTI_WALLET=off"
 exact_true_switch VITE_ENABLE_PASSKEY_STATION_OWNER "passkey station owner" \
   "FRONTEND_PASSKEY_STATION_OWNER=on (a passkey wallet can own a station on /connect-station)" "FRONTEND_PASSKEY_STATION_OWNER=off"
+exact_true_switch VITE_ENABLE_BOND_GUIDE "bond guide" \
+  "FRONTEND_BOND_GUIDE=on (Bond your node card on /nodes built in)" "FRONTEND_BOND_GUIDE=off"
+exact_true_switch VITE_ENABLE_MY_STATIONS "my stations" \
+  "FRONTEND_MY_STATIONS=on (the wallet page lists the signed-in wallet's stations)" "FRONTEND_MY_STATIONS=off"
 
 # The public variant must not hide Send. Judged before the switch prints, so a
 # refused build never logs a state line.
