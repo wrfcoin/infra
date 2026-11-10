@@ -43,27 +43,72 @@ What is different from a phone batch, and nothing else is:
 
 | | Phone (default) | `--source website` |
 |---|---|---|
-| Waiting list | `mobile_station_registrations`, `db_only` | `website_station_chain_registrations`, `db_only` |
-| Who is on it | A phone that registered in the app | A website station whose owner's 12-word wallet has handed in its ownership proof. A passkey-owned station is not on it: the chain can't check a passkey owner yet |
+| Who decides the list | The oldest waiting rows in `mobile_station_registrations` | The backend export. The tool asks it first, shows that list, and signs exactly that list or nothing |
+| Who is on it | A phone that registered in the app | A website station that is **ready**: its owner's 12-word wallet has signed for it, its provider credentials are stored and ingestion is active, it has a reading in the last 24 hours, and its id is a neutral id |
 | Export script in the backend container | `scripts/export-mobile-station-registrations.ts` | `scripts/export-website-station-registrations.ts`. It never changes a row |
-| Station ids | `mob-` + 32 hex, derived from the wallet | Whatever the website issued (usually `pws-<station name>-<6 hex>`), never `mob-` |
+| Station ids | `mob-` + 32 hex, derived from the wallet | `pws-` + 16 hex, issued by the backend. Older ids hold the name the owner typed; see below |
 | Chain record | `phone-barometer`, `unverified`, `real` | `personal-weather-station`, `unverified`, `real`, no elevation |
-| Backend switch that must be on | `STATION_CHAIN_SYNC_ENABLED` | that, and `WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED` |
+| Backend switches that must be on | `STATION_CHAIN_SYNC_ENABLED` | that, and `WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED` |
 | Station ids on screen | Only in the exit 3 handoff list | In the dry run, and again just before the YES |
 
-**Read the station ids before typing YES.** A website station id usually contains the name
-its owner typed, and a station id is public on chain for good. The dry run prints
-`ROW i/N: eligible; ... station id <id>` for every row, and the real run prints
-`WILL BE PUBLIC ON CHAIN i/N: station id <id>` above the YES prompt. If an id shouldn't be
-public, don't type YES; ask the manager.
+A passkey-owned station is never on the list: the chain can't check a passkey owner yet.
 
-Positions follow the same rule as phones: the export writes the 0.1 degree grid point only,
-and this tool refuses a row that is finer. Nothing here prints a position, an owner address,
-a key or a signature.
+### What the dry run shows
 
-After the batch, the same exit 3 handoff and readback apply. The station's page says
-"earning" only after the backend's chain sync has seen the station in the chain registry;
-the batch tool doesn't set that and neither does the export.
+```text
+NOT IN THIS BATCH: pws-00000000000000c3: no reading in the last 24 hours
+PREFLIGHT PASS: clock, node, sync, CLI and key modes
+EXPORTED: 2 rows
+ROW 1/2: eligible; ownership checked by exporter; station id pws-00000000000000a1; 3 reading(s) in 24 h, last 12 min ago
+ROW 2/2: eligible; ownership checked by exporter; station id pws-00000000000000b2; 4 reading(s) in 24 h, last 13 min ago
+DRY RUN PASS: 2 eligible rows; no signature or submission
+```
+
+- `ROW` lines are the stations that would be signed, with how recently each one reported.
+- `NOT IN THIS BATCH` lines are waiting stations the export left out, with the reason. A
+  station that isn't ready never takes a place in the batch, so one bad row can't hold up
+  the others. Only a fixed set of reasons is printed.
+- No position, owner address, key or signature is printed.
+
+### Station ids are public for good: read them before YES
+
+The real run prints `WILL BE PUBLIC ON CHAIN i/N: station id <id>` above the YES prompt, for
+exactly the stations it will sign. If the list changes between that moment and signing, the
+run stops and signs nothing.
+
+New website stations get a neutral id from the backend. A station connected before that has
+an id built from the name its owner typed (`pws-<name>-<6 hex>`). Those are left out
+(`NOT IN THIS BATCH: ... station id is not a neutral id`) unless you name them one by one:
+
+```bash
+... --source website --allow-station-id pws-my-own-station-a1b2c3
+```
+
+Do that only for a station whose owner agrees to the id being public permanently (your own
+station, for instance).
+
+### A station id the chain already has
+
+If the chain already has a station id under another owner, the backend's chain sync marks
+that website station `blocked` and it leaves the waiting list; its owner is told to reconnect
+the station to get a new id. If a run meets such a station before the sync has seen it, it
+stops and names it (`ACTIVATION STOP: station <id> is already registered on chain ...`).
+Run again after the next backend sync (ten minutes at most).
+
+### After the batch
+
+The same exit 3 handoff and readback apply; the receipt records `"source": "website"`. The
+station's page says "earning" only after the backend's chain sync has seen the station in
+the chain registry; the batch tool doesn't set that and neither does the export.
+
+### Chain id
+
+The backend checks owner signatures against `WRFCOIN_CHAIN_ID` / `WRFCOIN_NETWORK_ID` and
+has no default on this path; the website signs for the chain the backend reports and refuses
+on a mismatch with its own build setting; this tool refuses an export that is not for chain
+888/testnet. Some build and env examples in this repo still default to chain 777. They are
+not changed here: set both to 888 for the live testnet, and a wrong value now stops at the
+first of those three checks instead of producing proofs nobody can use.
 
 ## What has to be true, and what checks it
 

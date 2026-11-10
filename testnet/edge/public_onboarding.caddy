@@ -217,12 +217,15 @@
 	# weather-routes.js POST /stations/:id/ownership-proof). The backend needs
 	# the wallet session, checks the station belongs to that wallet, and answers
 	# 404 while WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED is off. It never
-	# registers anything on chain. POST only, exact path shape, body at most
-	# 8 KiB (the real body is about 250 bytes). Counted by the `onboarding`
-	# rate zone below (/api/weather/stations*).
+	# registers anything on chain. POST only, exact path shape, NO query string,
+	# proxied only with an `Authorization: Bearer` header (as the phone POSTs
+	# are), body at most 8 KiB (the real body is about 250 bytes). Counted by
+	# the `onboarding` rate zone below (/api/weather/stations*).
 	@station_ownership_proof {
 		method POST
 		path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$
+		expression `{query} == ""`
+		header Authorization "Bearer *"
 	}
 	handle @station_ownership_proof {
 		request_body {

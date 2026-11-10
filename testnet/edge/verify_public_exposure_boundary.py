@@ -56,7 +56,8 @@ EXPECTED = {
     ),
     # A website station owner's ownership proof for the on-chain registration batch (backend
     # weather-routes.js POST /stations/:id/ownership-proof): wallet session required, own station only,
-    # 404 while the backend switch is off. POST only, body capped at 8 KiB, `onboarding` rate zone.
+    # 404 while the backend switch is off. POST only, no query (QUERY_LOCK), proxied only with an
+    # `Authorization: Bearer` header (BEARER_LOCK), body capped at 8 KiB, `onboarding` rate zone.
     "station_ownership_proof": (
         "POST",
         "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$",
@@ -398,6 +399,7 @@ GATED = frozenset({
 # The own-wallet reads are only proxied when the request carries a Bearer credential
 # (authMiddleware.js:40 accepts only the `Bearer ` prefix). Directive is last in the matcher.
 BEARER_LOCK = {
+    "station_ownership_proof": 'header Authorization "Bearer *"',
     "public_wallet_send": 'header Authorization "Bearer *"',
     "public_wallet_send_nonce": 'header Authorization "Bearer *"',
     "public_wallet_security_key": 'header Authorization "Bearer *"',
@@ -532,6 +534,7 @@ READONLY_QUERY_LOCK = {
 # Ungated routes that are approved with no query string at all (owner ruling 2026-10-02, frontend#463).
 QUERY_LOCK = {
     "station_mobile_status": 'expression `{query} == ""`',
+    "station_ownership_proof": 'expression `{query} == ""`',
     "station_owner_actions": 'expression `{query} == ""`',
     "station_mobile_challenge": 'expression `{query} == ""`',
     "station_mobile_register": 'expression `{query} == ""`',
