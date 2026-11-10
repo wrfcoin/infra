@@ -2,7 +2,7 @@
   "repository": "WRFCoin/core4",
   "pull_request": 148,
   "ref": "feat/forecast-late-score",
-  "commit": "3cec83d5d0c1a4e57b98cef4e1f312e53f949df3",
+  "commit": "6decbf26f26c3d119637c0937e76b6c50bcb5928",
   "path": "shared-protocol/tests/fixtures/golden/signing_preimage_v2.json",
   "schema": "wrfcoin.signing-preimage-v2.golden/4",
   "sha256": "d250774f41290e8a6774c432aa802b01150c2c54741cf56254e90b33522b1713"
