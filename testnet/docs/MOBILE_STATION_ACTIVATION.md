@@ -44,7 +44,7 @@ What is different from a phone batch, and nothing else is:
 | | Phone (default) | `--source website` |
 |---|---|---|
 | Who decides the list | The oldest waiting rows in `mobile_station_registrations` | The backend export. The tool asks it first, shows that list, and signs exactly that list or nothing |
-| Who is on it | A phone that registered in the app | A website station that is **ready**: its owner's 12-word wallet has signed for it, its provider credentials are stored and ingestion is active, it is reporting (a reading in the backend's table in the last 24 hours, or in the node's chain tail), and its id is a neutral id |
+| Who is on it | A phone that registered in the app | A website station that is **ready**: its owner's 12-word wallet has signed for it, its provider credentials are stored and ingestion is active, it is reporting (its provider shows a reading from its own device in the last 24 hours, checked when the tool runs), and its id is a neutral id |
 | Export script in the backend container | `scripts/export-mobile-station-registrations.ts` | `scripts/export-website-station-registrations.ts`. It never changes a row |
 | Station ids | `mob-` + 32 hex, derived from the wallet | `pws-` + 16 hex, issued by the backend. Older ids hold the name the owner typed; see below |
 | Chain record | `phone-barometer`, `unverified`, `real` | `personal-weather-station`, `unverified`, `real`, no elevation |
@@ -56,23 +56,31 @@ A passkey-owned station is never on the list: the chain can't check a passkey ow
 ### What the dry run shows
 
 ```text
-NOT IN THIS BATCH: pws-00000000000000c3: no reading in the last 24 hours in the database or the chain tail (source none)
+NOT IN THIS BATCH: pws-00000000000000c3: station_report: no reading from this station's device in the last 24 hours
+NOT IN THIS BATCH: pws-00000000000000e5: provider_unreachable: the provider could not be read for this station; not exported this run
 PREFLIGHT PASS: clock, node, sync, CLI and key modes
 EXPORTED: 2 rows
-ROW 1/2: eligible; ownership checked by exporter; station id pws-00000000000000a1; source db; 3 reading(s) in 24 h, last 12 min ago
-ROW 2/2: eligible; ownership checked by exporter; station id pws-00000000000000b2; source chain; 4 reading(s) in the chain tail, last 13 min ago
+ROW 1/2: eligible; ownership checked by exporter; station id pws-00000000000000a1; source provider; last reading 12 min ago
+ROW 2/2: eligible; ownership checked by exporter; station id pws-00000000000000b2; source provider; last reading 13 min ago
 DRY RUN PASS: 2 eligible rows; no signature or submission
 ```
 
-- `ROW` lines are the stations that would be signed, with where each one was seen reporting
-  and how recently. `source db` is the backend's own table. `source chain` means the backend
-  had nothing and the node's chain tail did: the provider collectors submit readings to the
-  node, not to the backend. A station seen in neither is left out (`source none`).
-- The first step can take a few minutes. For stations the backend has no reading for, the
-  export asks the node, at about 20 reads a minute, and stops asking if the node answers 429
-  (those stations are left out this run: `not checked: the node asked to slow down`). A
-  node read that fails never puts a station in the batch. All of this happens before the
-  YES, outside the signing window.
+- `ROW` lines are the stations that would be signed. `source provider` means the export
+  asked the station's weather provider just now, with the keys the owner stored, and the
+  provider showed a reading from that station's own device this many minutes ago. Nothing
+  else from the provider is shown or kept.
+- The first step can take a few minutes: one provider request per station, at most one a
+  second, 10 seconds each at most. This happens before the YES, outside the signing window.
+  The second export (the one that is signed) asks no provider for the stations just seen.
+- `station_report` means the provider answered and showed no reading from that device in
+  the last 24 hours. `provider_unreachable` means the provider could not be read (an error,
+  a timeout, or it asked to slow down): the station is left out this run and is never put
+  in a batch on an error. Run again later.
+- If nothing is ready the tool prints the `NOT IN THIS BATCH` lines and stops with
+  `no station is ready; the reasons are above; nothing signed`.
+- The backend container needs `API_KEY_ENCRYPTION_KEY` (it already has it to store the
+  keys). `WEBSITE_STATION_PROVIDER_MIN_INTERVAL_MS` slows the provider requests down; it
+  can't make them faster than one a second.
 - `NOT IN THIS BATCH` lines are waiting stations the export left out, with the reason. A
   station that isn't ready never takes a place in the batch, so one bad row can't hold up
   the others. Only a fixed set of reasons is printed.

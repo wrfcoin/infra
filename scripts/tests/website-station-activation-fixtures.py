@@ -30,14 +30,16 @@ def row(i):
  return r
 def artifact(rows):
  version='mobile_station_registration_export_v1' if scenario=='phone-version' else 'website_station_registration_export_v1'
- # Station 1 has readings in the backend database; station 2 only on chain (`chain-evidence`), or
- # in the database too. The stamped export is told which ids were confirmed and never asks the node.
+ # The look reads each station's provider. The stamped export is told which ids the look saw
+ # reporting and asks no provider for them.
  def ev(i,x):
-  if s['last']=='stamped' and x['station_id'] in s['confirmed']:return dict(source='confirmed',observations_24h=0,last_observation_age_minutes=None)
-  if scenario=='no-source' and i==0:return dict(observations_24h=3,last_observation_age_minutes=12)
-  return dict(source='chain' if scenario=='chain-evidence' and i==1 else 'db',observations_24h=3+i,last_observation_age_minutes=12+i)
+  if s['last']=='stamped' and x['station_id'] in s['confirmed']:return dict(source='confirmed',last_observation_age_minutes=None)
+  if scenario=='no-source' and i==0:return dict(last_observation_age_minutes=12)
+  if scenario=='old-source' and i==0:return dict(source='db',last_observation_age_minutes=12)
+  if scenario=='no-age' and i==0:return dict(source='provider',last_observation_age_minutes=None)
+  return dict(source='provider',last_observation_age_minutes=12+i)
  stations=[dict(x,evidence=ev(i,x)) for i,x in enumerate(rows)]
- skipped=[dict(stationId='pws-00000000000000c3',reason='no reading in the last 24 hours in the database or the chain tail (source none)'),dict(stationId='pws-00000000000000e5',reason='could not check the chain for readings (node read failed); not exported this run'),dict(stationId=NAMED,reason='station id is not a neutral id (it may hold a name); pass --allow-id to include it')]
+ skipped=[dict(stationId='pws-00000000000000c3',reason="station_report: no reading from this station's device in the last 24 hours"),dict(stationId='pws-00000000000000e5',reason='provider_unreachable: the provider could not be read for this station; not exported this run'),dict(stationId=NAMED,reason='station id is not a neutral id (it may hold a name); pass --allow-id to include it')]
  if scenario=='named-id':skipped=skipped[:1]
  if scenario=='bad-reason':skipped=[dict(stationId='pws-00000000000000c3',reason='at 12.3456 -45.6789 owner 0x'+'ab'*20)]
  return dict(version=version,chainId='999' if scenario=='other-chain' else CHAIN,networkId='testnet',stations=stations,not_exported=skipped)
@@ -61,9 +63,11 @@ elif name=='docker':
    if scenario=='shrunk':s['rows']=s['rows'][:1]
    s['exports']+=1
   else:
-   assert '--cli-batch-out' not in a;s['looks']+=1;s['look']=[row(i) for i in range(2)]
+   assert '--cli-batch-out' not in a;s['looks']+=1;s['look']=[] if scenario=='nothing-ready' else [row(i) for i in range(2)]
   s['last']='stamped' if '--submitted-at' in a else 'look'
   print('TOKEN_SENTINEL_PRIVATE export raw output')
+  # Nothing ready: the real export still writes its artifact, then exits 2.
+  if scenario=='nothing-ready':save();sys.exit(2)
  elif 'scripts/export-mobile-station-registrations.ts' in a:raise RuntimeError('website run used the phone export')
  elif 'cat' in a:
   print(json.dumps(s['rows'] if '-cli.json' in a[-1] else artifact(s['rows'] if s['last']=='stamped' else s['look'])))
@@ -175,37 +179,48 @@ class WebsiteOwnerFlow(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('EXPORTED: 2 rows', result.stdout)
         self.assertIn(f'ROW 1/2: eligible; ownership checked by exporter; station id {IDS[0]}; '
-                      'source db; 3 reading(s) in 24 h, last 12 min ago', result.stdout)
+                      'source provider; last reading 12 min ago', result.stdout)
         self.assertIn(f'ROW 2/2: eligible; ownership checked by exporter; station id {IDS[1]}; '
-                      'source db; 4 reading(s) in 24 h, last 13 min ago', result.stdout)
-        self.assertIn('NOT IN THIS BATCH: pws-00000000000000c3: no reading in the last 24 hours in the database '
-                      'or the chain tail (source none)', result.stdout)
-        self.assertIn('NOT IN THIS BATCH: pws-00000000000000e5: could not check the chain for readings '
-                      '(node read failed); not exported this run', result.stdout)
-        # Both were seen in the database, so the stamped export is told of no chain-only station.
-        self.assertEqual(state['confirmed_by_call'], [[], []])
+                      'source provider; last reading 13 min ago', result.stdout)
+        self.assertIn("NOT IN THIS BATCH: pws-00000000000000c3: station_report: no reading from this station's "
+                      'device in the last 24 hours', result.stdout)
+        self.assertIn('NOT IN THIS BATCH: pws-00000000000000e5: provider_unreachable: the provider could not be '
+                      'read for this station; not exported this run', result.stdout)
+        # The look asked the providers; the stamped export is told both were seen and asks none.
+        self.assertEqual(state['confirmed_by_call'], [[], IDS])
+        # The flag named is this tool's own flag, not the backend script's.
         self.assertIn(f'NOT IN THIS BATCH: {NAMED}: station id is not a neutral id (it may hold a name); '
-                      'pass --allow-id to include it', result.stdout)
+                      'pass --allow-station-id to include it', result.stdout)
+        self.assertNotIn('--allow-id ', result.stdout)
         self.assertIn('DRY RUN PASS: 2 eligible rows; no signature or submission', result.stdout)
         self.assertEqual((state['builds'], state['posts']), (0, 0))
         self.assertFalse(any(name == 'wrfcoin' for name, _ in state['events']))
 
-    def test_a_station_seen_only_on_chain_says_so_and_the_stamped_export_does_not_ask_the_node_again(self):
-        result, state = self.run_flow(scenario='chain-evidence', extra=['--dry-run'], answer=None)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f'station id {IDS[0]}; source db; 3 reading(s) in 24 h, last 12 min ago', result.stdout)
-        self.assertIn(f'station id {IDS[1]}; source chain; 4 reading(s) in the chain tail, last 13 min ago', result.stdout)
-        # The look found station 2 on chain; only that id is passed on as confirmed, and only to the stamped export.
-        self.assertEqual(state['confirmed_by_call'], [[], [IDS[1]]])
-        result, state = self.run_flow(scenario='chain-evidence')
+    def test_the_stamped_export_is_told_what_the_look_saw_and_asks_no_provider(self):
+        result, state = self.run_flow()
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         self.assertEqual((state['looks'], state['exports'], state['posts']), (1, 1, 1))
-        self.assertEqual(state['confirmed_by_call'], [[], [IDS[1]]])
+        self.assertEqual(state['confirmed_by_call'], [[], IDS])
 
-    def test_a_look_that_does_not_say_where_a_station_was_seen_reporting_signs_nothing(self):
-        result, state = self.run_flow(scenario='no-source')
-        self.assert_nothing_signed(result, state, 'the export did not say where each station was seen reporting')
-        self.assertEqual(state['exports'], 0)
+    def test_a_look_that_does_not_show_a_provider_reading_for_every_station_signs_nothing(self):
+        for scenario in ('no-source', 'old-source', 'no-age'):
+            with self.subTest(scenario=scenario):
+                result, state = self.run_flow(scenario=scenario)
+                self.assert_nothing_signed(result, state, 'the export did not say where each station was seen reporting')
+                self.assertEqual(state['exports'], 0)
+
+    def test_nothing_ready_prints_the_reasons_and_signs_nothing(self):
+        for extra, answer in ((['--dry-run'], None), ([], 'YES')):
+            with self.subTest(extra=extra):
+                result, state = self.run_flow(scenario='nothing-ready', extra=extra, answer=answer)
+                self.assert_nothing_signed(result, state, 'no station is ready; the reasons are above; nothing signed')
+                self.assertIn("NOT IN THIS BATCH: pws-00000000000000c3: station_report: no reading from this "
+                              "station's device in the last 24 hours", result.stdout)
+                self.assertIn('NOT IN THIS BATCH: pws-00000000000000e5: provider_unreachable', result.stdout)
+                self.assertNotIn('Type YES', result.stdout)
+                self.assertEqual((state['looks'], state['exports']), (1, 0))
+                # The export's file in the container is removed even on this path.
+                self.assertGreaterEqual(state['cleanups'], 1)
 
     def test_real_run_shows_exactly_the_ids_it_signs_asks_for_yes_and_posts_once(self):
         result, state = self.run_flow(scenario='ok-reconcile')
@@ -241,7 +256,7 @@ class WebsiteOwnerFlow(unittest.TestCase):
         result, state = self.run_flow(scenario='named-id', extra=['--allow-station-id', NAMED, '--dry-run'], answer=None)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(state['allow'], [NAMED])
-        self.assertIn(f'station id {NAMED}; source db; 3 reading(s) in 24 h, last 12 min ago; allowed by name', result.stdout)
+        self.assertIn(f'station id {NAMED}; source provider; last reading 12 min ago; allowed by name', result.stdout)
 
     def test_allow_station_id_is_for_the_website_source_and_must_be_a_plain_id(self):
         for extra, source in ((['--allow-station-id', NAMED], ()), (['--allow-station-id', 'bad id'], ('--source', 'website')),

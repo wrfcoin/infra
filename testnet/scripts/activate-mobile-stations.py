@@ -79,15 +79,21 @@ NEUTRAL_STATION_ID = r'pws-[0-9a-f]{16}'
 # The fixed reasons the backend export gives for a waiting station that is not in the batch.
 # Only these exact phrases are ever printed: a reason is text from another program, and
 # anything else could carry a position or an owner.
+# The value is what THIS tool prints: the backend's own flag is --allow-id, and here the owner
+# passes --allow-station-id.
+NAMED_ID_REASON = 'station id is not a neutral id (it may hold a name); pass --allow-id to include it'
+REASON_TEXT = {
+    NAMED_ID_REASON: 'station id is not a neutral id (it may hold a name); '
+                     'pass --allow-station-id to include it',
+}
 KNOWN_REASONS = frozenset((
     'station is not active',
     'the station now belongs to a different owner',
     'station has no usable position',
     'provider credentials are not verified or ingestion is not active',
-    'no reading in the last 24 hours in the database or the chain tail (source none)',
-    'could not check the chain for readings (node read failed); not exported this run',
-    'not checked: the node asked to slow down (429); run again later',
-    'station id is not a neutral id (it may hold a name); pass --allow-id to include it',
+    "station_report: no reading from this station's device in the last 24 hours",
+    'provider_unreachable: the provider could not be read for this station; not exported this run',
+    NAMED_ID_REASON,
     'ownership signature does not verify',
     'owner is not derived from the owner pubkey',
     'station appears twice',
@@ -113,14 +119,16 @@ def require(condition, stage):
         raise Stop(stage)
 
 
-def command(args, stage, input_text=None, timeout=30, env=None):
+def command(args, stage, input_text=None, timeout=30, env=None, also_ok=()):
+    """Run a tool and return its output. Any exit code but 0 stops the run, unless the caller
+    names it in `also_ok`; then (output, exit code) is returned instead."""
     try:
         result = subprocess.run(args, input=input_text, text=True, capture_output=True,
                                 timeout=timeout, env=env, check=False)
     except (OSError, subprocess.SubprocessError):
         raise Stop(stage) from None
-    require(result.returncode == 0, stage)
-    return result.stdout
+    require(result.returncode == 0 or result.returncode in also_ok, stage)
+    return (result.stdout, result.returncode) if also_ok else result.stdout
 
 
 def now():
@@ -541,16 +549,20 @@ def producer_fence(producers, readings=None):
     print(f'FENCE: {len(revisions)}/{PRODUCER_COUNT} producers on {next(iter(revisions.values()))[:9]}')
 
 
-# The read-only look may ask the node, slowly (about 20 reads a minute), whether stations with
-# nothing in the backend's database are reporting on chain. It runs before the YES and before
-# the signing window, so it may take minutes. The stamped export never asks the node.
+# The read-only look asks each station's provider, with the station's stored keys, whether its
+# device reported in the last 24 hours: one request per station, at most one a second, 10 s
+# timeout each. It runs before the YES and before the signing window, so it may take minutes.
+# The stamped export is told which stations the look just saw reporting and asks no provider.
 LOOK_TIMEOUT = 900
+# The export's exit code for "nothing is ready". It still writes its artifact, with the reasons.
+EXPORT_NOTHING_READY = 2
 
 
 def export_once(args, source, batch_id, stamp, confirmed=()):
     """Run the backend export once: (artifact, CLI rows or None). With no stamp it is a
     read-only look at what would be exported. `confirmed` are station ids the look just saw
-    reporting on chain, so the stamped export does not ask the node again. The container's
+    reporting, so the stamped export does not ask their provider again. A look that finds
+    nothing ready prints why each waiting station was left out, then stops. The container's
     files are always removed."""
     exported = '/tmp/' + batch_id + '.json'
     projected = '/tmp/' + batch_id + '-cli.json'
@@ -565,12 +577,18 @@ def export_once(args, source, batch_id, stamp, confirmed=()):
         argv += ['--cli-batch-out', projected, '--submitted-at', str(stamp)]
     pending = True
     try:
-        command(argv, 'export failed or no exportable rows; nothing submitted',
-                timeout=45 if stamp is not None or not source['preview_from_export'] else LOOK_TIMEOUT)
+        look = stamp is None and source['preview_from_export']
+        outcome = command(argv, 'export failed or no exportable rows; nothing submitted',
+                          timeout=LOOK_TIMEOUT if look else 45,
+                          also_ok=(EXPORT_NOTHING_READY,) if look else ())
         if stamp is not None:
             age(stamp)
         full = json.loads(command(['docker', 'exec', args.backend_container, 'cat', exported],
                                   'export read failed'))
+        if look and outcome[1] == EXPORT_NOTHING_READY:
+            export_identity(full, source)
+            print_not_exported(full)
+            raise Stop('no station is ready; the reasons are above; nothing signed')
         rows = None
         if stamp is not None:
             rows = json.loads(command(['docker', 'exec', args.backend_container, 'cat', projected],
@@ -601,31 +619,28 @@ def print_not_exported(full):
         reason = entry.get('reason') if isinstance(entry, dict) else None
         if (isinstance(station, str) and re.fullmatch(SOURCES['website']['station_id'], station) and
                 reason in KNOWN_REASONS):
-            print(f'NOT IN THIS BATCH: {station}: {reason}')
+            print(f'NOT IN THIS BATCH: {station}: {REASON_TEXT.get(reason, reason)}')
         else:
             print('NOT IN THIS BATCH: one station (details withheld)')
 
 
 def evidence_source(station):
-    """'db', 'chain' or None: where the look saw this station reporting."""
+    """'provider' or None: the look saw this station's device reporting at its provider."""
     evidence = station.get('evidence') if isinstance(station, dict) else None
     value = evidence.get('source') if isinstance(evidence, dict) else None
-    return value if value in ('db', 'chain') else None
+    return value if value == 'provider' else None
 
 
 def evidence_text(station):
-    """'; source db; N reading(s) in 24 h, last M min ago' for a dry-run row, or '' if not reported.
-    `chain` means the backend's database had nothing and the node's chain tail did."""
+    """'; source provider; last reading M min ago' for a dry-run row, or '' if not reported.
+    The source and the minutes are all that is shown."""
     evidence = station.get('evidence') if isinstance(station, dict) else None
-    source = evidence_source(station)
-    if source is None:
+    if evidence_source(station) is None:
         return ''
-    count, minutes = evidence.get('observations_24h'), evidence.get('last_observation_age_minutes')
-    if type(count) is not int or count < 0 or (minutes is not None and (type(minutes) is not int or minutes < 0)):
+    minutes = evidence.get('last_observation_age_minutes')
+    if type(minutes) is not int or not 0 <= minutes <= 24 * 60:
         return ''
-    where = 'in 24 h' if source == 'db' else 'in the chain tail'
-    return (f'; source {source}; {count} reading(s) {where}, last '
-            + ('unknown' if minutes is None else f'{minutes} min ago'))
+    return f'; source provider; last reading {minutes} min ago'
 
 
 def confirm_yes(count, station_ids=()):
@@ -781,7 +796,7 @@ def activate(args):
         print(f'FORMAT: {fmt} registrations')
         batch_id = directory.name
         allowed = list(getattr(args, 'allow_station_id', None) or [])
-        looked_at, on_chain_only = {}, []
+        looked_at, seen_reporting = {}, []
         if source['preview_from_export']:
             # A read-only look at exactly what the export would hand over: the list the
             # owner is shown, and later signs, comes from here.
@@ -792,11 +807,11 @@ def activate(args):
                     all(isinstance(x, dict) and isinstance(x.get('station_id'), str) for x in stations),
                     'no pending stations or pending station IDs invalid')
             preview = [x['station_id'] for x in stations]
-            # Every station in the look was seen reporting, in the database or on chain.
-            require(all(evidence_source(x) for x in stations),
+            # Every station in the look was seen reporting at its provider, with a reading age.
+            require(all(evidence_text(x) for x in stations),
                     'the export did not say where each station was seen reporting; nothing signed')
             looked_at = {x['station_id']: x for x in stations}
-            on_chain_only = [x['station_id'] for x in stations if evidence_source(x) == 'chain']
+            seen_reporting = preview
             print_not_exported(looked)
         else:
             # v2 preflight: already-registered db_only rows need sync/readback, not another POST.
@@ -824,7 +839,7 @@ def activate(args):
             confirm_yes(len(preview), preview if source['show_ids'] else ())
         stamp = args.submitted_at if args.submitted_at is not None else now()
         age(stamp)
-        full, rows = export_once(args, source, batch_id, stamp, on_chain_only)
+        full, rows = export_once(args, source, batch_id, stamp, seen_reporting)
         export_identity(full, source)
         require(isinstance(rows, list) and 1 <= len(rows) <= args.limit and
                 [x['station_id'] for x in full['stations']] == [x['station_id'] for x in rows],
