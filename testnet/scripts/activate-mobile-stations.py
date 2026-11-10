@@ -93,6 +93,9 @@ KNOWN_REASONS = frozenset((
     'provider credentials are not verified or ingestion is not active',
     "station_report: no reading from this station's device in the last 24 hours",
     'provider_unreachable: the provider could not be read for this station; not exported this run',
+    'credentials_incomplete: the station has no bound device or no stored application key; '
+    'its owner must connect it again',
+    'not_checked: this run had used its provider checks before reaching this station; run again',
     NAMED_ID_REASON,
     'ownership signature does not verify',
     'owner is not derived from the owner pubkey',
@@ -556,6 +559,13 @@ def producer_fence(producers, readings=None):
 LOOK_TIMEOUT = 900
 # The export's exit code for "nothing is ready". It still writes its artifact, with the reasons.
 EXPORT_NOTHING_READY = 2
+# The stamped export runs inside the signing window. It is told which stations the look saw
+# reporting and makes no provider read at all, so it needs only a database read.
+STAMPED_TIMEOUT = 45
+# The export is told when this tool stops waiting for it (--not-after), this many seconds
+# early: past that time it starts no provider read and writes nothing, so an export that
+# outlives a killed run cannot leave a file behind after the cleanup below.
+EXPORT_DEADLINE_MARGIN = 15
 
 
 def export_once(args, source, batch_id, stamp, confirmed=()):
@@ -575,11 +585,14 @@ def export_once(args, source, batch_id, stamp, confirmed=()):
         argv += ['--confirmed-reporting', station]
     if stamp is not None:
         argv += ['--cli-batch-out', projected, '--submitted-at', str(stamp)]
+    look = stamp is None and source['preview_from_export']
+    wait = LOOK_TIMEOUT if look else STAMPED_TIMEOUT
+    if source['preview_from_export']:
+        argv += ['--not-after', str(now() + wait - EXPORT_DEADLINE_MARGIN)]
     pending = True
     try:
-        look = stamp is None and source['preview_from_export']
         outcome = command(argv, 'export failed or no exportable rows; nothing submitted',
-                          timeout=LOOK_TIMEOUT if look else 45,
+                          timeout=wait,
                           also_ok=(EXPORT_NOTHING_READY,) if look else ())
         if stamp is not None:
             age(stamp)

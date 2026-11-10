@@ -76,6 +76,13 @@ DRY RUN PASS: 2 eligible rows; no signature or submission
   the last 24 hours. `provider_unreachable` means the provider could not be read (an error,
   a timeout, or it asked to slow down): the station is left out this run and is never put
   in a batch on an error. Run again later.
+- `credentials_incomplete` means the station has no bound device or no stored application
+  key, so the provider can't be asked; its owner has to connect it again. `not_checked`
+  means this run had used its provider requests (three per station asked for) before it got
+  to that station. The starting point moves on every ten minutes, so run again.
+- The second export makes no provider request at all, for any station, however many are
+  waiting. Both exports are told when the tool stops waiting for them; past that time they
+  write nothing.
 - If nothing is ready the tool prints the `NOT IN THIS BATCH` lines and stops with
   `no station is ready; the reasons are above; nothing signed`.
 - The backend container needs `API_KEY_ENCRYPTION_KEY` (it already has it to store the

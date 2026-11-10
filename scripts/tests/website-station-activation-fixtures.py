@@ -39,7 +39,7 @@ def artifact(rows):
   if scenario=='no-age' and i==0:return dict(source='provider',last_observation_age_minutes=None)
   return dict(source='provider',last_observation_age_minutes=12+i)
  stations=[dict(x,evidence=ev(i,x)) for i,x in enumerate(rows)]
- skipped=[dict(stationId='pws-00000000000000c3',reason="station_report: no reading from this station's device in the last 24 hours"),dict(stationId='pws-00000000000000e5',reason='provider_unreachable: the provider could not be read for this station; not exported this run'),dict(stationId=NAMED,reason='station id is not a neutral id (it may hold a name); pass --allow-id to include it')]
+ skipped=[dict(stationId='pws-00000000000000c3',reason="station_report: no reading from this station's device in the last 24 hours"),dict(stationId='pws-00000000000000e5',reason='provider_unreachable: the provider could not be read for this station; not exported this run'),dict(stationId=NAMED,reason='station id is not a neutral id (it may hold a name); pass --allow-id to include it'),dict(stationId='pws-00000000000000f6',reason='credentials_incomplete: the station has no bound device or no stored application key; its owner must connect it again'),dict(stationId='pws-00000000000000a7',reason='not_checked: this run had used its provider checks before reaching this station; run again')]
  if scenario=='named-id':skipped=skipped[:1]
  if scenario=='bad-reason':skipped=[dict(stationId='pws-00000000000000c3',reason='at 12.3456 -45.6789 owner 0x'+'ab'*20)]
  return dict(version=version,chainId='999' if scenario=='other-chain' else CHAIN,networkId='testnet',stations=stations,not_exported=skipped)
@@ -53,6 +53,9 @@ elif name=='docker':
   else:print(json.dumps(['WRFCOIN_OPERATOR_TOKEN=TOKEN_SENTINEL_PRIVATE']))
  elif 'scripts/export-website-station-registrations.ts' in a:
   assert '--mark-submitted' not in a
+  # The export is always told when the tool stops waiting: 15 s before the tool's own limit
+  # (15 minutes for the look, 45 s for the stamped export).
+  s['not_after'].append(int(a[a.index('--not-after')+1])-now)
   s['allow']=[a[i+1] for i,x in enumerate(a) if x=='--allow-id']
   s['confirmed']=[a[i+1] for i,x in enumerate(a) if x=='--confirmed-reporting']
   s['confirmed_by_call'].append(s['confirmed'])
@@ -139,7 +142,7 @@ class WebsiteOwnerFlow(unittest.TestCase):
             state = root / 'state.json'
             state.write_text(json.dumps(dict(scenario=scenario, elapsed=0, events=[], posts=0, builds=0,
                                              built=[], cleanups=0, looks=0, exports=0, allow=[], last='', confirmed=[],
-                                             confirmed_by_call=[])))
+                                             confirmed_by_call=[], not_after=[])))
             env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], FAKE_STATE=str(state),
                        TMPDIR=str(root), WRFCOIN_CHAIN_ID='888')
             argv = ['bash', str(REPO / 'testnet/scripts/activate-mobile-stations.sh'), '--cli', str(tools / 'wrfcoin'),
@@ -188,6 +191,11 @@ class WebsiteOwnerFlow(unittest.TestCase):
                       'read for this station; not exported this run', result.stdout)
         # The look asked the providers; the stamped export is told both were seen and asks none.
         self.assertEqual(state['confirmed_by_call'], [[], IDS])
+        self.assertEqual(state['not_after'], [900 - 15, 45 - 15])
+        self.assertIn('NOT IN THIS BATCH: pws-00000000000000f6: credentials_incomplete: the station has no bound '
+                      'device or no stored application key; its owner must connect it again', result.stdout)
+        self.assertIn('NOT IN THIS BATCH: pws-00000000000000a7: not_checked: this run had used its provider '
+                      'checks before reaching this station; run again', result.stdout)
         # The flag named is this tool's own flag, not the backend script's.
         self.assertIn(f'NOT IN THIS BATCH: {NAMED}: station id is not a neutral id (it may hold a name); '
                       'pass --allow-station-id to include it', result.stdout)
