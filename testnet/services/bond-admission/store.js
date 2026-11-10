@@ -8,6 +8,9 @@
 //      effective epoch from the same address hash, because the first packet
 //      missed its epoch; a renewal is not charged against the limits)
 //   2. this public address hash holds an admission   -> ADDRESS_ALREADY_ADMITTED
+//      (an IPv6 mark written before addresses were counted by network prefix
+//      hashed the address text: that legacy mark still counts, and a renewal
+//      that matches it is rewritten to the prefix mark)
 //   3. the global gap since the last admission       -> ADMISSION_SPACING
 //   4. today's (UTC) count is used up                -> ADMISSION_DAILY_LIMIT
 // then it marks the server key (no expiry), the address hash (expires after
@@ -22,16 +25,19 @@
 const RESERVE_DEPOSIT_LUA = `-- bond-admission-reserve-deposit
 local srv = redis.call('GET', KEYS[1])
 local ip = redis.call('GET', KEYS[2])
+local legacy = redis.call('GET', KEYS[5])
 if srv then
   local dep, ep = string.match(srv, '^(%x+):(%d+)$')
-  if dep == ARGV[1] and tonumber(ARGV[2]) > tonumber(ep) and ip == ARGV[1] then
+  if dep == ARGV[1] and tonumber(ARGV[2]) > tonumber(ep) and (ip == ARGV[1] or legacy == ARGV[1]) then
     redis.call('SET', KEYS[1], ARGV[1] .. ':' .. ARGV[2])
     redis.call('SET', KEYS[2], ARGV[1], 'EX', tonumber(ARGV[3]))
+    if KEYS[5] ~= KEYS[2] and legacy == ARGV[1] then redis.call('DEL', KEYS[5]) end
     return {2, 0}
   end
   return {-1, 0}
 end
 if ip then return {-2, redis.call('TTL', KEYS[2])} end
+if legacy then return {-2, redis.call('TTL', KEYS[5])} end
 local gap = redis.call('TTL', KEYS[4])
 if gap > 0 then return {-3, gap} end
 local count = tonumber(redis.call('GET', KEYS[3]) or '0')
@@ -66,12 +72,13 @@ function secondsToUtcMidnight(now) {
   return Math.max(1, Math.ceil((next - now.getTime()) / 1000));
 }
 
-function depositKeys(prefix, { serverKey, ipHash }, now) {
+function depositKeys(prefix, { serverKey, ipHash, legacyIpHash }, now) {
   return [
     `${prefix}server:${serverKey}`,
     `${prefix}ip:${ipHash}`,
     `${prefix}day:${utcDay(now)}`,
     `${prefix}gap`,
+    `${prefix}ip:${legacyIpHash || ipHash}`,
   ];
 }
 
@@ -139,20 +146,23 @@ function createMemoryStore({ prefix, limits }) {
   return {
     setClock(fn) { clock = fn; },
     async reserveDeposit(request, now = new Date(clock())) {
-      const [srvKey, ipKey, dayKey, gapKey] = depositKeys(prefix, request, now);
+      const [srvKey, ipKey, dayKey, gapKey, legacyKey] = depositKeys(prefix, request, now);
       const [token, epoch, ipTtl, dayTtl, gapSeconds, cap] = depositArgs(limits, request, now);
       const srv = get(srvKey);
       const ip = get(ipKey);
+      const legacy = get(legacyKey);
       if (srv) {
         const [dep, ep] = srv.split(':');
-        if (dep === token && Number(epoch) > Number(ep) && ip === token) {
+        if (dep === token && Number(epoch) > Number(ep) && (ip === token || legacy === token)) {
           set(srvKey, `${token}:${epoch}`);
           set(ipKey, token, Number(ipTtl));
+          if (legacyKey !== ipKey && legacy === token) values.delete(legacyKey);
           return outcome([2, 0]);
         }
         return outcome([-1, 0]);
       }
       if (ip) return outcome([-2, ttl(ipKey)]);
+      if (legacy) return outcome([-2, ttl(legacyKey)]);
       if (ttl(gapKey) > 0) return outcome([-3, ttl(gapKey)]);
       const count = Number(get(dayKey) || 0);
       if (count >= Number(cap)) return outcome([-4, ttl(dayKey)]);
@@ -182,6 +192,7 @@ function createMemoryStore({ prefix, limits }) {
     },
     async record(row) { audit.unshift(row); audit.length = Math.min(audit.length, 100); },
     async recent() { return audit.slice(); },
+    _set(key, value, seconds) { set(key, value, seconds); },
     _keys() { return [...values.keys()].filter((key) => get(key) !== null); },
   };
 }

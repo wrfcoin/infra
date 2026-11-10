@@ -69,6 +69,9 @@ Deposit:
   default the /64), so every address of one home connection is the same address here,
   however it is written. Tunnel ranges over one IPv4 address (6to4, Teredo) are refused
   like CGNAT.
+  An IPv4 address written as IPv6 (IPv4-mapped, in any spelling) and the rest of `::/80`
+  are refused as not public. A mark written before prefix counting (a hash of the address
+  text) still counts, and a renewal that matches it is rewritten to the prefix mark.
 - At least **6 h** between admissions, across everyone.
 - At most **2 a day** (UTC).
 
@@ -92,7 +95,7 @@ effective epoch, time). No addresses. Everything in it is public on chain anyway
 ## Log
 
 One line per request: `decision=ADMITTED action=… deployment=<first 8 hex> epoch=…`, or
-`decision=<refusal code>`. No address, peer id or key is ever logged.
+`decision=<refusal code>` (including `ADMISSION_BUSY`). No address, peer id or key is ever logged.
 
 ## Configuration
 
@@ -110,7 +113,7 @@ One line per request: `decision=ADMITTED action=… deployment=<first 8 hex> epo
 | `BOND_ADMISSION_DAILY_CAP` | `2` (1–100) |
 | `BOND_ADMISSION_MIN_INTERVAL_SECONDS` | `21600` |
 | `BOND_ADMISSION_IP_TTL_SECONDS` | `2592000` (30 days) |
-| `BOND_ADMISSION_IPV6_PREFIX_BITS` | `64` (`48`, `56` or `64`; anything else is `64`) |
+| `BOND_ADMISSION_IPV6_PREFIX_BITS` | `64` (an integer from `48` to `64`; any other value is ignored, named once in the startup log, and `64` is used) |
 | `BOND_ADMISSION_MIN_PEER_AGE_SECONDS` | `86400` |
 | `BOND_ADMISSION_MAX_LAG_BLOCKS` | `20` |
 | `BOND_ADMISSION_MAX_ADVERT_AGE_SECONDS` | `300` |
