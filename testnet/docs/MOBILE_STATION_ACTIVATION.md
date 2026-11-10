@@ -29,6 +29,110 @@ bash testnet/scripts/activate-mobile-stations-888.sh \
 Copy `activate-mobile-stations.py` to the key host first, from the commit you reviewed.
 A batch is 21 rows at most. Use a small `--limit` for the first batch.
 
+## Stations connected on the website: the same command with `--source website`
+
+A station connected on the website (an Ambient station, say) is in the same position as a
+phone: the backend has it, but it earns only after a governance-signed registration. Add
+`--source website` to the command above and the batch is taken from those stations instead:
+
+```bash
+bash testnet/scripts/activate-mobile-stations-888.sh <the same inputs> --source website --limit 5
+```
+
+What is different from a phone batch, and nothing else is:
+
+| | Phone (default) | `--source website` |
+|---|---|---|
+| Who decides the list | The oldest waiting rows in `mobile_station_registrations` | The backend export. The tool asks it first, shows that list, and signs exactly that list or nothing |
+| Who is on it | A phone that registered in the app | A website station that is **ready**: its owner's 12-word wallet has signed for it, its provider credentials are stored and ingestion is active, it is reporting (its provider shows a reading from its own device in the last 24 hours, checked when the tool runs), and its id is a neutral id |
+| Export script in the backend container | `scripts/export-mobile-station-registrations.ts` | `scripts/export-website-station-registrations.ts`. It never changes a row |
+| Station ids | `mob-` + 32 hex, derived from the wallet | `pws-` + 16 hex, issued by the backend. Older ids hold the name the owner typed; see below |
+| Chain record | `phone-barometer`, `unverified`, `real` | `personal-weather-station`, `unverified`, `real`, no elevation |
+| Backend switches that must be on | `STATION_CHAIN_SYNC_ENABLED` | that, and `WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED` |
+| Station ids on screen | Only in the exit 3 handoff list | In the dry run, and again just before the YES |
+
+A passkey-owned station is never on the list: the chain can't check a passkey owner yet.
+
+### What the dry run shows
+
+```text
+NOT IN THIS BATCH: pws-00000000000000c3: station_report: no reading from this station's device in the last 24 hours
+NOT IN THIS BATCH: pws-00000000000000e5: provider_unreachable: the provider could not be read for this station; not exported this run
+PREFLIGHT PASS: clock, node, sync, CLI and key modes
+EXPORTED: 2 rows
+ROW 1/2: eligible; ownership checked by exporter; station id pws-00000000000000a1; source provider; last reading 12 min ago
+ROW 2/2: eligible; ownership checked by exporter; station id pws-00000000000000b2; source provider; last reading 13 min ago
+DRY RUN PASS: 2 eligible rows; no signature or submission
+```
+
+- `ROW` lines are the stations that would be signed. `source provider` means the export
+  asked the station's weather provider just now, with the keys the owner stored, and the
+  provider showed a reading from that station's own device this many minutes ago. Nothing
+  else from the provider is shown or kept.
+- The first step can take a few minutes: one provider request per station, at most one a
+  second, 10 seconds each at most. This happens before the YES, outside the signing window.
+  The second export (the one that is signed) asks no provider for the stations just seen.
+- `station_report` means the provider answered and showed no reading from that device in
+  the last 24 hours. `provider_unreachable` means the provider could not be read (an error,
+  a timeout, or it asked to slow down): the station is left out this run and is never put
+  in a batch on an error. Run again later.
+- `credentials_incomplete` means the station has no bound device or no stored application
+  key, so the provider can't be asked; its owner has to connect it again. `not_checked`
+  means this run had used its provider requests (three per station asked for) before it got
+  to that station. The starting point moves on every ten minutes, so run again.
+- The second export makes no provider request at all, for any station, however many are
+  waiting. Both exports are told when the tool stops waiting for them; past that time they
+  write nothing.
+- If nothing is ready the tool prints the `NOT IN THIS BATCH` lines and stops with
+  `no station is ready; the reasons are above; nothing signed`.
+- The backend container needs `API_KEY_ENCRYPTION_KEY` (it already has it to store the
+  keys). `WEBSITE_STATION_PROVIDER_MIN_INTERVAL_MS` slows the provider requests down; it
+  can't make them faster than one a second.
+- `NOT IN THIS BATCH` lines are waiting stations the export left out, with the reason. A
+  station that isn't ready never takes a place in the batch, so one bad row can't hold up
+  the others. Only a fixed set of reasons is printed.
+- No position, owner address, key or signature is printed.
+
+### Station ids are public for good: read them before YES
+
+The real run prints `WILL BE PUBLIC ON CHAIN i/N: station id <id>` above the YES prompt, for
+exactly the stations it will sign. If the list changes between that moment and signing, the
+run stops and signs nothing.
+
+New website stations get a neutral id from the backend. A station connected before that has
+an id built from the name its owner typed (`pws-<name>-<6 hex>`). Those are left out
+(`NOT IN THIS BATCH: ... station id is not a neutral id`) unless you name them one by one:
+
+```bash
+... --source website --allow-station-id pws-my-own-station-a1b2c3
+```
+
+Do that only for a station whose owner agrees to the id being public permanently (your own
+station, for instance).
+
+### A station id the chain already has
+
+If the chain already has a station id under another owner, the backend's chain sync marks
+that website station `blocked` and it leaves the waiting list; its owner is told to reconnect
+the station to get a new id. If a run meets such a station before the sync has seen it, it
+stops and names it (`ACTIVATION STOP: station <id> is already registered on chain ...`).
+Run again after the next backend sync (ten minutes at most).
+
+### After the batch
+
+The same exit 3 handoff and readback apply; the receipt records `"source": "website"`. The
+station's page says "earning" only after the backend's chain sync has seen the station in
+the chain registry; the batch tool doesn't set that and neither does the export.
+
+### Chain id
+
+The backend checks owner signatures against `WRFCOIN_CHAIN_ID` / `WRFCOIN_NETWORK_ID` and
+has no default on this path; the website signs for the chain the backend reports and refuses
+on a mismatch with its own build setting; this tool refuses an export that is not for chain
+888/testnet. Some build and env examples in this repo still default to chain 777. They are
+not changed here: set both to 888 for the live testnet, and a wrong value now stops at the
+first of those three checks instead of producing proofs nobody can use.
+
 ## What has to be true, and what checks it
 
 Every run checks these before any signature, dry runs included:

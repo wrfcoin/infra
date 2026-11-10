@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Owner-only mobile station activation. Stdlib; all tool output stays private."""
+"""Owner-only station activation: phone stations, or stations connected on the website
+(--source website). Stdlib; all tool output stays private."""
 import argparse
 import email.utils
 import hashlib
@@ -43,6 +44,64 @@ GOV = 'e7bec166ad446314d26fb7526bfa8cec1b363b438440262fb001f7b04b20bf00'
 ROW_KEYS = {'station_id', 'owner_address', 'owner_pubkey', 'owner_signature',
             'latitude', 'longitude', 'hardware_model', 'provenance_class',
             'data_quality_tier', 'submitted_at'}
+# Where the waiting stations come from. Both sources share every check, the signing
+# path and the YES; only these facts differ. A website station id is whatever the
+# website issued (letters, digits, _ and -), never the phone prefix, and it is public
+# on chain once mined, so the website source shows the ids before the YES.
+SOURCES = {
+    'phone': {
+        'table': 'mobile_station_registrations',
+        'script': 'scripts/export-mobile-station-registrations.ts',
+        'version': 'mobile_station_registration_export_v1',
+        'station_id': r'mob-[0-9a-f]{32}',
+        'hardware_model': 'phone-barometer',
+        'backend_switch': None,
+        'show_ids': False,
+        'preview_from_export': False,
+    },
+    'website': {
+        'table': 'website_station_chain_registrations',
+        'script': 'scripts/export-website-station-registrations.ts',
+        'version': 'website_station_registration_export_v1',
+        'station_id': r'(?!mob-)[A-Za-z0-9_-]{1,64}',
+        'hardware_model': 'personal-weather-station',
+        'backend_switch': 'WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED',
+        'show_ids': True,
+        # The backend export decides which stations are ready (stored credentials, active
+        # ingestion, a reading in the last 24 hours, a neutral id), so the list the owner is
+        # shown comes from the export itself, never from a separate database read.
+        'preview_from_export': True,
+    },
+}
+# An id the backend issued with nothing personal in it. Any other website id may hold the
+# name its owner typed, and goes on chain only when the owner names it with --allow-station-id.
+NEUTRAL_STATION_ID = r'pws-[0-9a-f]{16}'
+# The fixed reasons the backend export gives for a waiting station that is not in the batch.
+# Only these exact phrases are ever printed: a reason is text from another program, and
+# anything else could carry a position or an owner.
+# The value is what THIS tool prints: the backend's own flag is --allow-id, and here the owner
+# passes --allow-station-id.
+NAMED_ID_REASON = 'station id is not a neutral id (it may hold a name); pass --allow-id to include it'
+REASON_TEXT = {
+    NAMED_ID_REASON: 'station id is not a neutral id (it may hold a name); '
+                     'pass --allow-station-id to include it',
+}
+KNOWN_REASONS = frozenset((
+    'station is not active',
+    'the station now belongs to a different owner',
+    'station has no usable position',
+    'provider credentials are not verified or ingestion is not active',
+    "station_report: no reading from this station's device in the last 24 hours",
+    'provider_unreachable: the provider could not be read for this station; not exported this run',
+    'credentials_incomplete: the station has no bound device or no stored application key; '
+    'its owner must connect it again',
+    'not_checked: this run had used its provider checks before reaching this station; run again',
+    NAMED_ID_REASON,
+    'ownership signature does not verify',
+    'owner is not derived from the owner pubkey',
+    'station appears twice',
+    'position could not be put on the 0.1 degree grid',
+))
 
 
 class Stop(Exception):
@@ -63,14 +122,16 @@ def require(condition, stage):
         raise Stop(stage)
 
 
-def command(args, stage, input_text=None, timeout=30, env=None):
+def command(args, stage, input_text=None, timeout=30, env=None, also_ok=()):
+    """Run a tool and return its output. Any exit code but 0 stops the run, unless the caller
+    names it in `also_ok`; then (output, exit code) is returned instead."""
     try:
         result = subprocess.run(args, input=input_text, text=True, capture_output=True,
                                 timeout=timeout, env=env, check=False)
     except (OSError, subprocess.SubprocessError):
         raise Stop(stage) from None
-    require(result.returncode == 0, stage)
-    return result.stdout
+    require(result.returncode == 0 or result.returncode in also_ok, stage)
+    return (result.stdout, result.returncode) if also_ok else result.stdout
 
 
 def now():
@@ -362,7 +423,8 @@ def handoff_list(batch_id, rows, states):
 def synced(args, row):
     """1 if the backend shows this row on_chain, else 0. Reads only."""
     # Station IDs were validated before they became SQL literals. No DB mutation.
-    sql = ("SELECT count(*) FROM mobile_station_registrations WHERE station_id="
+    table = SOURCES[getattr(args, 'source', 'phone')]['table']
+    sql = (f"SELECT count(*) FROM {table} WHERE station_id="
            f"'{row['station_id']}' AND owner_address='{row['owner_address']}' AND status='on_chain'")
     raw = command(['docker', 'exec', args.postgres_container, 'psql', '-U', 'wrfcoin',
                    '-d', 'wrfcoin', '-At', '-c', sql], 'backend status read failed').strip()
@@ -490,9 +552,115 @@ def producer_fence(producers, readings=None):
     print(f'FENCE: {len(revisions)}/{PRODUCER_COUNT} producers on {next(iter(revisions.values()))[:9]}')
 
 
-def confirm_yes(count):
+# The read-only look asks each station's provider, with the station's stored keys, whether its
+# device reported in the last 24 hours: one request per station, at most one a second, 10 s
+# timeout each. It runs before the YES and before the signing window, so it may take minutes.
+# The stamped export is told which stations the look just saw reporting and asks no provider.
+LOOK_TIMEOUT = 900
+# The export's exit code for "nothing is ready". It still writes its artifact, with the reasons.
+EXPORT_NOTHING_READY = 2
+# The stamped export runs inside the signing window. It is told which stations the look saw
+# reporting and makes no provider read at all, so it needs only a database read.
+STAMPED_TIMEOUT = 45
+# The export is told when this tool stops waiting for it (--not-after), this many seconds
+# early: past that time it starts no provider read and writes nothing, so an export that
+# outlives a killed run cannot leave a file behind after the cleanup below.
+EXPORT_DEADLINE_MARGIN = 15
+
+
+def export_once(args, source, batch_id, stamp, confirmed=()):
+    """Run the backend export once: (artifact, CLI rows or None). With no stamp it is a
+    read-only look at what would be exported. `confirmed` are station ids the look just saw
+    reporting, so the stamped export does not ask their provider again. A look that finds
+    nothing ready prints why each waiting station was left out, then stops. The container's
+    files are always removed."""
+    exported = '/tmp/' + batch_id + '.json'
+    projected = '/tmp/' + batch_id + '-cli.json'
+    argv = ['docker', 'exec', '-w', '/app/backend', args.backend_container,
+            'node_modules/.bin/tsx', source['script'],
+            '--out', exported, '--batch-id', batch_id, '--limit', str(args.limit)]
+    for station in getattr(args, 'allow_station_id', None) or []:
+        argv += ['--allow-id', station]
+    for station in confirmed:
+        argv += ['--confirmed-reporting', station]
+    if stamp is not None:
+        argv += ['--cli-batch-out', projected, '--submitted-at', str(stamp)]
+    look = stamp is None and source['preview_from_export']
+    wait = LOOK_TIMEOUT if look else STAMPED_TIMEOUT
+    if source['preview_from_export']:
+        argv += ['--not-after', str(now() + wait - EXPORT_DEADLINE_MARGIN)]
+    pending = True
+    try:
+        outcome = command(argv, 'export failed or no exportable rows; nothing submitted',
+                          timeout=wait,
+                          also_ok=(EXPORT_NOTHING_READY,) if look else ())
+        if stamp is not None:
+            age(stamp)
+        full = json.loads(command(['docker', 'exec', args.backend_container, 'cat', exported],
+                                  'export read failed'))
+        if look and outcome[1] == EXPORT_NOTHING_READY:
+            export_identity(full, source)
+            print_not_exported(full)
+            raise Stop('no station is ready; the reasons are above; nothing signed')
+        rows = None
+        if stamp is not None:
+            rows = json.loads(command(['docker', 'exec', args.backend_container, 'cat', projected],
+                                      'batch read failed'))
+        command(['docker', 'exec', args.backend_container, 'rm', '-f', exported, projected],
+                'private container cleanup failed; owner must clean this batch', timeout=10)
+        pending = False
+        return full, rows
+    finally:
+        if pending:
+            command(['docker', 'exec', args.backend_container, 'rm', '-f', exported, projected],
+                    'private container cleanup failed; owner must clean this batch', timeout=10)
+
+
+def export_identity(full, source):
+    require(isinstance(full, dict) and full.get('version') == source['version'] and
+            full.get('chainId') == CHAIN_ID and full.get('networkId') == 'testnet',
+            'export identity invalid')
+
+
+def print_not_exported(full):
+    """Waiting stations the export left out, by id and fixed reason. Nothing personal."""
+    entries = full.get('not_exported')
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        station = entry.get('stationId') if isinstance(entry, dict) else None
+        reason = entry.get('reason') if isinstance(entry, dict) else None
+        if (isinstance(station, str) and re.fullmatch(SOURCES['website']['station_id'], station) and
+                reason in KNOWN_REASONS):
+            print(f'NOT IN THIS BATCH: {station}: {REASON_TEXT.get(reason, reason)}')
+        else:
+            print('NOT IN THIS BATCH: one station (details withheld)')
+
+
+def evidence_source(station):
+    """'provider' or None: the look saw this station's device reporting at its provider."""
+    evidence = station.get('evidence') if isinstance(station, dict) else None
+    value = evidence.get('source') if isinstance(evidence, dict) else None
+    return value if value == 'provider' else None
+
+
+def evidence_text(station):
+    """'; source provider; last reading M min ago' for a dry-run row, or '' if not reported.
+    The source and the minutes are all that is shown."""
+    evidence = station.get('evidence') if isinstance(station, dict) else None
+    if evidence_source(station) is None:
+        return ''
+    minutes = evidence.get('last_observation_age_minutes')
+    if type(minutes) is not int or not 0 <= minutes <= 24 * 60:
+        return ''
+    return f'; source provider; last reading {minutes} min ago'
+
+
+def confirm_yes(count, station_ids=()):
     """The owner's YES: nothing can be undone after this. A terminal is required."""
     require(sys.stdin.isatty(), 'a real activation needs a terminal for the YES; nothing signed')
+    for index, station in enumerate(station_ids, 1):
+        print(f'WILL BE PUBLIC ON CHAIN {index}/{len(station_ids)}: station id {station}')
     print(f'ABOUT TO SIGN AND SUBMIT: up to {count} stations to chain {CHAIN_ID}. There is no undo.', flush=True)
     print('Type YES to continue: ', end='', flush=True)
     require(sys.stdin.readline().strip() == 'YES', 'owner did not type YES; nothing signed')
@@ -508,6 +676,7 @@ def grid_coordinate(value, limit):
 
 def receipt_writer(args, batch_id, stamp, fmt, rows):
     """Durable batch receipt outside the (deleted) private directory; ids only."""
+    source_name = getattr(args, 'source', 'phone')
     directory = Path(args.receipt_dir or (Path.cwd() / 'msr-receipts')).absolute()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     require(stat.S_IMODE(directory.stat().st_mode) == 0o700, 'receipt directory mode invalid')
@@ -521,6 +690,7 @@ def receipt_writer(args, batch_id, stamp, fmt, rows):
         if transaction_ids is not None:
             current['transaction_ids'] = transaction_ids  # what the manager reads back
         body = {'version': 'msr_batch_receipt_v1', 'batch_id': batch_id, 'status': status,
+                'source': source_name,
                 'submitted_at': current['stamp'], 'registration_format': fmt,
                 'complete_marker': marker, 'transaction_ids': current.get('transaction_ids', []),
                 'rows': [{'station_id': r['station_id'], 'owner_prefix': short_owner(r['owner_address']),
@@ -572,7 +742,10 @@ def mark_reconciled(args):
     with tmp.open('x', encoding='utf-8') as stream:
         json.dump(body, stream, separators=(',', ':'))
     os.replace(tmp, path)
-    print(f'RECONCILED: batch {args.mark_reconciled}; {len(body["rows"])} rows; '
+    # A receipt written before sources existed is a phone batch.
+    receipt_source = body.get('source', 'phone')
+    require(receipt_source in SOURCES, 'receipt source invalid')
+    print(f'RECONCILED: {receipt_source} batch {args.mark_reconciled}; {len(body["rows"])} rows; '
           + ('staged marker written; nothing was submitted' if marker else 'no staged marker; nothing was submitted'))
 
 
@@ -606,8 +779,13 @@ def activate(args):
     if args.submitted_at is not None:
         age(args.submitted_at)  # Refuse an already-expired stamp before export or signing.
     producer_fence(producers, readings)  # before any token read, signature or submission
-    require(container_env(args.backend_container).get('STATION_CHAIN_SYNC_ENABLED') == 'true',
+    source = SOURCES[args.source]
+    backend_env = container_env(args.backend_container)
+    require(backend_env.get('STATION_CHAIN_SYNC_ENABLED') == 'true',
             'backend chain sync is not enabled')
+    # Without the switch the backend would never show these stations as earning.
+    require(not source['backend_switch'] or backend_env.get(source['backend_switch']) == 'true',
+            'backend website station registration is not enabled')
     token = container_env(args.node_container).get('WRFCOIN_OPERATOR_TOKEN', '')
     require(re.fullmatch(r'[A-Za-z0-9._~+/=-]{1,4096}', token), 'operator credential missing or invalid')
     private_root = os.environ.get('TMPDIR') or ('/dev/shm' if Path('/dev/shm').is_dir() else None)
@@ -629,94 +807,106 @@ def activate(args):
         feature_gate(args, directory, token)
         fmt = registration_format(args, directory, token)
         print(f'FORMAT: {fmt} registrations')
-        # v2 preflight: already-registered db_only rows need sync/readback, not another POST.
-        raw = command(['docker', 'exec', args.postgres_container, 'psql', '-U', 'wrfcoin',
-                       '-d', 'wrfcoin', '-At', '-c',
-                       "SELECT station_id FROM mobile_station_registrations WHERE status='db_only' "
-                       f'ORDER BY created_at, station_id LIMIT {args.limit}'],
-                      'pending station preflight failed')
-        preview = raw.splitlines()
+        batch_id = directory.name
+        allowed = list(getattr(args, 'allow_station_id', None) or [])
+        looked_at, seen_reporting = {}, []
+        if source['preview_from_export']:
+            # A read-only look at exactly what the export would hand over: the list the
+            # owner is shown, and later signs, comes from here.
+            looked, _ = export_once(args, source, batch_id + '-preview', None)
+            export_identity(looked, source)
+            stations = looked.get('stations')
+            require(isinstance(stations, list) and 1 <= len(stations) <= args.limit and
+                    all(isinstance(x, dict) and isinstance(x.get('station_id'), str) for x in stations),
+                    'no pending stations or pending station IDs invalid')
+            preview = [x['station_id'] for x in stations]
+            # Every station in the look was seen reporting at its provider, with a reading age.
+            require(all(evidence_text(x) for x in stations),
+                    'the export did not say where each station was seen reporting; nothing signed')
+            looked_at = {x['station_id']: x for x in stations}
+            seen_reporting = preview
+            print_not_exported(looked)
+        else:
+            # v2 preflight: already-registered db_only rows need sync/readback, not another POST.
+            raw = command(['docker', 'exec', args.postgres_container, 'psql', '-U', 'wrfcoin',
+                           '-d', 'wrfcoin', '-At', '-c',
+                           f"SELECT station_id FROM {source['table']} WHERE status='db_only' "
+                           f'ORDER BY created_at, station_id LIMIT {args.limit}'],
+                          'pending station preflight failed')
+            preview = raw.splitlines()
         require(1 <= len(preview) <= args.limit and len(set(preview)) == len(preview) and
-                all(re.fullmatch(r'mob-[0-9a-f]{32}', station) for station in preview),
+                all(re.fullmatch(source['station_id'], station) for station in preview),
                 'no pending stations or pending station IDs invalid')
         for station in preview:
             status, _, _ = http(args, directory, token, 'GET',
                                 '/transactions/station/registrations/' + station)
+            if source['show_ids']:
+                # The id was validated above, so it is safe to name. The backend's chain sync
+                # marks such a station blocked (or earning) and it then leaves the waiting list.
+                require(status == 404, f'station {station} is already registered on chain or the read '
+                        'was refused; it leaves the waiting list on the next backend sync; nothing signed')
             require(status == 404, 'pending station already registered or read refused; ask manager')
         print('PREFLIGHT PASS: clock, node, sync, CLI and key modes')
         if not args.dry_run:
-            confirm_yes(len(preview))  # before the stamp: the signing window must not run during it
+            # Before the stamp: the signing window must not run during the owner's read.
+            confirm_yes(len(preview), preview if source['show_ids'] else ())
         stamp = args.submitted_at if args.submitted_at is not None else now()
-        batch_id = directory.name
-        exported = '/tmp/' + batch_id + '.json'
-        projected = '/tmp/' + batch_id + '-cli.json'
-        container_outputs_pending = False
-        try:
-            age(stamp)
-            container_outputs_pending = True
-            command(['docker', 'exec', '-w', '/app/backend', args.backend_container,
-                     'node_modules/.bin/tsx', 'scripts/export-mobile-station-registrations.ts',
-                     '--out', exported, '--batch-id', batch_id, '--limit', str(args.limit),
-                     '--cli-batch-out', projected, '--submitted-at', str(stamp)],
-                    'export failed or no exportable rows; nothing submitted', timeout=45)
-            age(stamp)
-            full = json.loads(command(['docker', 'exec', args.backend_container, 'cat', exported],
-                                      'export read failed'))
-            rows = json.loads(command(['docker', 'exec', args.backend_container, 'cat', projected],
-                                      'batch read failed'))
-            command(['docker', 'exec', args.backend_container, 'rm', '-f', exported, projected],
-                    'private container cleanup failed; owner must clean this batch', timeout=10)
-            container_outputs_pending = False
-            require(full.get('version') == 'mobile_station_registration_export_v1' and
-                    full.get('chainId') == CHAIN_ID and full.get('networkId') == 'testnet',
-                    'export identity invalid')
-            require(isinstance(rows, list) and 1 <= len(rows) <= args.limit and
-                    [x['station_id'] for x in full['stations']] == [x['station_id'] for x in rows],
-                    'export row count or order invalid')
-            require(len({x['station_id'] for x in rows}) == len(rows), 'duplicate station rows')
-            require(all(x['station_id'] in preview for x in rows), 'export selection changed; nothing submitted')
-            for row in rows:
-                require(set(row) == ROW_KEYS and row['submitted_at'] == stamp and
-                        row['hardware_model'] == 'phone-barometer' and
-                        row['data_quality_tier'] == 'unverified' and row['provenance_class'] == 'real' and
-                        re.fullmatch(r'mob-[0-9a-f]{32}', row['station_id']) and
-                        re.fullmatch(r'0x[0-9a-fA-F]{40}', row['owner_address']), 'batch row invalid')
-                # Public forever once mined: a stranger's location never goes finer than 0.1 degree.
-                require(grid_coordinate(row['latitude'], 90) and grid_coordinate(row['longitude'], 180),
-                        'batch row is not on the 0.1 degree grid; nothing signed')
-            print(f'EXPORTED: {len(rows)} rows')
-            require(not args.require_count or len(rows) == args.limit,
-                    'requested batch count unavailable; nothing signed or submitted')
-            if args.dry_run:
-                for index in range(1, len(rows)+1):
-                    print(f'ROW {index}/{len(rows)}: eligible; ownership checked by exporter')
-                print(f'DRY RUN PASS: {len(rows)} eligible rows; no signature or submission')
-                return
-            receipt, receipt_path = receipt_writer(args, directory.name, stamp, fmt, rows)
-            receipt('built')
-            print(f'RECEIPT: {receipt_path}')
+        age(stamp)
+        full, rows = export_once(args, source, batch_id, stamp, seen_reporting)
+        export_identity(full, source)
+        require(isinstance(rows, list) and 1 <= len(rows) <= args.limit and
+                [x['station_id'] for x in full['stations']] == [x['station_id'] for x in rows],
+                'export row count or order invalid')
+        require(len({x['station_id'] for x in rows}) == len(rows), 'duplicate station rows')
+        require(all(x['station_id'] in preview for x in rows), 'export selection changed; nothing submitted')
+        if source['preview_from_export']:
+            # What is signed is exactly what was shown above the YES: no more, no fewer.
+            require(sorted(x['station_id'] for x in rows) == sorted(preview),
+                    'the stations to sign are not the ones shown; nothing signed; run again')
+            require(all(re.fullmatch(NEUTRAL_STATION_ID, x['station_id']) or x['station_id'] in allowed
+                        for x in rows),
+                    'a station id is not a neutral id and was not allowed by name; nothing signed')
+        for row in rows:
+            require(set(row) == ROW_KEYS and row['submitted_at'] == stamp and
+                    row['hardware_model'] == source['hardware_model'] and
+                    row['data_quality_tier'] == 'unverified' and row['provenance_class'] == 'real' and
+                    re.fullmatch(source['station_id'], row['station_id']) and
+                    re.fullmatch(r'0x[0-9a-fA-F]{40}', row['owner_address']), 'batch row invalid')
+            # Public forever once mined: a stranger's location never goes finer than 0.1 degree.
+            require(grid_coordinate(row['latitude'], 90) and grid_coordinate(row['longitude'], 180),
+                    'batch row is not on the 0.1 degree grid; nothing signed')
+        print(f'EXPORTED: {len(rows)} rows')
+        require(not args.require_count or len(rows) == args.limit,
+                'requested batch count unavailable; nothing signed or submitted')
+        if args.dry_run:
+            for index, row in enumerate(rows, 1):
+                print(f'ROW {index}/{len(rows)}: eligible; ownership checked by exporter'
+                      + (f'; station id {row["station_id"]}' + evidence_text(looked_at.get(row['station_id']))
+                         + ('' if re.fullmatch(NEUTRAL_STATION_ID, row['station_id']) else '; allowed by name')
+                         if source['show_ids'] else ''))
+            print(f'DRY RUN PASS: {len(rows)} eligible rows; no signature or submission')
+            return
+        receipt, receipt_path = receipt_writer(args, directory.name, stamp, fmt, rows)
+        receipt('built')
+        print(f'RECEIPT: {receipt_path}')
+        submit = build(args, directory, token, rows, stamp, fmt)
+        elapsed = age(stamp)
+        if elapsed > BUILD_AGE:
+            require(args.restamp_once, 'build budget exceeded; rerun before submitting')
+            stamp = now()
+            receipt('restamped', stamp=stamp)
             submit = build(args, directory, token, rows, stamp, fmt)
-            elapsed = age(stamp)
-            if elapsed > BUILD_AGE:
-                require(args.restamp_once, 'build budget exceeded; rerun before submitting')
-                stamp = now()
-                receipt('restamped', stamp=stamp)
-                submit = build(args, directory, token, rows, stamp, fmt)
-                print(f'RESTAMPED: {len(rows)} rows; one rebuild; no prior POST')
-            receipt('submit-attempted', stamp=stamp)  # before the POST: an ambiguous POST leaves a record
-            admitted = submit_batch(args, directory, token, submit, stamp, rows)
-            ids = admitted.get('transaction_ids')
-            receipt('submitted', stamp=stamp, transaction_ids=[
-                i for i in ids if isinstance(i, str) and re.fullmatch(r'[0-9a-fA-F]{1,128}', i)
-            ] if isinstance(ids, list) else [])
-            # Coordinate-bearing local files removed before potentially long inclusion/sync polls.
-            for path in ('cli.json', 'artifact.json', 'submit.json', 'http.json', 'http.headers'):
-                (directory / path).unlink(missing_ok=True)
-            poll(args, directory, token, rows, receipt)
-        finally:
-            if container_outputs_pending:
-                command(['docker', 'exec', args.backend_container, 'rm', '-f', exported, projected],
-                        'private container cleanup failed; owner must clean this batch', timeout=10)
+            print(f'RESTAMPED: {len(rows)} rows; one rebuild; no prior POST')
+        receipt('submit-attempted', stamp=stamp)  # before the POST: an ambiguous POST leaves a record
+        admitted = submit_batch(args, directory, token, submit, stamp, rows)
+        ids = admitted.get('transaction_ids')
+        receipt('submitted', stamp=stamp, transaction_ids=[
+            i for i in ids if isinstance(i, str) and re.fullmatch(r'[0-9a-fA-F]{1,128}', i)
+        ] if isinstance(ids, list) else [])
+        # Coordinate-bearing local files removed before potentially long inclusion/sync polls.
+        for path in ('cli.json', 'artifact.json', 'submit.json', 'http.json', 'http.headers'):
+            (directory / path).unlink(missing_ok=True)
+        poll(args, directory, token, rows, receipt)
 
 
 def stage(args):
@@ -737,6 +927,10 @@ def stage(args):
               '--governance-key', str(Path(args.governance_key).absolute()), '--governance-pubkey', args.governance_pubkey,
               '--node-url', args.node_url, '--backend-container', args.backend_container,
               '--node-container', args.node_container, '--postgres-container', args.postgres_container]
+    if args.source != 'phone':
+        common += ['--source', args.source]
+    for station in args.allow_station_id:
+        common += ['--allow-station-id', station]
     for producer in args.producer:
         common += ['--producer', producer]
     if args.restamp_once:
@@ -744,7 +938,7 @@ def stage(args):
     if args.registration_format != 'auto':
         common += ['--registration-format', args.registration_format]
     batches = (args.count + args.limit - 1) // args.limit
-    instructions = ['# Owner-staged phone activation', '',
+    instructions = [f'# Owner-staged {args.source} station activation', '',
                     'Run each line on the governance key host, in order. Inspect scripts first.',
                     'Dry-run checks the next pending batch; activation repeats preflight with a fresh stamp.',
                     'An activation attempt cannot be repeated from this directory, even after failure.',
@@ -778,6 +972,11 @@ def stage(args):
 def main():
     parser = PrivateParser(description=__doc__)
     parser.add_argument('--limit', type=int, default=SAFE_ROWS)
+    parser.add_argument('--source', choices=sorted(SOURCES), default='phone',
+                        help='which waiting stations to activate: phone (default) or website')
+    parser.add_argument('--allow-station-id', action='append', default=[], metavar='STATION_ID',
+                        help='website source only: also take this station although its id is not a '
+                             'neutral id (it may hold a name, and is public on chain for good)')
     parser.add_argument('--cli')
     parser.add_argument('--cli-sha', default=None)
     parser.add_argument('--registration-format', choices=('auto', 'v1', 'v2'), default='auto')
@@ -813,6 +1012,12 @@ def main():
             mark_reconciled(args)
             return 0
         require(args.cli, 'invalid arguments: --cli is required')
+        require(not args.allow_station_id or args.source == 'website',
+                'invalid arguments: --allow-station-id is for --source website')
+        require(len(set(args.allow_station_id)) == len(args.allow_station_id) and
+                all(re.fullmatch(SOURCES['website']['station_id'], station)
+                    for station in args.allow_station_id),
+                'invalid arguments: --allow-station-id is not a website station id')
         if args.stage_dir:
             stage(args)
         else:
