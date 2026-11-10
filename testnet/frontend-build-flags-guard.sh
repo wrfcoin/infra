@@ -73,7 +73,7 @@ set -u
 app_dir="${1:-.}"
 variant="${WRFCOIN_FRONTEND_BUILD_VARIANT-public}"
 
-# The three public switches (see above) are not internal surfaces.
+# The four public switches (see above) are not internal surfaces.
 all_flags=$(env | sed -n -E 's/^(VITE_ENABLE_[A-Za-z0-9_]*)=.*/\1/p' \
   | sed -E '/^VITE_ENABLE_(PASSKEY_WALLET|CHAIN_PROTECTIONS|PASSKEY_BOND_PAYOUT|MULTI_WALLET)$/d' | sort -u)
 set_flags=""
