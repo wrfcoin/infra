@@ -1618,6 +1618,34 @@ WEBSITE_FORECAST_CASES = (
     ("GET", f"{_WF}/x/../status", (), 400),
 )
 
+# Epic 8 station owner reads (backend station-owner-insights-routes.ts): the 30-day comparison and the
+# private "has this station moved?" hint. Wallet Bearer, alias only, exact path, GET only, no query.
+_SO = "/api/stations/st_0123456789ab"
+STATION_OWNER_INSIGHT_CASES = (
+    ("GET", f"{_SO}/compare/history", PARITY_BEARER, 502),
+    ("GET", f"{_SO}/site-check", PARITY_BEARER, 502),
+    ("GET", "/api/stations/st_ffffffffffff/compare/history", PARITY_BEARER, 502),
+    ("GET", "/api/stations/st_ffffffffffff/site-check", PARITY_BEARER, 502),
+    ("GET", f"{_SO}/compare/history", (), 404),  # a visitor's request stops at the edge
+    ("GET", f"{_SO}/site-check", (), 404),
+    ("GET", f"{_SO}/compare/history", ("Authorization: bearer lower",), 404),
+    ("GET", f"{_SO}/site-check", ("Authorization: Bearer",), 404),
+    ("GET", f"{_SO}/compare/history?days=90", PARITY_BEARER, 404),
+    ("GET", f"{_SO}/site-check?x=1", PARITY_BEARER, 404),
+    ("GET", "/api/stations/abc/compare/history", PARITY_BEARER, 404),  # raw station ids are never admitted
+    ("GET", "/api/stations/KMAWELLE-12_x/site-check", PARITY_BEARER, 404),
+    ("GET", "/api/stations/st_0123456789AB/compare/history", PARITY_BEARER, 404),
+    ("GET", "/api/stations/st_0123456789a/site-check", PARITY_BEARER, 404),
+    ("GET", f"{_SO}/compare/history/", PARITY_BEARER, 404),
+    ("GET", f"{_SO}/compare/history/x", PARITY_BEARER, 404),
+    ("GET", f"{_SO}/site-checks", PARITY_BEARER, 404),
+    ("GET", f"{_SO}/site-check/x", PARITY_BEARER, 404),
+    ("POST", f"{_SO}/compare/history", PARITY_BEARER, 404),
+    ("POST", f"{_SO}/site-check", PARITY_BEARER, 404),
+    ("PUT", f"{_SO}/site-check", PARITY_BEARER, 404),
+    ("DELETE", f"{_SO}/compare/history", PARITY_BEARER, 404),
+)
+
 # Epic 6 self-serve bonding (backend bond-admission-routes.ts): JSON packet POST with no bearer; the
 # recent list is a public read. Exact paths, no query.
 _BA = "/api/bond-admission"
@@ -1926,6 +1954,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-website-forecasts", text, port, "on", WEBSITE_FORECAST_CASES, 8)
         prove_parity_reads(f"{label}-bond-admission-gate", text, port, None, BOND_ADMISSION_CASES[:2], 12)
         prove_parity_reads(f"{label}-bond-admission", text, port, "on", BOND_ADMISSION_CASES, 6)
+        prove_parity_reads(f"{label}-station-owner-insights-gate", text, port, None, STATION_OWNER_INSIGHT_CASES[:4], 12)
+        prove_parity_reads(f"{label}-station-owner-insights", text, port, "on", STATION_OWNER_INSIGHT_CASES, 13)
 
     # S1 + S2 RED controls: each loosening MUST fail the parity proof; if it passes, the cases are vacuous.
     caddy_src = (EDGE / "public_onboarding.caddy").read_text(encoding="utf-8")
