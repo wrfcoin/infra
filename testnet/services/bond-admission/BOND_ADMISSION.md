@@ -69,9 +69,11 @@ Deposit:
   default the /64), so every address of one home connection is the same address here,
   however it is written. Tunnel ranges over one IPv4 address (6to4, Teredo) are refused
   like CGNAT.
-  An IPv4 address written as IPv6 (IPv4-mapped, in any spelling) and the rest of `::/80`
-  are refused as not public. A mark written before prefix counting (a hash of the address
-  text) still counts, and a renewal that matches it is rewritten to the prefix mark.
+  Only global unicast IPv6 (`2000::/3`) is accepted. An IPv4 address written as IPv6
+  (IPv4-mapped or IPv4-translated, in any spelling), NAT64 and local ranges are refused as
+  not public. A mark written before prefix counting (a hash of the address
+  text) still counts, and a renewal that matches it is rewritten to the prefix mark, unless
+  another node already holds that prefix mark.
 - At least **6 h** between admissions, across everyone.
 - At most **2 a day** (UTC).
 

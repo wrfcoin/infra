@@ -165,7 +165,7 @@ function ipv6Groups(address) {
 // One shape for every spelling. An IPv4-mapped IPv6 address (first five groups
 // zero, sixth ffff) IS its IPv4 address. Anything else with the first five
 // groups zero (IPv4-compatible, unspecified, loopback) is not an address a node
-// can be reached on: null.
+// can be reached on, and so is everything outside 2000::/3: null.
 function normalizeAddress(family, address) {
   if (family === 'ip4') return { family: 'ip4', address, mapped: false };
   const groups = ipv6Groups(address);
@@ -173,6 +173,9 @@ function normalizeAddress(family, address) {
     if (groups[5] !== 0xffff) return null;
     return { family: 'ip4', address: [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join('.'), mapped: true };
   }
+  // Only global unicast (2000::/3) is an address a node can be reached on from
+  // outside: no IPv4-translated, NAT64, local, link-local or multicast forms.
+  if (groups[0] < 0x2000 || groups[0] > 0x3fff) return null;
   return { family: 'ip6', groups, mapped: false };
 }
 

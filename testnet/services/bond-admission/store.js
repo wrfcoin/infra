@@ -10,7 +10,8 @@
 //   2. this public address hash holds an admission   -> ADDRESS_ALREADY_ADMITTED
 //      (an IPv6 mark written before addresses were counted by network prefix
 //      hashed the address text: that legacy mark still counts, and a renewal
-//      that matches it is rewritten to the prefix mark)
+//      that matches it is rewritten to the prefix mark, unless another node
+//      already holds the prefix mark: then it stays on its legacy mark)
 //   3. the global gap since the last admission       -> ADMISSION_SPACING
 //   4. today's (UTC) count is used up                -> ADMISSION_DAILY_LIMIT
 // then it marks the server key (no expiry), the address hash (expires after
@@ -30,8 +31,12 @@ if srv then
   local dep, ep = string.match(srv, '^(%x+):(%d+)$')
   if dep == ARGV[1] and tonumber(ARGV[2]) > tonumber(ep) and (ip == ARGV[1] or legacy == ARGV[1]) then
     redis.call('SET', KEYS[1], ARGV[1] .. ':' .. ARGV[2])
-    redis.call('SET', KEYS[2], ARGV[1], 'EX', tonumber(ARGV[3]))
-    if KEYS[5] ~= KEYS[2] and legacy == ARGV[1] then redis.call('DEL', KEYS[5]) end
+    if (not ip) or ip == ARGV[1] then
+      redis.call('SET', KEYS[2], ARGV[1], 'EX', tonumber(ARGV[3]))
+      if KEYS[5] ~= KEYS[2] and legacy == ARGV[1] then redis.call('DEL', KEYS[5]) end
+    else
+      redis.call('SET', KEYS[5], ARGV[1], 'EX', tonumber(ARGV[3]))
+    end
     return {2, 0}
   end
   return {-1, 0}
@@ -155,8 +160,12 @@ function createMemoryStore({ prefix, limits }) {
         const [dep, ep] = srv.split(':');
         if (dep === token && Number(epoch) > Number(ep) && (ip === token || legacy === token)) {
           set(srvKey, `${token}:${epoch}`);
-          set(ipKey, token, Number(ipTtl));
-          if (legacyKey !== ipKey && legacy === token) values.delete(legacyKey);
+          if (!ip || ip === token) {
+            set(ipKey, token, Number(ipTtl));
+            if (legacyKey !== ipKey && legacy === token) values.delete(legacyKey);
+          } else {
+            set(legacyKey, token, Number(ipTtl));
+          }
           return outcome([2, 0]);
         }
         return outcome([-1, 0]);

@@ -309,6 +309,20 @@ test('limits through the real Lua (needs BOND_ADMISSION_TEST_REDIS_URL)', { skip
     assert.equal(await client.get(`${prefix}server:${hex32(103)}`), `${hex32(53)}:41`);
     assert.equal((await store.reserveDeposit(legacy(3, 42), now)).kind, 'renewal');
     assert.equal((await store.reserveDeposit(r(4, 'new'), now)).code, 'ADDRESS_ALREADY_ADMITTED');
+
+    // A legacy renewal never takes over a prefix mark another node holds: node 6 has the prefix mark `hshared`,
+    // node 5 only a legacy mark `hold5` in the same prefix.
+    await client.set(`${prefix}server:${hex32(106)}`, `${hex32(56)}:40`);
+    await client.set(`${prefix}ip:hshared`, hex32(56), { EX: 86400 });
+    await client.set(`${prefix}server:${hex32(105)}`, `${hex32(55)}:40`);
+    await client.set(`${prefix}ip:hold5`, hex32(55), { EX: 86400 });
+    const five = (epoch) => ({ ...r(5, 'shared', epoch), legacyIpHash: 'hold5' });
+    assert.equal((await store.reserveDeposit(five(41), now)).kind, 'renewal');
+    assert.equal(await client.get(`${prefix}ip:hshared`), hex32(56));
+    assert.equal(await client.get(`${prefix}ip:hold5`), hex32(55));
+    assert.equal((await store.reserveDeposit(r(6, 'shared', 41), now)).kind, 'renewal');
+    assert.equal((await store.reserveDeposit(five(42), now)).kind, 'renewal');
+    assert.equal(await client.get(`${prefix}ip:hshared`), hex32(56));
   } finally {
     const keys = await client.keys(`${prefix}*`);
     if (keys.length) await client.del(keys);
@@ -359,6 +373,8 @@ test('an IPv6 address counts as its network prefix, however it is written', asyn
   assert.equal(addressGroup('ip6', '3fff:4f8:1c1c:9a2::1', 56), '3fff:4f8:1c1c:900::/56');
   assert.equal(addressGroup('ip6', '3fff:4f8:1c1c:9a2::1', 48), '3fff:4f8:1c1c:0::/48');
   assert.equal(addressGroup('ip6', '3fff::1'), '3fff:0:0:0::/64');
+  assert.equal(addressGroup('ip6', '2000::1'), '2000:0:0:0::/64');
+  assert.equal(addressGroup('ip6', '2a00:1450:4001:81b::200e'), '2a00:1450:4001:81b::/64');
   assert.equal(parseRequest(node(1, { ip6: '3FFF:4F8:1C1C:9A1::7' }).body).address, '3fff:4f8:1c1c:9a1::/64');
   assert.equal(loadConfig({}).limits.ipv6PrefixBits, 64);
   assert.equal(loadConfig({ BOND_ADMISSION_IPV6_PREFIX_BITS: '56' }).limits.ipv6PrefixBits, 56);
@@ -412,7 +428,12 @@ test('an IPv4 address written as IPv6 is never a separate address', async () => 
     assert.equal(addressGroup('ip6', text), '81.2.69.1', text);
   }
   // The rest of ::/80: IPv4-compatible, unspecified, loopback. Not an address at all.
-  const refused = ['::81.2.69.1', '::5102:4501', '0:0:0:0:0:0:81.2.69.1', '::', '::1', '0:0:0:0:0:1:5102:4501'];
+  const refused = [
+    '::81.2.69.1', '::5102:4501', '0:0:0:0:0:0:81.2.69.1', '::', '::1', '0:0:0:0:0:1:5102:4501',
+    // Outside global unicast 2000::/3: IPv4-translated, odd low ranges, NAT64 (well-known and local), ULA, link-local, multicast, and above 3fff.
+    '::ffff:0:81.2.69.1', '::ffff:0:5102:4501', '::1:0:0:1', '1::1', '64:ff9b::5102:4501', '64:ff9b:1::1', '64:ff9b:1:ffff::1',
+    'fc00::1', 'fd12:3456::1', 'fe80::1', 'ff02::1', '1fff:ffff::1', '4000::1', 'e000::1',
+  ];
   for (const text of refused) {
     assert.equal(normalizeAddress('ip6', text), null, text);
     assert.throws(() => addressGroup('ip6', text), (error) => error.code === 'ADDRESS_NOT_PUBLIC', text);
@@ -451,5 +472,32 @@ test('a renewal matches a mark written before prefix counting, and rewrites it',
   assert.ok(!store._keys().includes(legacyKey));
   // From now on the prefix mark holds the address: another node in the /64 is refused.
   assert.equal((await h.post(node(2, { ip6: '3fff:4f8:1c1c:9a1::2' }).body)).body.error.code, 'ADDRESS_ALREADY_ADMITTED');
+  await h.close();
+});
+
+test('a legacy renewal never takes over a prefix mark another node holds', async () => {
+  const cfg = config();
+  const store = createMemoryStore(cfg);
+  const h = await harness({ cfg, store });
+  h.state.peers = [1, 2, 3].map((n) => visible(peerIdOf(n)));
+  const textA = '3fff:4f8:1c1c:9a1::a';
+  const a = node(1, { ip6: textA, epoch: 41 });
+  const legacyKey = `${cfg.prefix}ip:${addressHash(cfg.ipSalt, textA)}`;
+  const prefixKey = `${cfg.prefix}ip:${addressHash(cfg.ipSalt, '3fff:4f8:1c1c:9a1::/64')}`;
+  // A was admitted before prefix counting (legacy mark); B, in the same /64, was admitted after and holds the prefix mark.
+  const b = node(2, { ip6: '3fff:4f8:1c1c:9a1::b' });
+  assert.equal((await h.post(b.body)).status, 200);
+  store._set(`${cfg.prefix}server:${a.summary.server_key}`, `${a.summary.deployment_id}:40`);
+  store._set(legacyKey, a.summary.deployment_id, 86400);
+  // A renews through its legacy mark: admitted, but B keeps the prefix mark and A stays on the legacy one.
+  assert.equal((await h.post(a.body)).status, 200);
+  assert.equal((await store.recent())[0].renewal, true);
+  assert.ok(store._keys().includes(legacyKey));
+  assert.ok(store._keys().includes(prefixKey));
+  // B can still renew, and so can A again.
+  assert.equal((await h.post(node(2, { ip6: '3fff:4f8:1c1c:9a1::b', epoch: 41 }).body)).status, 200);
+  assert.equal((await h.post(node(1, { ip6: textA, epoch: 42 }).body)).status, 200);
+  // A third node in that /64 is still refused.
+  assert.equal((await h.post(node(3, { ip6: '3fff:4f8:1c1c:9a1::c' }).body)).body.error.code, 'ADDRESS_ALREADY_ADMITTED');
   await h.close();
 });
