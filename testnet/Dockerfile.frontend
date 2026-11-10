@@ -111,6 +111,11 @@ ENV VITE_ENABLE_PASSKEY_STATION_OWNER=$VITE_ENABLE_PASSKEY_STATION_OWNER
 # the card says admission is not open). Public switch on the same rules as above.
 ARG VITE_ENABLE_BOND_GUIDE=
 ENV VITE_ENABLE_BOND_GUIDE=$VITE_ENABLE_BOND_GUIDE
+# "Your stations" on /wallet: the signed-in wallet's stations from any browser
+# (backend MY_STATIONS_ENABLED, GET /api/weather/stations/mine). Public switch on
+# the same rules as above.
+ARG VITE_ENABLE_MY_STATIONS=
+ENV VITE_ENABLE_MY_STATIONS=$VITE_ENABLE_MY_STATIONS
 COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
 RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
     sh /usr/local/bin/frontend-build-flags-guard /app
@@ -167,6 +172,8 @@ ARG VITE_ENABLE_PASSKEY_STATION_OWNER=
 LABEL org.wrfcoin.stage.passkey-station-owner="$VITE_ENABLE_PASSKEY_STATION_OWNER"
 ARG VITE_ENABLE_BOND_GUIDE=
 LABEL org.wrfcoin.stage.bond-guide="$VITE_ENABLE_BOND_GUIDE"
+ARG VITE_ENABLE_MY_STATIONS=
+LABEL org.wrfcoin.stage.my-stations="$VITE_ENABLE_MY_STATIONS"
 
 # Install curl for healthcheck
 RUN apk add --no-cache curl
