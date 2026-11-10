@@ -14,7 +14,7 @@
   {
     "file": "testnet/docker-compose.testnet.yml",
     "service": "weather-collector-multi",
-    "command": "while true; do node tests/security/fetch-ambient-weather-multi.cjs --credentials-file /secrets/ambient-roster.json || true; sleep 300; done",
+    "command": "while true; do node tests/security/fetch-ambient-weather-multi.cjs --credentials-file /secrets/ambient-roster.json ${MULTI_COLLECTOR_ROSTER_ARGS:-} || true; sleep 300; done",
     "reason": "runs tests/security/fetch-ambient-weather-multi.cjs, not a backend bundle; the retry loop (while/||/sleep) is reviewed by hand"
   },
   {

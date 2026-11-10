@@ -56,6 +56,10 @@ DENIED_PUBLIC_READS = (
     "/api/stations/abc/submissions",
     "/api/stations/abc/earnings",
     "/api/stations/st_0123456789ab/compare",
+    # Internal only: these return provider keys to the collector on the compose
+    # network. The public edge must never admit them, whatever the caller sends.
+    "/api/weather/stations/collector-roster",
+    "/api/weather/stations/credentials",
 )
 # infra#983 — Stage 1.5 station reads behind PUBLIC_READONLY_API. Admitted
 # (upstream 502) ONLY when the edge container's env is exactly `on`; 404 when
@@ -258,6 +262,9 @@ READONLY_SIBLINGS_DENIED = (
     "/api/stations/a.b/quality",
     "/api/weather/stations/abc",
     "/api/weather/stationsx",
+    # Still refused with the read-only gate ON: the collector's internal reads.
+    "/api/weather/stations/collector-roster",
+    "/api/weather/stations/credentials",
 )
 # infra#1051: Caddy matches a CLEANED path but reverse_proxy forwards the RAW
 # URI, and Express 4 resolves neither dot segments nor encoded separators. Each

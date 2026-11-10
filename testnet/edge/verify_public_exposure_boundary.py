@@ -602,6 +602,43 @@ def directives(source: str) -> list[str]:
     return [line.strip() for line in source.splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
+# Backend reads that return provider keys to the collector. They are reached
+# on the compose network only. No matcher in the public policy may admit them,
+# with any method: not by name, not by a wildcard, not by a regular expression.
+INTERNAL_ONLY_PATHS = (
+    "/api/weather/stations/collector-roster",
+    "/api/weather/stations/credentials",
+)
+
+
+def matchers_admitting(policy: str, path: str) -> list[str]:
+    """Every `path` / `path_regexp` matcher line in `policy` that matches `path`.
+
+    Only named matcher blocks (`@name { ... }`) are read: the terminal
+    `handle /api/*` is the 404 and is checked separately. A pattern this cannot
+    read counts as admitting, so an unreadable matcher fails the gate.
+    """
+    admitting = []
+    for name, body in re.findall(r"(?ms)^\t@([a-z_]+)\s*\{\n(.*?)^\t\}", policy):
+        for line in body.splitlines():
+            parts = line.strip().split()
+            if not parts or parts[0] not in ("path", "path_regexp"):
+                continue
+            if parts[0] == "path":
+                for pattern in parts[1:]:
+                    glob = "".join(".*" if ch == "*" else re.escape(ch) for ch in pattern)
+                    if re.fullmatch(glob, path, re.IGNORECASE):
+                        admitting.append(f"@{name}: {line.strip()}")
+            else:
+                try:
+                    hit = re.search(parts[-1], path) is not None
+                except re.error:
+                    hit = True
+                if hit:
+                    admitting.append(f"@{name}: {line.strip()}")
+    return admitting
+
+
 def verify(root: Path = ROOT) -> None:
     caddy = (root / "testnet" / "edge" / "Caddyfile").read_text(encoding="utf-8")
     funnel = (root / "testnet" / "edge" / "Caddyfile.funnel").read_text(encoding="utf-8")
@@ -653,6 +690,15 @@ def verify(root: Path = ROOT) -> None:
     for denied in ("handle /api/*", "handle /ws*"):
         if directives(block(policy, denied)) != ['respond "Not found" 404']:
             raise AssertionError(f"{denied} must terminate with 404")
+
+    for internal in INTERNAL_ONLY_PATHS:
+        admitting = matchers_admitting(policy, internal)
+        if admitting:
+            raise AssertionError(f"internal-only path {internal} is admitted at the public edge by {admitting[0]}")
+    for edge_file, text in (("public_onboarding.caddy", snippets), ("Caddyfile", caddy), ("Caddyfile.funnel", funnel)):
+        for word in ("collector-roster", "stations/credentials"):
+            if any(word in line for line in text.splitlines() if not line.lstrip().startswith("#")):
+                raise AssertionError(f"{edge_file} names the internal-only path {word}")
 
     for ledger_entry in (
         "transaction list/detail",
@@ -851,6 +897,31 @@ def verify(root: Path = ROOT) -> None:
 
 def self_test() -> None:
     """RED controls: verify() must reject each boundary-weakening mutation."""
+
+    # The internal-only check on its own, so it is not proven only by the other pins: each of these
+    # matchers would hand the collector's roster (provider keys) to the public, and each must be seen.
+    def policy_with(matcher: str) -> str:
+        return "(public_onboarding_api) {\n\t@evil {\n\t\tmethod GET\n\t\t" + matcher + "\n\t}\n}"
+
+    for matcher in (
+        "path /api/weather/stations/collector-roster",
+        "path /api/weather/stations/*",
+        "path /api/build /api/weather/*",
+        "path /API/Weather/Stations/Collector-Roster",
+        "path_regexp ^/api/weather/stations/[a-z-]+$",
+        "path_regexp roster ^/api/weather/stations/[A-Za-z0-9_-]{1,64}$",
+        "path_regexp ^/api/weather/stations/(?P<bad",
+    ):
+        if not matchers_admitting(policy_with(matcher), INTERNAL_ONLY_PATHS[0]):
+            raise AssertionError(f"internal-only check missed: {matcher}")
+    for matcher in (
+        "path /api/weather/stations",
+        "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/reward-progress$",
+        "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$",
+    ):
+        for internal in INTERNAL_ONLY_PATHS:
+            if matchers_admitting(policy_with(matcher), internal):
+                raise AssertionError(f"internal-only check wrongly flagged: {matcher}")
 
     def build_tree(mutate: str | None = None, apply=None) -> Path:
         tree = Path(tempfile.mkdtemp(prefix="boundary-selftest-"))

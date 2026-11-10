@@ -266,6 +266,10 @@
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
       {
+        "path": "scripts/tests/test-collector-backend-roster-wiring.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
         "path": "scripts/tests/test-cors-origin-fail-closed.sh",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
