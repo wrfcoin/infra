@@ -250,6 +250,25 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# "Your stations" (owner decision 2026-11-10): the signed-in wallet's OWN
+	# stations, whichever browser connected them. weather-routes.js
+	# GET /stations/mine reads only rows owned by the JWT address (never a
+	# parameter): 401 without a wallet session, 404 while the backend's
+	# MY_STATIONS_ENABLED is off. Rows carry the public alias, name, freshness and
+	# on-chain step; no coordinates or raw ids. Exact path, GET only, NO query
+	# string, proxied only with an `Authorization: Bearer` header. The backend
+	# also limits each wallet to 60 reads an hour; the `onboarding` rate zone
+	# below counts it (/api/weather/stations*).
+	@station_mine {
+		method GET
+		path /api/weather/stations/mine
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_mine {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Phone data-submission routes (owner ruling 2026-10-24: the phone routes are
 	# allowlisted). The mobile app registers its
 	# phone station and submits readings through exactly these four POSTs

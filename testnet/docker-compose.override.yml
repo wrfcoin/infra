@@ -216,6 +216,8 @@ services:
         VITE_ENABLE_PASSKEY_STATION_OWNER: ${VITE_ENABLE_PASSKEY_STATION_OWNER:-}
         # "Bond your node" card on /nodes. Public switch: empty = off, or exactly `true`.
         VITE_ENABLE_BOND_GUIDE: ${VITE_ENABLE_BOND_GUIDE:-}
+        # "Your stations" on /wallet (backend MY_STATIONS_ENABLED). Public switch: empty = off, or exactly `true`.
+        VITE_ENABLE_MY_STATIONS: ${VITE_ENABLE_MY_STATIONS:-}
 
   # ---------------------------------------------------------------------------
   # DB Migrate — override base image with local build (#238)
