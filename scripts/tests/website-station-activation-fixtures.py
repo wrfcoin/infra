@@ -30,8 +30,14 @@ def row(i):
  return r
 def artifact(rows):
  version='mobile_station_registration_export_v1' if scenario=='phone-version' else 'website_station_registration_export_v1'
- stations=[dict(x,evidence=dict(observations_24h=3+i,last_observation_age_minutes=12+i)) for i,x in enumerate(rows)]
- skipped=[dict(stationId='pws-00000000000000c3',reason='no reading in the last 24 hours'),dict(stationId=NAMED,reason='station id is not a neutral id (it may hold a name); pass --allow-id to include it')]
+ # Station 1 has readings in the backend database; station 2 only on chain (`chain-evidence`), or
+ # in the database too. The stamped export is told which ids were confirmed and never asks the node.
+ def ev(i,x):
+  if s['last']=='stamped' and x['station_id'] in s['confirmed']:return dict(source='confirmed',observations_24h=0,last_observation_age_minutes=None)
+  if scenario=='no-source' and i==0:return dict(observations_24h=3,last_observation_age_minutes=12)
+  return dict(source='chain' if scenario=='chain-evidence' and i==1 else 'db',observations_24h=3+i,last_observation_age_minutes=12+i)
+ stations=[dict(x,evidence=ev(i,x)) for i,x in enumerate(rows)]
+ skipped=[dict(stationId='pws-00000000000000c3',reason='no reading in the last 24 hours in the database or the chain tail (source none)'),dict(stationId='pws-00000000000000e5',reason='could not check the chain for readings (node read failed); not exported this run'),dict(stationId=NAMED,reason='station id is not a neutral id (it may hold a name); pass --allow-id to include it')]
  if scenario=='named-id':skipped=skipped[:1]
  if scenario=='bad-reason':skipped=[dict(stationId='pws-00000000000000c3',reason='at 12.3456 -45.6789 owner 0x'+'ab'*20)]
  return dict(version=version,chainId='999' if scenario=='other-chain' else CHAIN,networkId='testnet',stations=stations,not_exported=skipped)
@@ -46,6 +52,8 @@ elif name=='docker':
  elif 'scripts/export-website-station-registrations.ts' in a:
   assert '--mark-submitted' not in a
   s['allow']=[a[i+1] for i,x in enumerate(a) if x=='--allow-id']
+  s['confirmed']=[a[i+1] for i,x in enumerate(a) if x=='--confirmed-reporting']
+  s['confirmed_by_call'].append(s['confirmed'])
   if '--submitted-at' in a:
    # The stamped export for signing. `changed` models a station joining between the look and the signing.
    s['stamp']=int(a[a.index('--submitted-at')+1]);s['rows']=[row(i) for i in range(2)]
@@ -126,7 +134,8 @@ class WebsiteOwnerFlow(unittest.TestCase):
             key.chmod(0o600)
             state = root / 'state.json'
             state.write_text(json.dumps(dict(scenario=scenario, elapsed=0, events=[], posts=0, builds=0,
-                                             built=[], cleanups=0, looks=0, exports=0, allow=[], last='')))
+                                             built=[], cleanups=0, looks=0, exports=0, allow=[], last='', confirmed=[],
+                                             confirmed_by_call=[])))
             env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], FAKE_STATE=str(state),
                        TMPDIR=str(root), WRFCOIN_CHAIN_ID='888')
             argv = ['bash', str(REPO / 'testnet/scripts/activate-mobile-stations.sh'), '--cli', str(tools / 'wrfcoin'),
@@ -166,15 +175,37 @@ class WebsiteOwnerFlow(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('EXPORTED: 2 rows', result.stdout)
         self.assertIn(f'ROW 1/2: eligible; ownership checked by exporter; station id {IDS[0]}; '
-                      '3 reading(s) in 24 h, last 12 min ago', result.stdout)
+                      'source db; 3 reading(s) in 24 h, last 12 min ago', result.stdout)
         self.assertIn(f'ROW 2/2: eligible; ownership checked by exporter; station id {IDS[1]}; '
-                      '4 reading(s) in 24 h, last 13 min ago', result.stdout)
-        self.assertIn('NOT IN THIS BATCH: pws-00000000000000c3: no reading in the last 24 hours', result.stdout)
+                      'source db; 4 reading(s) in 24 h, last 13 min ago', result.stdout)
+        self.assertIn('NOT IN THIS BATCH: pws-00000000000000c3: no reading in the last 24 hours in the database '
+                      'or the chain tail (source none)', result.stdout)
+        self.assertIn('NOT IN THIS BATCH: pws-00000000000000e5: could not check the chain for readings '
+                      '(node read failed); not exported this run', result.stdout)
+        # Both were seen in the database, so the stamped export is told of no chain-only station.
+        self.assertEqual(state['confirmed_by_call'], [[], []])
         self.assertIn(f'NOT IN THIS BATCH: {NAMED}: station id is not a neutral id (it may hold a name); '
                       'pass --allow-id to include it', result.stdout)
         self.assertIn('DRY RUN PASS: 2 eligible rows; no signature or submission', result.stdout)
         self.assertEqual((state['builds'], state['posts']), (0, 0))
         self.assertFalse(any(name == 'wrfcoin' for name, _ in state['events']))
+
+    def test_a_station_seen_only_on_chain_says_so_and_the_stamped_export_does_not_ask_the_node_again(self):
+        result, state = self.run_flow(scenario='chain-evidence', extra=['--dry-run'], answer=None)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f'station id {IDS[0]}; source db; 3 reading(s) in 24 h, last 12 min ago', result.stdout)
+        self.assertIn(f'station id {IDS[1]}; source chain; 4 reading(s) in the chain tail, last 13 min ago', result.stdout)
+        # The look found station 2 on chain; only that id is passed on as confirmed, and only to the stamped export.
+        self.assertEqual(state['confirmed_by_call'], [[], [IDS[1]]])
+        result, state = self.run_flow(scenario='chain-evidence')
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertEqual((state['looks'], state['exports'], state['posts']), (1, 1, 1))
+        self.assertEqual(state['confirmed_by_call'], [[], [IDS[1]]])
+
+    def test_a_look_that_does_not_say_where_a_station_was_seen_reporting_signs_nothing(self):
+        result, state = self.run_flow(scenario='no-source')
+        self.assert_nothing_signed(result, state, 'the export did not say where each station was seen reporting')
+        self.assertEqual(state['exports'], 0)
 
     def test_real_run_shows_exactly_the_ids_it_signs_asks_for_yes_and_posts_once(self):
         result, state = self.run_flow(scenario='ok-reconcile')
@@ -210,7 +241,7 @@ class WebsiteOwnerFlow(unittest.TestCase):
         result, state = self.run_flow(scenario='named-id', extra=['--allow-station-id', NAMED, '--dry-run'], answer=None)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(state['allow'], [NAMED])
-        self.assertIn(f'station id {NAMED}; 3 reading(s) in 24 h, last 12 min ago; allowed by name', result.stdout)
+        self.assertIn(f'station id {NAMED}; source db; 3 reading(s) in 24 h, last 12 min ago; allowed by name', result.stdout)
 
     def test_allow_station_id_is_for_the_website_source_and_must_be_a_plain_id(self):
         for extra, source in ((['--allow-station-id', NAMED], ()), (['--allow-station-id', 'bad id'], ('--source', 'website')),

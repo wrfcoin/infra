@@ -84,7 +84,9 @@ KNOWN_REASONS = frozenset((
     'the station now belongs to a different owner',
     'station has no usable position',
     'provider credentials are not verified or ingestion is not active',
-    'no reading in the last 24 hours',
+    'no reading in the last 24 hours in the database or the chain tail (source none)',
+    'could not check the chain for readings (node read failed); not exported this run',
+    'not checked: the node asked to slow down (429); run again later',
     'station id is not a neutral id (it may hold a name); pass --allow-id to include it',
     'ownership signature does not verify',
     'owner is not derived from the owner pubkey',
@@ -539,9 +541,17 @@ def producer_fence(producers, readings=None):
     print(f'FENCE: {len(revisions)}/{PRODUCER_COUNT} producers on {next(iter(revisions.values()))[:9]}')
 
 
-def export_once(args, source, batch_id, stamp):
+# The read-only look may ask the node, slowly (about 20 reads a minute), whether stations with
+# nothing in the backend's database are reporting on chain. It runs before the YES and before
+# the signing window, so it may take minutes. The stamped export never asks the node.
+LOOK_TIMEOUT = 900
+
+
+def export_once(args, source, batch_id, stamp, confirmed=()):
     """Run the backend export once: (artifact, CLI rows or None). With no stamp it is a
-    read-only look at what would be exported. The container's files are always removed."""
+    read-only look at what would be exported. `confirmed` are station ids the look just saw
+    reporting on chain, so the stamped export does not ask the node again. The container's
+    files are always removed."""
     exported = '/tmp/' + batch_id + '.json'
     projected = '/tmp/' + batch_id + '-cli.json'
     argv = ['docker', 'exec', '-w', '/app/backend', args.backend_container,
@@ -549,11 +559,14 @@ def export_once(args, source, batch_id, stamp):
             '--out', exported, '--batch-id', batch_id, '--limit', str(args.limit)]
     for station in getattr(args, 'allow_station_id', None) or []:
         argv += ['--allow-id', station]
+    for station in confirmed:
+        argv += ['--confirmed-reporting', station]
     if stamp is not None:
         argv += ['--cli-batch-out', projected, '--submitted-at', str(stamp)]
     pending = True
     try:
-        command(argv, 'export failed or no exportable rows; nothing submitted', timeout=45)
+        command(argv, 'export failed or no exportable rows; nothing submitted',
+                timeout=45 if stamp is not None or not source['preview_from_export'] else LOOK_TIMEOUT)
         if stamp is not None:
             age(stamp)
         full = json.loads(command(['docker', 'exec', args.backend_container, 'cat', exported],
@@ -593,15 +606,26 @@ def print_not_exported(full):
             print('NOT IN THIS BATCH: one station (details withheld)')
 
 
-def evidence_text(station):
-    """'; N reading(s) in 24 h, last M min ago' for a dry-run row, or '' if not reported."""
+def evidence_source(station):
+    """'db', 'chain' or None: where the look saw this station reporting."""
     evidence = station.get('evidence') if isinstance(station, dict) else None
-    if not isinstance(evidence, dict):
+    value = evidence.get('source') if isinstance(evidence, dict) else None
+    return value if value in ('db', 'chain') else None
+
+
+def evidence_text(station):
+    """'; source db; N reading(s) in 24 h, last M min ago' for a dry-run row, or '' if not reported.
+    `chain` means the backend's database had nothing and the node's chain tail did."""
+    evidence = station.get('evidence') if isinstance(station, dict) else None
+    source = evidence_source(station)
+    if source is None:
         return ''
     count, minutes = evidence.get('observations_24h'), evidence.get('last_observation_age_minutes')
     if type(count) is not int or count < 0 or (minutes is not None and (type(minutes) is not int or minutes < 0)):
         return ''
-    return f'; {count} reading(s) in 24 h, last ' + ('unknown' if minutes is None else f'{minutes} min ago')
+    where = 'in 24 h' if source == 'db' else 'in the chain tail'
+    return (f'; source {source}; {count} reading(s) {where}, last '
+            + ('unknown' if minutes is None else f'{minutes} min ago'))
 
 
 def confirm_yes(count, station_ids=()):
@@ -757,6 +781,7 @@ def activate(args):
         print(f'FORMAT: {fmt} registrations')
         batch_id = directory.name
         allowed = list(getattr(args, 'allow_station_id', None) or [])
+        looked_at, on_chain_only = {}, []
         if source['preview_from_export']:
             # A read-only look at exactly what the export would hand over: the list the
             # owner is shown, and later signs, comes from here.
@@ -767,6 +792,11 @@ def activate(args):
                     all(isinstance(x, dict) and isinstance(x.get('station_id'), str) for x in stations),
                     'no pending stations or pending station IDs invalid')
             preview = [x['station_id'] for x in stations]
+            # Every station in the look was seen reporting, in the database or on chain.
+            require(all(evidence_source(x) for x in stations),
+                    'the export did not say where each station was seen reporting; nothing signed')
+            looked_at = {x['station_id']: x for x in stations}
+            on_chain_only = [x['station_id'] for x in stations if evidence_source(x) == 'chain']
             print_not_exported(looked)
         else:
             # v2 preflight: already-registered db_only rows need sync/readback, not another POST.
@@ -794,7 +824,7 @@ def activate(args):
             confirm_yes(len(preview), preview if source['show_ids'] else ())
         stamp = args.submitted_at if args.submitted_at is not None else now()
         age(stamp)
-        full, rows = export_once(args, source, batch_id, stamp)
+        full, rows = export_once(args, source, batch_id, stamp, on_chain_only)
         export_identity(full, source)
         require(isinstance(rows, list) and 1 <= len(rows) <= args.limit and
                 [x['station_id'] for x in full['stations']] == [x['station_id'] for x in rows],
@@ -823,7 +853,7 @@ def activate(args):
         if args.dry_run:
             for index, row in enumerate(rows, 1):
                 print(f'ROW {index}/{len(rows)}: eligible; ownership checked by exporter'
-                      + (f'; station id {row["station_id"]}' + evidence_text(full['stations'][index - 1])
+                      + (f'; station id {row["station_id"]}' + evidence_text(looked_at.get(row['station_id']))
                          + ('' if re.fullmatch(NEUTRAL_STATION_ID, row['station_id']) else '; allowed by name')
                          if source['show_ids'] else ''))
             print(f'DRY RUN PASS: {len(rows)} eligible rows; no signature or submission')
