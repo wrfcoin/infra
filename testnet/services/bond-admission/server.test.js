@@ -294,6 +294,21 @@ test('limits through the real Lua (needs BOND_ADMISSION_TEST_REDIS_URL)', { skip
     assert.equal((await store.reserveDeposit(r(2, 2), now)).code, 'ADMISSION_SPACING');
     await store.releaseDeposit(r(1, 1, 41), now);
     assert.equal((await store.reserveDeposit(r(2, 2), now)).kind, 'new');
+
+    // A mark written before prefix counting: the server key plus a hash of the address text (here `hold`).
+    const legacy = (n, epoch) => ({ ...r(n, 'new', epoch), legacyIpHash: 'hold' });
+    await client.set(`${prefix}server:${hex32(103)}`, `${hex32(53)}:40`);
+    await client.set(`${prefix}ip:hold`, hex32(53), { EX: 86400 });
+    // It still holds the address against another node, and a renewal that matches it moves it to the prefix mark.
+    assert.equal((await store.reserveDeposit(legacy(4, 40), now)).code, 'ADDRESS_ALREADY_ADMITTED');
+    assert.equal((await store.reserveDeposit(legacy(3, 40), now)).code, 'SERVER_KEY_ALREADY_ADMITTED');
+    assert.equal((await store.reserveDeposit(legacy(3, 41), now)).kind, 'renewal');
+    assert.equal(await client.get(`${prefix}ip:hold`), null);
+    assert.equal(await client.get(`${prefix}ip:hnew`), hex32(53));
+    assert.ok((await client.ttl(`${prefix}ip:hnew`)) > 0);
+    assert.equal(await client.get(`${prefix}server:${hex32(103)}`), `${hex32(53)}:41`);
+    assert.equal((await store.reserveDeposit(legacy(3, 42), now)).kind, 'renewal');
+    assert.equal((await store.reserveDeposit(r(4, 'new'), now)).code, 'ADDRESS_ALREADY_ADMITTED');
   } finally {
     const keys = await client.keys(`${prefix}*`);
     if (keys.length) await client.del(keys);
