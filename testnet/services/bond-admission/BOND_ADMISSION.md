@@ -65,6 +65,10 @@ Deposit:
   missed the epoch. A renewal is not counted against the limits.
 - One admission per **public address** for 30 days. Only an HMAC of the address (with
   `BOND_ADMISSION_IP_SALT`) is stored, and it expires.
+  For IPv6 the address counted is the network prefix (`BOND_ADMISSION_IPV6_PREFIX_BITS`,
+  default the /64), so every address of one home connection is the same address here,
+  however it is written. Tunnel ranges over one IPv4 address (6to4, Teredo) are refused
+  like CGNAT.
 - At least **6 h** between admissions, across everyone.
 - At most **2 a day** (UTC).
 
@@ -85,6 +89,11 @@ effective epoch, time). No addresses. Everything in it is public on chain anyway
   costs 250 WRF and a slot. It cannot schedule features, sign upgrade notices or touch
   Exit/Withdraw. The binary pins a cold spare, so a lost key needs no new feature.
 
+## Log
+
+One line per request: `decision=ADMITTED action=… deployment=<first 8 hex> epoch=…`, or
+`decision=<refusal code>`. No address, peer id or key is ever logged.
+
 ## Configuration
 
 | Variable | Default |
@@ -101,6 +110,7 @@ effective epoch, time). No addresses. Everything in it is public on chain anyway
 | `BOND_ADMISSION_DAILY_CAP` | `2` (1–100) |
 | `BOND_ADMISSION_MIN_INTERVAL_SECONDS` | `21600` |
 | `BOND_ADMISSION_IP_TTL_SECONDS` | `2592000` (30 days) |
+| `BOND_ADMISSION_IPV6_PREFIX_BITS` | `64` (`48`, `56` or `64`; anything else is `64`) |
 | `BOND_ADMISSION_MIN_PEER_AGE_SECONDS` | `86400` |
 | `BOND_ADMISSION_MAX_LAG_BLOCKS` | `20` |
 | `BOND_ADMISSION_MAX_ADVERT_AGE_SECONDS` | `300` |
