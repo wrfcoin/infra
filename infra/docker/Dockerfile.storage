@@ -13,7 +13,7 @@
 # (the compose `ipfs` service, see config/testnet.toml). Filecoin and Arweave
 # report `not_in_testnet` and requests for them answer 501. No paid pinning.
 # rust:1.88-bookworm (multi-arch index digest, resolved 2026-10-01)
-FROM rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS builder
+FROM rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 WORKDIR /src
 COPY storage-providers/Cargo.toml storage-providers/Cargo.lock ./
 COPY storage-providers/crates ./crates
