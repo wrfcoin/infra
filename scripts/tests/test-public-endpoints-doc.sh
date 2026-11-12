@@ -40,8 +40,9 @@ gated_rows=$(grep -cF 'OFF unless the edge env has `PUBLIC_READONLY_API=on`' "${
 # The public block page adds the block-by-height read (backend#65 projection).
 # Advisory governance (core4#143, backend#70) adds two reads (list + one proposal).
 # The advisory relay (owner decision 2026-11-09) adds three: the action POST, nonce and eligibility.
-if [[ "$gated_rows" != 64 ]]; then
-  echo "FAIL: expected 64 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
+# Epic 8 adds two station owner reads (30-day comparison, site check).
+if [[ "$gated_rows" != 66 ]]; then
+  echo "FAIL: expected 66 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
   exit 1
 fi
 sed '/vars {env.PUBLIC_READONLY_API} on/d' "${ROOT}/testnet/edge/public_onboarding.caddy" >"$tmp/ungated.caddy"

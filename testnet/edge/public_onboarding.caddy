@@ -211,6 +211,29 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# The owner's wallet hands in its ownership proof for one of its website
+	# stations: a public key and a signature over the chain's station ownership
+	# message, kept for the next on-chain registration batch (backend
+	# weather-routes.js POST /stations/:id/ownership-proof). The backend needs
+	# the wallet session, checks the station belongs to that wallet, and answers
+	# 404 while WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED is off. It never
+	# registers anything on chain. POST only, exact path shape, NO query string,
+	# proxied only with an `Authorization: Bearer` header (as the phone POSTs
+	# are), body at most 8 KiB (the real body is about 250 bytes). Counted by
+	# the `onboarding` rate zone below (/api/weather/stations*).
+	@station_ownership_proof {
+		method POST
+		path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_ownership_proof {
+		request_body {
+			max_size 8KiB
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# The signed-in wallet's OWN phone-station status (owner ruling 2026-10-02,
 	# frontend#463, W28). weather-routes.js GET /stations/mobile calls
 	# getMobileStationStatus(req.user.address): 401 without a wallet session,
@@ -224,6 +247,25 @@
 		expression `{query} == ""`
 	}
 	handle @station_mobile_status {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# "Your stations" (owner decision 2026-11-10): the signed-in wallet's OWN
+	# stations, whichever browser connected them. weather-routes.js
+	# GET /stations/mine reads only rows owned by the JWT address (never a
+	# parameter): 401 without a wallet session, 404 while the backend's
+	# MY_STATIONS_ENABLED is off. Rows carry the public alias, name, freshness and
+	# on-chain step; no coordinates or raw ids. Exact path, GET only, NO query
+	# string, proxied only with an `Authorization: Bearer` header. The backend
+	# also limits each wallet to 60 reads an hour; the `onboarding` rate zone
+	# below counts it (/api/weather/stations*).
+	@station_mine {
+		method GET
+		path /api/weather/stations/mine
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_mine {
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
@@ -460,6 +502,38 @@
 		expression `{query} == ""`
 	}
 	handle @public_readonly_station_compare {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	# Epic 8, for a station's OWNER only (backend station-owner-insights-routes.ts):
+	#   GET /api/stations/<alias>/compare/history  30-day comparison with the nearest NWS station
+	#   GET /api/stations/<alias>/site-check       private "has this station moved?" hint
+	# The backend answers only the wallet that owns the station (401 without a wallet
+	# session, 403 for another wallet, 404 while its feature flag is off), so the edge
+	# proxies these only when the request carries a Bearer credential; a visitor's request
+	# stops here. ALIAS ONLY (st_ + 12 hex), exact path, GET only, NO query string. Same
+	# gate as their siblings (OFF unless the edge env has PUBLIC_READONLY_API=on exactly),
+	# counted in public_read (/api/stations/*: 30 a minute per client, the same shape as
+	# the onboarding zone that counts reward-progress).
+	@station_owner_compare_history {
+		method GET
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_owner_compare_history {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
+	@station_owner_site_check {
+		method GET
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Authorization "Bearer *"
+	}
+	handle @station_owner_site_check {
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 

@@ -54,12 +54,26 @@ EXPECTED = {
         "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/reward-progress$",
         BACKEND,
     ),
+    # A website station owner's ownership proof for the on-chain registration batch (backend
+    # weather-routes.js POST /stations/:id/ownership-proof): wallet session required, own station only,
+    # 404 while the backend switch is off. POST only, no query (QUERY_LOCK), proxied only with an
+    # `Authorization: Bearer` header (BEARER_LOCK), body capped at 8 KiB, `onboarding` rate zone.
+    "station_ownership_proof": (
+        "POST",
+        "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$",
+        BACKEND_CAPPED_8KIB,
+    ),
     # Owner ruling 2026-10-02 (frontend#463, W28): the signed-in wallet's OWN phone-station status.
     # weather-routes.js GET /stations/mobile -> getMobileStationStatus(req.user.address): 401 without a
     # wallet session, 404 NOT_REGISTERED, else only the caller's row (station id, status, 0.1-degree cell,
     # timestamps). Exact path, GET only, no query (QUERY_LOCK). Phone registration (POST /stations/mobile)
     # and its challenge are their own Bearer-locked POST matchers below. Counted by the `onboarding` rate zone.
     "station_mobile_status": ("GET", "path /api/weather/stations/mobile", BACKEND),
+    # Owner decision 2026-11-10 ("Your stations"): the signed-in wallet's OWN stations from any browser.
+    # weather-routes.js GET /stations/mine reads only rows owned by the JWT address; 404 while the backend's
+    # MY_STATIONS_ENABLED is off; per-wallet limit at the backend. Exact path, GET only, no query
+    # (QUERY_LOCK), Bearer header only (BEARER_LOCK). Counted by the `onboarding` rate zone.
+    "station_mine": ("GET", "path /api/weather/stations/mine", BACKEND),
     # Owner ruling 2026-10-24: the phone app's four POSTs (mobile api_constants.dart mobileStationChallenge,
     # mobileStationRegister, oracleSubmitDataPrepare, oracleSubmitData). Each is POST only, EXACT path, no
     # query (QUERY_LOCK), and proxied only with an `Authorization: Bearer` header (BEARER_LOCK); the backend
@@ -177,6 +191,17 @@ EXPECTED = {
     "public_readonly_station_compare": (
         "GET",
         "path_regexp ^/api/stations/st_[0-9a-f]{12}/compare$",
+        BACKEND,
+    ),
+    # Epic 8, station owner only: wallet Bearer, alias only, exact path, no query.
+    "station_owner_compare_history": (
+        "GET",
+        "path_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$",
+        BACKEND,
+    ),
+    "station_owner_site_check": (
+        "GET",
+        "path_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$",
         BACKEND,
     ),
     # Owner ruling 2026-10-06 (backend#1456, frontend#535): the weather leaderboard is
@@ -336,6 +361,8 @@ GATED = frozenset({
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
     "public_readonly_station_compare",
+    "station_owner_compare_history",
+    "station_owner_site_check",
     "public_readonly_block_detail",
     "public_readonly_weather_leaderboard",
     "public_readonly_earnings_leaderboard",
@@ -390,6 +417,8 @@ GATED = frozenset({
 # The own-wallet reads are only proxied when the request carries a Bearer credential
 # (authMiddleware.js:40 accepts only the `Bearer ` prefix). Directive is last in the matcher.
 BEARER_LOCK = {
+    "station_ownership_proof": 'header Authorization "Bearer *"',
+    "station_mine": 'header Authorization "Bearer *"',
     "public_wallet_send": 'header Authorization "Bearer *"',
     "public_wallet_send_nonce": 'header Authorization "Bearer *"',
     "public_wallet_security_key": 'header Authorization "Bearer *"',
@@ -413,6 +442,9 @@ BEARER_LOCK = {
     "oracle_submit_data_multipart": 'header Authorization "Bearer *"',
     "oracle_submit_data": 'header Authorization "Bearer *"',
     "public_forecasts_mine": 'header Authorization "Bearer *"',
+    # Epic 8: the backend answers these only to the station's owner wallet.
+    "station_owner_compare_history": 'header Authorization "Bearer *"',
+    "station_owner_site_check": 'header Authorization "Bearer *"',
     "public_forecasts_draft": 'header Authorization "Bearer *"',
     "public_forecasts_submit": 'header Authorization "Bearer *"',
 }
@@ -458,6 +490,9 @@ READONLY_QUERY_LOCK = {
     "public_readonly_station_earnings": 'expression `{query} == ""`',
     # compare takes NO query (the frontend sends none; it fans out to core4 + NWS).
     "public_readonly_station_compare": 'expression `{query} == ""`',
+    # the owner reads take NO query (the frontend sends none).
+    "station_owner_compare_history": 'expression `{query} == ""`',
+    "station_owner_site_check": 'expression `{query} == ""`',
     "public_readonly_block_detail": 'expression `{query} == ""`',
     "public_readonly_weather_leaderboard": LEADERBOARD_QUERY_LOCK,
     "public_readonly_earnings_leaderboard": EARNINGS_QUERY_LOCK,
@@ -524,6 +559,8 @@ READONLY_QUERY_LOCK = {
 # Ungated routes that are approved with no query string at all (owner ruling 2026-10-02, frontend#463).
 QUERY_LOCK = {
     "station_mobile_status": 'expression `{query} == ""`',
+    "station_mine": 'expression `{query} == ""`',
+    "station_ownership_proof": 'expression `{query} == ""`',
     "station_owner_actions": 'expression `{query} == ""`',
     "station_mobile_challenge": 'expression `{query} == ""`',
     "station_mobile_register": 'expression `{query} == ""`',
@@ -602,6 +639,43 @@ def directives(source: str) -> list[str]:
     return [line.strip() for line in source.splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
+# Backend reads that return provider keys to the collector. They are reached
+# on the compose network only. No matcher in the public policy may admit them,
+# with any method: not by name, not by a wildcard, not by a regular expression.
+INTERNAL_ONLY_PATHS = (
+    "/api/weather/stations/collector-roster",
+    "/api/weather/stations/credentials",
+)
+
+
+def matchers_admitting(policy: str, path: str) -> list[str]:
+    """Every `path` / `path_regexp` matcher line in `policy` that matches `path`.
+
+    Only named matcher blocks (`@name { ... }`) are read: the terminal
+    `handle /api/*` is the 404 and is checked separately. A pattern this cannot
+    read counts as admitting, so an unreadable matcher fails the gate.
+    """
+    admitting = []
+    for name, body in re.findall(r"(?ms)^\t@([a-z_]+)\s*\{\n(.*?)^\t\}", policy):
+        for line in body.splitlines():
+            parts = line.strip().split()
+            if not parts or parts[0] not in ("path", "path_regexp"):
+                continue
+            if parts[0] == "path":
+                for pattern in parts[1:]:
+                    glob = "".join(".*" if ch == "*" else re.escape(ch) for ch in pattern)
+                    if re.fullmatch(glob, path, re.IGNORECASE):
+                        admitting.append(f"@{name}: {line.strip()}")
+            else:
+                try:
+                    hit = re.search(parts[-1], path) is not None
+                except re.error:
+                    hit = True
+                if hit:
+                    admitting.append(f"@{name}: {line.strip()}")
+    return admitting
+
+
 def verify(root: Path = ROOT) -> None:
     caddy = (root / "testnet" / "edge" / "Caddyfile").read_text(encoding="utf-8")
     funnel = (root / "testnet" / "edge" / "Caddyfile.funnel").read_text(encoding="utf-8")
@@ -653,6 +727,15 @@ def verify(root: Path = ROOT) -> None:
     for denied in ("handle /api/*", "handle /ws*"):
         if directives(block(policy, denied)) != ['respond "Not found" 404']:
             raise AssertionError(f"{denied} must terminate with 404")
+
+    for internal in INTERNAL_ONLY_PATHS:
+        admitting = matchers_admitting(policy, internal)
+        if admitting:
+            raise AssertionError(f"internal-only path {internal} is admitted at the public edge by {admitting[0]}")
+    for edge_file, text in (("public_onboarding.caddy", snippets), ("Caddyfile", caddy), ("Caddyfile.funnel", funnel)):
+        for word in ("collector-roster", "stations/credentials"):
+            if any(word in line for line in text.splitlines() if not line.lstrip().startswith("#")):
+                raise AssertionError(f"{edge_file} names the internal-only path {word}")
 
     for ledger_entry in (
         "transaction list/detail",
@@ -851,6 +934,31 @@ def verify(root: Path = ROOT) -> None:
 
 def self_test() -> None:
     """RED controls: verify() must reject each boundary-weakening mutation."""
+
+    # The internal-only check on its own, so it is not proven only by the other pins: each of these
+    # matchers would hand the collector's roster (provider keys) to the public, and each must be seen.
+    def policy_with(matcher: str) -> str:
+        return "(public_onboarding_api) {\n\t@evil {\n\t\tmethod GET\n\t\t" + matcher + "\n\t}\n}"
+
+    for matcher in (
+        "path /api/weather/stations/collector-roster",
+        "path /api/weather/stations/*",
+        "path /api/build /api/weather/*",
+        "path /API/Weather/Stations/Collector-Roster",
+        "path_regexp ^/api/weather/stations/[a-z-]+$",
+        "path_regexp roster ^/api/weather/stations/[A-Za-z0-9_-]{1,64}$",
+        "path_regexp ^/api/weather/stations/(?P<bad",
+    ):
+        if not matchers_admitting(policy_with(matcher), INTERNAL_ONLY_PATHS[0]):
+            raise AssertionError(f"internal-only check missed: {matcher}")
+    for matcher in (
+        "path /api/weather/stations",
+        "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/reward-progress$",
+        "path_regexp ^/api/weather/stations/[A-Za-z0-9_-]{1,64}/ownership-proof$",
+    ):
+        for internal in INTERNAL_ONLY_PATHS:
+            if matchers_admitting(policy_with(matcher), internal):
+                raise AssertionError(f"internal-only check wrongly flagged: {matcher}")
 
     def build_tree(mutate: str | None = None, apply=None) -> Path:
         tree = Path(tempfile.mkdtemp(prefix="boundary-selftest-"))
@@ -1069,6 +1177,78 @@ def self_test() -> None:
         "epic8 compare regex unanchored (prefix admit)": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("/compare$\n", "/compare\n"),
+        ),
+        "epic8 owner compare history bearer requirement removed (visitor requests proxied)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "epic8 owner compare history query lock removed (any query admitted)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "epic8 owner compare history gate removed (read admitted unconditionally)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "compare/history$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "compare/history$\n",
+            ),
+        ),
+        "epic8 owner compare history widened to raw station ids": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("st_[0-9a-f]{12}/compare/history$", "[A-Za-z0-9_-]{1,64}/compare/history$"),
+        ),
+        "epic8 owner compare history regex unanchored (prefix admit)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/compare/history$\n", "/compare/history\n"),
+        ),
+        "epic8 owner compare history admits POST": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "method GET\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$",
+                "method GET POST\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/compare/history$",
+            ),
+        ),
+        "epic8 owner site check bearer requirement removed (visitor requests proxied)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Authorization \"Bearer *\"\n",
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+            ),
+        ),
+        "epic8 owner site check query lock removed (any query admitted)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "epic8 owner site check gate removed (read admitted unconditionally)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "site-check$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "site-check$\n",
+            ),
+        ),
+        "epic8 owner site check widened to raw station ids": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("st_[0-9a-f]{12}/site-check$", "[A-Za-z0-9_-]{1,64}/site-check$"),
+        ),
+        "epic8 owner site check regex unanchored (prefix admit)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/site-check$\n", "/site-check\n"),
+        ),
+        "epic8 owner site check admits POST": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "method GET\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$",
+                "method GET POST\n\t\tpath_regexp ^/api/stations/st_[0-9a-f]{12}/site-check$",
+            ),
         ),
         "backend#1456 leaderboard gate removed (read admitted unconditionally)": (
             "testnet/edge/public_onboarding.caddy",

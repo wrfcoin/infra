@@ -131,6 +131,26 @@ for matcher in matchers:
                     "wallet JWT (own address only); read-only; the edge proxies it only when the request carries "
                     "an `Authorization: Bearer` header"
                 )
+            # "Your stations" (owner decision 2026-11-10): weather-routes.js reads by the session wallet.
+            if matcher["name"] == "station_mine":
+                auth = (
+                    "wallet JWT (own stations only, read by the session wallet); read-only; the edge proxies it "
+                    "only with an `Authorization: Bearer` header; 404 while the backend switch is off; "
+                    "per-wallet limit 60 per hour at the backend"
+                )
+            # Website station ownership proof: weather-routes.js authenticates and checks the owner.
+            if matcher["name"] == "station_ownership_proof":
+                auth = (
+                    "wallet JWT (own station only); the edge proxies it only when the request carries an "
+                    "`Authorization: Bearer` header; stores a public ownership proof, registers nothing on chain; "
+                    "404 while the backend switch is off; body at most 8 KiB at the edge"
+                )
+            # Epic 8: backend station-owner-insights-routes.ts answers only the station's owner wallet.
+            if matcher["name"] in ("station_owner_compare_history", "station_owner_site_check"):
+                auth = (
+                    "wallet JWT (the wallet that owns the station only); read-only; the edge proxies it only when "
+                    "the request carries an `Authorization: Bearer` header"
+                )
             # backend#389 payout notifications: wallet-login writes, no email or user URL, own rate zone.
             if matcher["name"].startswith("public_notifications_") and matcher["name"] != "public_notifications_config":
                 auth = (

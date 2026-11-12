@@ -9,11 +9,14 @@
 #     --key-host-producer <name>=<container> \
 #     --reader <name>='<docker command for that producer>' (twice) \
 #     --cli <CLI path on the key host> --cli-sha <digest from the build receipt> [--limit N]
+#     [--source phone|website]   (default phone; website = stations connected on the website)
+#     [--allow-station-id <id>]  (website only, repeatable: take a station whose id is not a neutral id)
 set +x
 set -euo pipefail
 
-key_host='' tool_dir='' direct='' cli='' cli_sha='' limit=21 container=wrfcoin-testnet-node
+key_host='' tool_dir='' direct='' cli='' cli_sha='' limit=21 container=wrfcoin-testnet-node source=phone
 readers=()
+allowed=()
 stop() { echo "ACTIVATION STOP: $1"; exit 1; }
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || stop 'invalid arguments'
@@ -25,6 +28,8 @@ while [ $# -gt 0 ]; do
     --cli) cli=$2 ;;
     --cli-sha) cli_sha=$2 ;;
     --limit) limit=$2 ;;
+    --source) source=$2 ;;
+    --allow-station-id) allowed+=("$2") ;;
     --reader-container) container=$2 ;;
     *) stop 'invalid arguments' ;;
   esac
@@ -32,6 +37,14 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$key_host" ] && [ -n "$tool_dir" ] && [ -n "$direct" ] && [ -n "$cli" ] && [ -n "$cli_sha" ] || stop 'invalid arguments'
 [ "${#readers[@]}" -eq 2 ] || stop 'exactly two --reader inputs are required'
+[ "$source" = phone ] || [ "$source" = website ] || stop 'invalid arguments'
+# Phone runs pass nothing new, so an older copy of the tool on the key host still works.
+source_args=()
+[ "$source" = phone ] || source_args=(--source "$source")
+for value in ${allowed[@]+"${allowed[@]}"}; do
+  [ "$source" = website ] && [[ "$value" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || stop 'invalid arguments'
+  source_args+=(--allow-station-id "$value")
+done
 # These cross a remote shell, so only plain values are accepted.
 plain='^[A-Za-z0-9._/=:@+-]+$'
 for value in "$tool_dir" "$direct" "$cli" "$cli_sha" "$limit"; do
@@ -56,7 +69,7 @@ run_on_key_host() {
   # $key_host is the owner's own command, split into words on purpose.
   # shellcheck disable=SC2086
   $key_host python3 "$tool_dir/activate-mobile-stations.py" --cli "$cli" --cli-sha "$cli_sha" \
-    --limit "$limit" --producer "$direct" "${readings[@]}" "$@"
+    --limit "$limit" ${source_args[@]+"${source_args[@]}"} --producer "$direct" "${readings[@]}" "$@"
 }
 
 take_readings

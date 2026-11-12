@@ -96,6 +96,26 @@ ENV VITE_ENABLE_CHAIN_PROTECTIONS=$VITE_ENABLE_CHAIN_PROTECTIONS
 # same rules as above.
 ARG VITE_ENABLE_PASSKEY_BOND_PAYOUT=
 ENV VITE_ENABLE_PASSKEY_BOND_PAYOUT=$VITE_ENABLE_PASSKEY_BOND_PAYOUT
+# Taskbar wallet button, one session per wallet and removing a 12-word wallet
+# from the browser (frontend#87). It only takes effect together with
+# VITE_ENABLE_PASSKEY_WALLET. Public switch on the same rules as above.
+ARG VITE_ENABLE_MULTI_WALLET=
+ENV VITE_ENABLE_MULTI_WALLET=$VITE_ENABLE_MULTI_WALLET
+# "Use your passkey wallet" on /connect-station (frontend#81): a passkey wallet signs in
+# (backend PASSKEY_LOGIN_ENABLED) and owns a station on the website. Public switch on
+# the same rules as above.
+ARG VITE_ENABLE_PASSKEY_STATION_OWNER=
+ENV VITE_ENABLE_PASSKEY_STATION_OWNER=$VITE_ENABLE_PASSKEY_STATION_OWNER
+# "Bond your node" on /nodes (frontend#88): the steps to a bonded node and a check of one
+# node's progress (reads GET /api/bond-admission/recent; while the admission service is off
+# the card says admission is not open). Public switch on the same rules as above.
+ARG VITE_ENABLE_BOND_GUIDE=
+ENV VITE_ENABLE_BOND_GUIDE=$VITE_ENABLE_BOND_GUIDE
+# "Your stations" on /wallet: the signed-in wallet's stations from any browser
+# (backend MY_STATIONS_ENABLED, GET /api/weather/stations/mine). Public switch on
+# the same rules as above.
+ARG VITE_ENABLE_MY_STATIONS=
+ENV VITE_ENABLE_MY_STATIONS=$VITE_ENABLE_MY_STATIONS
 COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
 RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
     sh /usr/local/bin/frontend-build-flags-guard /app
@@ -146,6 +166,14 @@ ARG VITE_ENABLE_CHAIN_PROTECTIONS=
 LABEL org.wrfcoin.stage.chain-protections="$VITE_ENABLE_CHAIN_PROTECTIONS"
 ARG VITE_ENABLE_PASSKEY_BOND_PAYOUT=
 LABEL org.wrfcoin.stage.passkey-bond-payout="$VITE_ENABLE_PASSKEY_BOND_PAYOUT"
+ARG VITE_ENABLE_MULTI_WALLET=
+LABEL org.wrfcoin.stage.multi-wallet="$VITE_ENABLE_MULTI_WALLET"
+ARG VITE_ENABLE_PASSKEY_STATION_OWNER=
+LABEL org.wrfcoin.stage.passkey-station-owner="$VITE_ENABLE_PASSKEY_STATION_OWNER"
+ARG VITE_ENABLE_BOND_GUIDE=
+LABEL org.wrfcoin.stage.bond-guide="$VITE_ENABLE_BOND_GUIDE"
+ARG VITE_ENABLE_MY_STATIONS=
+LABEL org.wrfcoin.stage.my-stations="$VITE_ENABLE_MY_STATIONS"
 
 # Install curl for healthcheck
 RUN apk add --no-cache curl

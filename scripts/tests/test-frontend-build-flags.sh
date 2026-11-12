@@ -289,17 +289,33 @@ echo "guard: VITE_ENABLE_CHAIN_PROTECTIONS (public 12-word wallet protections sw
 wallet_switch_cases VITE_ENABLE_CHAIN_PROTECTIONS FRONTEND_CHAIN_PROTECTIONS
 echo "guard: VITE_ENABLE_PASSKEY_BOND_PAYOUT (public passkey bond payout link switch)"
 wallet_switch_cases VITE_ENABLE_PASSKEY_BOND_PAYOUT FRONTEND_PASSKEY_BOND_PAYOUT
+echo "guard: VITE_ENABLE_MULTI_WALLET (public multi-wallet switch)"
+wallet_switch_cases VITE_ENABLE_MULTI_WALLET FRONTEND_MULTI_WALLET
+echo "guard: VITE_ENABLE_PASSKEY_STATION_OWNER (public passkey station owner switch)"
+wallet_switch_cases VITE_ENABLE_PASSKEY_STATION_OWNER FRONTEND_PASSKEY_STATION_OWNER
+echo "guard: VITE_ENABLE_BOND_GUIDE (public bond guide switch)"
+wallet_switch_cases VITE_ENABLE_BOND_GUIDE FRONTEND_BOND_GUIDE
+echo "guard: VITE_ENABLE_MY_STATIONS (public my-stations switch)"
+wallet_switch_cases VITE_ENABLE_MY_STATIONS FRONTEND_MY_STATIONS
 
-echo "guard: all three public wallet switches together"
-guard_case wallet_switches_all_true_pass 0 VITE_ENABLE_PASSKEY_WALLET=true VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true
+echo "guard: all seven public switches together"
+guard_case wallet_switches_all_true_pass 0 VITE_ENABLE_PASSKEY_WALLET=true VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true VITE_ENABLE_MULTI_WALLET=true VITE_ENABLE_PASSKEY_STATION_OWNER=true VITE_ENABLE_BOND_GUIDE=true VITE_ENABLE_MY_STATIONS=true
 out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_WALLET=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_CHAIN_PROTECTIONS=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_BOND_PAYOUT=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_MULTI_WALLET=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_STATION_OWNER=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_BOND_GUIDE=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_MY_STATIONS=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_FLAGS=OK variant=public'
 guard_case wallet_switches_independent_pass 0 VITE_ENABLE_CHAIN_PROTECTIONS=true
 out_has wallet_switches_independent_pass 'FRONTEND_CHAIN_PROTECTIONS=on'
 out_has wallet_switches_independent_pass 'FRONTEND_PASSKEY_WALLET=off'
 out_has wallet_switches_independent_pass 'FRONTEND_PASSKEY_BOND_PAYOUT=off'
+out_has wallet_switches_independent_pass 'FRONTEND_MULTI_WALLET=off'
+out_has wallet_switches_independent_pass 'FRONTEND_PASSKEY_STATION_OWNER=off'
+out_has wallet_switches_independent_pass 'FRONTEND_BOND_GUIDE=off'
+out_has wallet_switches_independent_pass 'FRONTEND_MY_STATIONS=off'
 
 echo "guard: every .env file vite could load (any mode)"
 # Review of #1048, non-blocking 2: every .env and .env.<mode>[.local] is
@@ -371,6 +387,10 @@ PUBLIC_SWITCHES = {
     "VITE_ENABLE_PASSKEY_WALLET": "passkey-wallet",
     "VITE_ENABLE_CHAIN_PROTECTIONS": "chain-protections",
     "VITE_ENABLE_PASSKEY_BOND_PAYOUT": "passkey-bond-payout",
+    "VITE_ENABLE_MULTI_WALLET": "multi-wallet",
+    "VITE_ENABLE_PASSKEY_STATION_OWNER": "passkey-station-owner",
+    "VITE_ENABLE_BOND_GUIDE": "bond-guide",
+    "VITE_ENABLE_MY_STATIONS": "my-stations",
 }
 names = sorted(n for n in re.findall(r"^ARG (VITE_ENABLE_[A-Z0-9_]+)=$", build, re.M) if n not in PUBLIC_SWITCHES)
 assert names == ["VITE_ENABLE_CONTRACT_SURFACES", "VITE_ENABLE_DEMO_SURFACES", "VITE_ENABLE_FULL_STUDIO", "VITE_ENABLE_OPERATOR_PREVIEW"], names
@@ -454,9 +474,9 @@ PY
   }
   if render "$TMP/default.json" -u VITE_ENABLE_OPERATOR_PREVIEW -u VITE_ENABLE_FULL_STUDIO \
       -u VITE_ENABLE_DEMO_SURFACES -u WRFCOIN_FRONTEND_BUILD_VARIANT -u VITE_PUBLIC_READONLY_PATHS -u VITE_FAUCET_OPEN -u VITE_DISABLE_WALLET_SEND \
-      -u VITE_ENABLE_PASSKEY_WALLET -u VITE_ENABLE_CHAIN_PROTECTIONS -u VITE_ENABLE_PASSKEY_BOND_PAYOUT; then
+      -u VITE_ENABLE_PASSKEY_WALLET -u VITE_ENABLE_CHAIN_PROTECTIONS -u VITE_ENABLE_PASSKEY_BOND_PAYOUT -u VITE_ENABLE_MULTI_WALLET -u VITE_ENABLE_PASSKEY_STATION_OWNER -u VITE_ENABLE_BOND_GUIDE -u VITE_ENABLE_MY_STATIONS; then
     args_are render_default_public_empty "$TMP/default.json" \
-      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': '', 'VITE_DISABLE_WALLET_SEND': '', 'VITE_ENABLE_PASSKEY_WALLET': '', 'VITE_ENABLE_CHAIN_PROTECTIONS': '', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': ''}"
+      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': '', 'VITE_DISABLE_WALLET_SEND': '', 'VITE_ENABLE_PASSKEY_WALLET': '', 'VITE_ENABLE_CHAIN_PROTECTIONS': '', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': '', 'VITE_ENABLE_MULTI_WALLET': '', 'VITE_ENABLE_PASSKEY_STATION_OWNER': '', 'VITE_ENABLE_BOND_GUIDE': '', 'VITE_ENABLE_MY_STATIONS': ''}"
   else
     cat "$TMP/default.json.err" >&2; fail render_default_public_empty "compose render failed"
   fi
@@ -479,9 +499,9 @@ PY
   else
     cat "$TMP/faucet.json.err" >&2; fail render_public_faucet_open_true "compose render failed"
   fi
-  if render "$TMP/wallet.json" -u WRFCOIN_FRONTEND_BUILD_VARIANT VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true; then
+  if render "$TMP/wallet.json" -u WRFCOIN_FRONTEND_BUILD_VARIANT VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true VITE_ENABLE_MULTI_WALLET=true VITE_ENABLE_PASSKEY_STATION_OWNER=true VITE_ENABLE_BOND_GUIDE=true VITE_ENABLE_MY_STATIONS=true; then
     args_are render_public_wallet_switches_true "$TMP/wallet.json" \
-      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_CHAIN_PROTECTIONS': 'true', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': 'true'}"
+      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_CHAIN_PROTECTIONS': 'true', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': 'true', 'VITE_ENABLE_MULTI_WALLET': 'true', 'VITE_ENABLE_PASSKEY_STATION_OWNER': 'true', 'VITE_ENABLE_BOND_GUIDE': 'true', 'VITE_ENABLE_MY_STATIONS': 'true'}"
   else
     cat "$TMP/wallet.json.err" >&2; fail render_public_wallet_switches_true "compose render failed"
   fi

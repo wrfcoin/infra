@@ -266,6 +266,10 @@
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
       {
+        "path": "scripts/tests/test-collector-backend-roster-wiring.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
         "path": "scripts/tests/test-cors-origin-fail-closed.sh",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
@@ -524,6 +528,10 @@
       {
         "path": "scripts/tests/test-verify-two-node-convergence.sh",
         "reason": "Suite and owner-only live-capable verifier excluded; fixtures only here."
+      },
+      {
+        "path": "scripts/tests/test-website-station-activation.sh",
+        "reason": "Portable source/fixture regression; every external command is a fake; no owner credentials or live host required."
       },
       {
         "path": "scripts/tests/test-zfs-autosnap.sh",
