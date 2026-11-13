@@ -116,6 +116,12 @@ ENV VITE_ENABLE_BOND_GUIDE=$VITE_ENABLE_BOND_GUIDE
 # the same rules as above.
 ARG VITE_ENABLE_MY_STATIONS=
 ENV VITE_ENABLE_MY_STATIONS=$VITE_ENABLE_MY_STATIONS
+# Advisory voting: propose and vote with a passkey or 12-word wallet. Even when
+# on, the controls show only once the node reports advisory_governance active,
+# and they need the backend's ADVISORY_GOVERNANCE_RELAY_ENABLED. Public switch on
+# the same rules as above.
+ARG VITE_ENABLE_ADVISORY_VOTING=
+ENV VITE_ENABLE_ADVISORY_VOTING=$VITE_ENABLE_ADVISORY_VOTING
 COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
 RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
     sh /usr/local/bin/frontend-build-flags-guard /app
@@ -174,6 +180,8 @@ ARG VITE_ENABLE_BOND_GUIDE=
 LABEL org.wrfcoin.stage.bond-guide="$VITE_ENABLE_BOND_GUIDE"
 ARG VITE_ENABLE_MY_STATIONS=
 LABEL org.wrfcoin.stage.my-stations="$VITE_ENABLE_MY_STATIONS"
+ARG VITE_ENABLE_ADVISORY_VOTING=
+LABEL org.wrfcoin.stage.advisory-voting="$VITE_ENABLE_ADVISORY_VOTING"
 
 # Install curl for healthcheck
 RUN apk add --no-cache curl

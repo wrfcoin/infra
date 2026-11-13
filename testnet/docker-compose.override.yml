@@ -218,6 +218,8 @@ services:
         VITE_ENABLE_BOND_GUIDE: ${VITE_ENABLE_BOND_GUIDE:-}
         # "Your stations" on /wallet (backend MY_STATIONS_ENABLED). Public switch: empty = off, or exactly `true`.
         VITE_ENABLE_MY_STATIONS: ${VITE_ENABLE_MY_STATIONS:-}
+        # Advisory voting (backend ADVISORY_GOVERNANCE_RELAY_ENABLED). Public switch: empty = off, or exactly `true`.
+        VITE_ENABLE_ADVISORY_VOTING: ${VITE_ENABLE_ADVISORY_VOTING:-}
 
   # ---------------------------------------------------------------------------
   # DB Migrate — override base image with local build (#238)
