@@ -2414,24 +2414,31 @@ services:
         max-size: "100m"
         max-file: "3"
 
+  # promtail 3.6.11: 2.9.0's Docker client speaks API 1.42, which Docker 29
+  # (CT101) refuses (minimum 1.44), so container discovery found nothing.
   promtail:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.6.11@sha256:a761cb834cfaeee29745440d4884d6748f0a08d8f68928db1d707018c1dcfbe9
     container_name: wrfcoin-testnet-promtail
     restart: unless-stopped
     volumes:
       - ./promtail-config.yaml:/etc/promtail/config.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail-positions:/var/lib/promtail
     command:
       - "-config.file=/etc/promtail/config.yml"
+    # Container discovery and log reads go through the read-only API proxy
+    # (promtail-config.yaml: host tcp://monitoring-docker-proxy:2375), never
+    # the Docker socket itself.
     depends_on:
       loki:
         condition: service_healthy
+      monitoring-docker-proxy:
+        condition: service_healthy
     networks:
       - wrfcoin-testnet
+      - monitoring-docker-proxy
     healthcheck:
-      # grafana/promtail:2.9.0 ships without wget or curl, so probe liveness
+      # grafana/promtail ships without wget or curl, so probe liveness
       # via PID 1 instead of an HTTP /ready request. Restores container health
       # status after the N5 Pro redeploy that flagged promtail as unhealthy.
       test: ["CMD", "sh", "-c", "kill -0 1"]
@@ -2601,7 +2608,10 @@ services:
   # mounted), and CT101's Docker 29 uses the containerd image store
   # (Driver overlayfs, io.containerd.snapshotter.v1), which v0.49.1 cannot
   # map to containers. v0.60.6 resolves those containers through the
-  # containerd socket. Set CADVISOR_DOCKER_ROOT to `docker info -f
+  # containerd socket, so on a host with the containerd image store
+  # (`docker info -f '{{.Driver}}'` prints overlayfs) also apply
+  # docker-compose.cadvisor-containerd-store.yml; on overlay2 hosts cadvisor
+  # needs no socket at all. Set CADVISOR_DOCKER_ROOT to `docker info -f
   # '{{.DockerRootDir}}'` when it is not /var/lib/docker (CT101:
   # /mnt/tank-docker/docker-data). Disk metrics are off (google/cadvisor#3860,
   # and no rule uses container_fs_*). CAdvisorContainerMetricsMissing pages if
@@ -2615,11 +2625,13 @@ services:
       - "--housekeeping_interval=15s"
       - "--store_container_labels=false"
       - "--disable_metrics=disk"
+      - "--docker=tcp://monitoring-docker-proxy:2375"
     ports:
       - "127.0.0.1:8082:8080"
+    # No Docker or containerd socket: a socket mounted :ro still allows every
+    # API call. cadvisor reads container names and labels through the
+    # read-only proxy below.
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
       - /sys:/sys:ro
       - ${CADVISOR_DOCKER_ROOT:-/var/lib/docker}:/rootfs${CADVISOR_DOCKER_ROOT:-/var/lib/docker}:ro
       - /dev/disk/:/dev/disk:ro
@@ -2630,12 +2642,20 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # DAC_READ_SEARCH: read the Docker root and /proc as root with ALL
+    # dropped. SYSLOG: open /dev/kmsg for OOM events (was SYS_ADMIN, which
+    # also allows mounts and namespace changes; without either, cadvisor only
+    # logs that OOM events are off).
     cap_add:
-      - SYS_ADMIN
       - DAC_READ_SEARCH
+      - SYSLOG
     user: root
+    depends_on:
+      monitoring-docker-proxy:
+        condition: service_healthy
     networks:
       - wrfcoin-testnet
+      - monitoring-docker-proxy
     deploy:
       resources:
         limits:
@@ -2651,6 +2671,48 @@ services:
       driver: json-file
       options:
         max-size: "50m"
+        max-file: "3"
+
+  # Read-only Docker API for cadvisor and promtail. Serves only the GET
+  # endpoints listed in docker-socket-proxy/haproxy.cfg.template, on an
+  # internal network with no published port. container-health-watch keeps
+  # its own socket mount on purpose: it restarts containers, so it needs write
+  # calls (docker-compose.container-health-watch.yml).
+  monitoring-docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    container_name: wrfcoin-testnet-monitoring-docker-proxy
+    restart: unless-stopped
+    environment:
+      DISABLE_IPV6: "1"
+      LOG_LEVEL: warning
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./docker-socket-proxy/haproxy.cfg.template:/usr/local/etc/haproxy/haproxy.cfg.template:ro
+    networks:
+      - monitoring-docker-proxy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2375/_ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=1m
+      - /run:noexec,nosuid,size=1m
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
         max-file: "3"
 
   postgres-exporter:
@@ -2826,6 +2888,10 @@ services:
 
 networks:
   ipfs-private:
+    driver: bridge
+    internal: true
+  # Only cadvisor, promtail and the read-only Docker API proxy join this.
+  monitoring-docker-proxy:
     driver: bridge
     internal: true
   wrfcoin-testnet:

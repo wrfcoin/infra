@@ -1,0 +1,17 @@
+# Only for a Docker host that uses the containerd image store
+# (`docker info -f '{{.Driver}}'` prints overlayfs). cadvisor v0.60.6 loads
+# each container from containerd there to find its root filesystem, and
+# without this socket it drops the container (no name/image labels, so the
+# ContainerRss* alerts match nothing and CAdvisorContainerMetricsMissing
+# pages).
+#
+# The containerd socket is a full API (mounting it :ro does not limit calls),
+# so this keeps that much access in cadvisor. Hosts on overlay2 must not apply
+# this file.
+#
+#   docker compose -f docker-compose.testnet.yml \
+#     -f docker-compose.cadvisor-containerd-store.yml ... up -d cadvisor
+services:
+  cadvisor:
+    volumes:
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
