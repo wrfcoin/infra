@@ -297,9 +297,11 @@ echo "guard: VITE_ENABLE_BOND_GUIDE (public bond guide switch)"
 wallet_switch_cases VITE_ENABLE_BOND_GUIDE FRONTEND_BOND_GUIDE
 echo "guard: VITE_ENABLE_MY_STATIONS (public my-stations switch)"
 wallet_switch_cases VITE_ENABLE_MY_STATIONS FRONTEND_MY_STATIONS
+echo "guard: VITE_ENABLE_ADVISORY_VOTING (public advisory voting switch)"
+wallet_switch_cases VITE_ENABLE_ADVISORY_VOTING FRONTEND_ADVISORY_VOTING
 
-echo "guard: all seven public switches together"
-guard_case wallet_switches_all_true_pass 0 VITE_ENABLE_PASSKEY_WALLET=true VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true VITE_ENABLE_MULTI_WALLET=true VITE_ENABLE_PASSKEY_STATION_OWNER=true VITE_ENABLE_BOND_GUIDE=true VITE_ENABLE_MY_STATIONS=true
+echo "guard: all eight public switches together"
+guard_case wallet_switches_all_true_pass 0 VITE_ENABLE_PASSKEY_WALLET=true VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true VITE_ENABLE_MULTI_WALLET=true VITE_ENABLE_PASSKEY_STATION_OWNER=true VITE_ENABLE_BOND_GUIDE=true VITE_ENABLE_MY_STATIONS=true VITE_ENABLE_ADVISORY_VOTING=true
 out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_WALLET=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_CHAIN_PROTECTIONS=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_BOND_PAYOUT=on'
@@ -307,6 +309,7 @@ out_has wallet_switches_all_true_pass 'FRONTEND_MULTI_WALLET=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_PASSKEY_STATION_OWNER=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_BOND_GUIDE=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_MY_STATIONS=on'
+out_has wallet_switches_all_true_pass 'FRONTEND_ADVISORY_VOTING=on'
 out_has wallet_switches_all_true_pass 'FRONTEND_FLAGS=OK variant=public'
 guard_case wallet_switches_independent_pass 0 VITE_ENABLE_CHAIN_PROTECTIONS=true
 out_has wallet_switches_independent_pass 'FRONTEND_CHAIN_PROTECTIONS=on'
@@ -316,6 +319,7 @@ out_has wallet_switches_independent_pass 'FRONTEND_MULTI_WALLET=off'
 out_has wallet_switches_independent_pass 'FRONTEND_PASSKEY_STATION_OWNER=off'
 out_has wallet_switches_independent_pass 'FRONTEND_BOND_GUIDE=off'
 out_has wallet_switches_independent_pass 'FRONTEND_MY_STATIONS=off'
+out_has wallet_switches_independent_pass 'FRONTEND_ADVISORY_VOTING=off'
 
 echo "guard: every .env file vite could load (any mode)"
 # Review of #1048, non-blocking 2: every .env and .env.<mode>[.local] is
@@ -391,6 +395,7 @@ PUBLIC_SWITCHES = {
     "VITE_ENABLE_PASSKEY_STATION_OWNER": "passkey-station-owner",
     "VITE_ENABLE_BOND_GUIDE": "bond-guide",
     "VITE_ENABLE_MY_STATIONS": "my-stations",
+    "VITE_ENABLE_ADVISORY_VOTING": "advisory-voting",
 }
 names = sorted(n for n in re.findall(r"^ARG (VITE_ENABLE_[A-Z0-9_]+)=$", build, re.M) if n not in PUBLIC_SWITCHES)
 assert names == ["VITE_ENABLE_CONTRACT_SURFACES", "VITE_ENABLE_DEMO_SURFACES", "VITE_ENABLE_FULL_STUDIO", "VITE_ENABLE_OPERATOR_PREVIEW"], names
@@ -474,9 +479,9 @@ PY
   }
   if render "$TMP/default.json" -u VITE_ENABLE_OPERATOR_PREVIEW -u VITE_ENABLE_FULL_STUDIO \
       -u VITE_ENABLE_DEMO_SURFACES -u WRFCOIN_FRONTEND_BUILD_VARIANT -u VITE_PUBLIC_READONLY_PATHS -u VITE_FAUCET_OPEN -u VITE_DISABLE_WALLET_SEND \
-      -u VITE_ENABLE_PASSKEY_WALLET -u VITE_ENABLE_CHAIN_PROTECTIONS -u VITE_ENABLE_PASSKEY_BOND_PAYOUT -u VITE_ENABLE_MULTI_WALLET -u VITE_ENABLE_PASSKEY_STATION_OWNER -u VITE_ENABLE_BOND_GUIDE -u VITE_ENABLE_MY_STATIONS; then
+      -u VITE_ENABLE_PASSKEY_WALLET -u VITE_ENABLE_CHAIN_PROTECTIONS -u VITE_ENABLE_PASSKEY_BOND_PAYOUT -u VITE_ENABLE_MULTI_WALLET -u VITE_ENABLE_PASSKEY_STATION_OWNER -u VITE_ENABLE_BOND_GUIDE -u VITE_ENABLE_MY_STATIONS -u VITE_ENABLE_ADVISORY_VOTING; then
     args_are render_default_public_empty "$TMP/default.json" \
-      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': '', 'VITE_DISABLE_WALLET_SEND': '', 'VITE_ENABLE_PASSKEY_WALLET': '', 'VITE_ENABLE_CHAIN_PROTECTIONS': '', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': '', 'VITE_ENABLE_MULTI_WALLET': '', 'VITE_ENABLE_PASSKEY_STATION_OWNER': '', 'VITE_ENABLE_BOND_GUIDE': '', 'VITE_ENABLE_MY_STATIONS': ''}"
+      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_FULL_STUDIO': '', 'VITE_ENABLE_DEMO_SURFACES': '', 'VITE_ENABLE_OPERATOR_PREVIEW': '', 'VITE_PUBLIC_READONLY_PATHS': '', 'VITE_FAUCET_OPEN': '', 'VITE_DISABLE_WALLET_SEND': '', 'VITE_ENABLE_PASSKEY_WALLET': '', 'VITE_ENABLE_CHAIN_PROTECTIONS': '', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': '', 'VITE_ENABLE_MULTI_WALLET': '', 'VITE_ENABLE_PASSKEY_STATION_OWNER': '', 'VITE_ENABLE_BOND_GUIDE': '', 'VITE_ENABLE_MY_STATIONS': '', 'VITE_ENABLE_ADVISORY_VOTING': ''}"
   else
     cat "$TMP/default.json.err" >&2; fail render_default_public_empty "compose render failed"
   fi
@@ -499,9 +504,9 @@ PY
   else
     cat "$TMP/faucet.json.err" >&2; fail render_public_faucet_open_true "compose render failed"
   fi
-  if render "$TMP/wallet.json" -u WRFCOIN_FRONTEND_BUILD_VARIANT VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true VITE_ENABLE_MULTI_WALLET=true VITE_ENABLE_PASSKEY_STATION_OWNER=true VITE_ENABLE_BOND_GUIDE=true VITE_ENABLE_MY_STATIONS=true; then
+  if render "$TMP/wallet.json" -u WRFCOIN_FRONTEND_BUILD_VARIANT VITE_ENABLE_CHAIN_PROTECTIONS=true VITE_ENABLE_PASSKEY_BOND_PAYOUT=true VITE_ENABLE_MULTI_WALLET=true VITE_ENABLE_PASSKEY_STATION_OWNER=true VITE_ENABLE_BOND_GUIDE=true VITE_ENABLE_MY_STATIONS=true VITE_ENABLE_ADVISORY_VOTING=true; then
     args_are render_public_wallet_switches_true "$TMP/wallet.json" \
-      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_CHAIN_PROTECTIONS': 'true', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': 'true', 'VITE_ENABLE_MULTI_WALLET': 'true', 'VITE_ENABLE_PASSKEY_STATION_OWNER': 'true', 'VITE_ENABLE_BOND_GUIDE': 'true', 'VITE_ENABLE_MY_STATIONS': 'true'}"
+      "{'WRFCOIN_FRONTEND_BUILD_VARIANT': 'public', 'VITE_ENABLE_CHAIN_PROTECTIONS': 'true', 'VITE_ENABLE_PASSKEY_BOND_PAYOUT': 'true', 'VITE_ENABLE_MULTI_WALLET': 'true', 'VITE_ENABLE_PASSKEY_STATION_OWNER': 'true', 'VITE_ENABLE_BOND_GUIDE': 'true', 'VITE_ENABLE_MY_STATIONS': 'true', 'VITE_ENABLE_ADVISORY_VOTING': 'true'}"
   else
     cat "$TMP/wallet.json.err" >&2; fail render_public_wallet_switches_true "compose render failed"
   fi

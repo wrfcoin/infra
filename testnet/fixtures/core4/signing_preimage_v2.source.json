@@ -1,9 +1,9 @@
 {
   "repository": "WRFCoin/core4",
-  "pull_request": 143,
-  "ref": "feat/advisory-governance",
-  "commit": "3108a430bbfa20dc99315816f13f81a6d1513847",
+  "pull_request": 148,
+  "ref": "feat/forecast-late-score",
+  "commit": "a05abcabe7254c47367ecaa8edeac97df446f8f4",
   "path": "shared-protocol/tests/fixtures/golden/signing_preimage_v2.json",
   "schema": "wrfcoin.signing-preimage-v2.golden/4",
-  "sha256": "5bb94aa449066053399485a59ac0281f5cc7e2c35b7a368b6544eba67324a76b"
+  "sha256": "709013ccad48911034b73de0b60c477615c11b80f5bc4f79a097bc3de4a6b48c"
 }
