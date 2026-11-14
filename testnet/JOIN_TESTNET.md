@@ -71,7 +71,10 @@ x86_64-under-emulation build on an arm64 Mac).
    - macOS: install Docker Desktop.
 3. **Outbound internet access** to the seed on TCP port 9000. Nothing inbound:
    no router port forward, no static IP, no Tailscale.
-4. **git** and HTTPS access to github.com. The node image is **built from
+4. **Python 3 on the host**, available as `python3` (the join script uses it to
+   check the chain identity; Python inside a container does not count).
+   `jq` is optional; the verification commands below use it to format output.
+5. **git** and HTTPS access to github.com. The node image is **built from
    source** on your machine — we don't publish prebuilt images. Keep enough free
    disk space for the source, the Docker build cache and the growing chain
    database.
@@ -335,12 +338,18 @@ docker compose -f docker-compose.testnet.yml logs -f wrfcoin-node
 docker compose -f docker-compose.testnet.yml stop wrfcoin-node
 docker compose -f docker-compose.testnet.yml start wrfcoin-node
 
-# update to latest code
-git -C ~/wrfcoin/core4 pull && git -C ~/wrfcoin/infra pull
-bash join-testnet-sync-node.sh        # rebuilds + restarts
+# update: pull infra, then re-run the wrapper
+git -C ~/wrfcoin/infra pull --ff-only
+bash ~/wrfcoin/infra/testnet/join.sh   # checks out the pinned core4, rebuilds, restarts
 ```
 
-To stay current, `git pull` both repos and re-run the script periodically.
+The wrapper picks the core4 commit pinned in the updated infra checkout
+(`cut-pins.env`). core4 sits on a detached commit after a join; that is
+expected. Don't `git pull` in core4 to pick a node version, and don't call
+`join-testnet-sync-node.sh` directly to update, since it skips the pin. If you
+have local changes in either checkout, commit or stash them first.
+
+To stay current, repeat these two commands periodically.
 
 For public node-status guidance, see the
 [public node-status guide](https://github.com/wrfcoin/docs/blob/main/testnet/node-status.md).
