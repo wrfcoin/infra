@@ -218,6 +218,8 @@ EXPECTED = {
     "public_readonly_explorer_summary": ("GET", "path /api/explorer/summary", BACKEND),
     # Producers and bonded nodes page (network-nodes-routes.ts): one cached snapshot, exact path, no query.
     "public_readonly_network_nodes": ("GET", "path /api/network/nodes", BACKEND),
+    # Owner decision 2026-11-01: public network status (aggregate numbers only), exact path, no query.
+    "public_readonly_network_status": ("GET", "path /api/public/network-status", BACKEND),
     # Proof card for one station reading (backend#229): commit id only, optional height hint.
     "public_readonly_proof_card": ("GET", "path_regexp ^/api/proofs/[0-9a-f]{64}$", BACKEND),
     # Station calibration certificate status (core4#388/#435): public alias only, no query; the
@@ -395,6 +397,7 @@ GATED = frozenset({
     "public_forecasts_draft",
     "public_forecasts_submit",
     "public_readonly_network_nodes",
+    "public_readonly_network_status",
     "public_readonly_competitions",
     "public_notifications_config",
     "public_notifications_subscribe",
@@ -532,6 +535,7 @@ READONLY_QUERY_LOCK = {
     "public_forecasts_draft": 'expression `{query} == ""`',
     "public_forecasts_submit": 'expression `{query} == ""`',
     "public_readonly_network_nodes": 'expression `{query} == ""`',
+    "public_readonly_network_status": 'expression `{query} == ""`',
     # frontend COMPETITIONS_PATH / COMPETITION_CURRENT_PATH / competitionWeekPath(): never a query.
     "public_readonly_competitions": 'expression `{query} == ""`',
     "public_notifications_config": 'expression `{query} == ""`',
@@ -825,7 +829,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/public/station-history/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent /api/claim-mailbox/claims/*",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/public/station-history/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent /api/claim-mailbox/claims/* /api/public/network-status",
             "}",
             "key {client_ip}",
             "events 30",
@@ -1470,6 +1474,18 @@ def self_test() -> None:
         "network nodes widened beyond GET": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("@public_readonly_network_nodes {\n\t\tmethod GET", "@public_readonly_network_nodes {\n\t\tmethod GET POST"),
+        ),
+        "network status ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/public/network-status\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/public/network-status\n"),
+        ),
+        "network status widened to the public prefix": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/public/network-status\n\t\tvars", "path /api/public/*\n\t\tvars"),
+        ),
+        "network status takes a query": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("@public_readonly_network_status {\n\t\tmethod GET\n\t\tpath /api/public/network-status\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`", "@public_readonly_network_status {\n\t\tmethod GET\n\t\tpath /api/public/network-status\n\t\tvars {env.PUBLIC_READONLY_API} on"),
         ),
         "competitions widened to any week segment": (
             "testnet/edge/public_onboarding.caddy",
