@@ -9,10 +9,10 @@ requests>=2.34.2
 urllib3>=2.8.0
 
 # JSON handling
-simplejson==4.2.0
+simplejson==4.3.0
 
 # Date/time handling
-python-dateutil==2.9.0.post0
+python-dateutil==4.0.0
 
 # Logging and monitoring
 structlog==26.1.0
@@ -21,7 +21,7 @@ structlog==26.1.0
 python-dotenv==1.2.4
 
 # WSGI server for production
-gunicorn>=26.2.0
+gunicorn>=27.0.0
 
 # Metrics collection (optional)
 prometheus-client==0.26.0
