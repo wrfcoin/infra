@@ -1441,6 +1441,21 @@ NETWORK_NODES_CASES = (
     ("GET", "/api/network/x/../nodes", (), 400),
 )
 
+# Network status page (owner decision 2026-11-01; frontend NETWORK_STATUS_PATH).
+_NS = "/api/public/network-status"
+NETWORK_STATUS_CASES = (
+    ("GET", _NS, (), 502),  # exactly what the /status page sends
+    ("GET", _NS + "?window=2048", (), 404),
+    ("GET", _NS + "/", (), 404),
+    ("GET", _NS + "/extra", (), 404),
+    ("GET", "/api/public", (), 404),
+    ("GET", "/api/public/network-statusx", (), 404),
+    ("GET", "/api/public/x", (), 404),
+    ("POST", _NS, (), 404),
+    ("DELETE", _NS, (), 404),
+    ("GET", "/api/public/x/../network-status", (), 400),
+)
+
 # Owner ruling 2026-11-01: bring-your-own-key Wolfram reading check. POST + application/json only,
 # exact path, no query (the caller's AppID rides in the body, never in a logged URL).
 _WR = "/api/integrations/wolfram/reading-check"
@@ -1931,6 +1946,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-proof-card", text, port, "on", PROOF_CARD_CASES, 16)
         prove_parity_reads(f"{label}-network-nodes-gate", text, port, None, NETWORK_NODES_CASES[:1], 12)
         prove_parity_reads(f"{label}-network-nodes", text, port, "on", NETWORK_NODES_CASES, 12)
+        prove_parity_reads(f"{label}-network-status-gate", text, port, None, NETWORK_STATUS_CASES[:1], 12)
+        prove_parity_reads(f"{label}-network-status", text, port, "on", NETWORK_STATUS_CASES, 12)
         prove_parity_reads(f"{label}-wolfram-gate", text, port, None, WOLFRAM_READING_CHECK_CASES[:1], 6)
         prove_parity_reads(f"{label}-wolfram", text, port, "on", WOLFRAM_READING_CHECK_CASES, 6)
         prove_parity_reads(f"{label}-competitions-gate", text, port, None, COMPETITION_CASES[:5], 16)
@@ -1983,6 +2000,9 @@ def main() -> None:
         ),
         "network nodes widened to the network prefix": (
             caddy_src.replace("path /api/network/nodes\n", "path /api/network/*\n"), NETWORK_NODES_CASES,
+        ),
+        "network status widened to the public prefix": (
+            caddy_src.replace("path /api/public/network-status\n", "path /api/public/*\n"), NETWORK_STATUS_CASES,
         ),
         "challenge board widened to any segment": (
             caddy_src.replace("^/api/challenges/code/[A-Z0-9]{4}-[A-Z0-9]{4}$", "^/api/challenges/code/[^/]+$"), CHALLENGE_CASES,

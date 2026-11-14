@@ -50,6 +50,7 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `GET` | `regex: ^/api/forecasters/c_[0-9a-f]{24}$` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
 | `GET` | `/api/explorer/summary` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
 | `GET` | `/api/network/nodes` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
+| `GET` | `/api/public/network-status` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
 | `GET` | `regex: ^/api/proofs/[0-9a-f]{64}$` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none or match `^h=[1-9][0-9]{0,11}$` (anything else 404s) |
 | `GET` | `regex: ^/api/competitions(/(current\|[0-9]{4}-W(0[1-9]\|[1-4][0-9]\|5[0-3])))?$` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
 | `GET` | `/api/notifications/config` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
