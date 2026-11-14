@@ -20,19 +20,59 @@ bond owner exits. The rules below keep one person from filling them.
 
 ## Flow
 
-On the operator's machine (core4 CLI):
+On the operator's machine (core4 CLI). Replace each `<…>` with your own
+value. Run the commands on the machine where the node runs, so the peer
+identity key below is the node's existing one.
 
 ```sh
 # 1. Keyless Deposit plan, naming the admission key as co-signer.
 #    Use the generated alias node-<first 8 hex of the server key>.
-wrfcoin node bond deposit ... --governance-key <admission public key> --admission-cosign \
-  --service-alias node-<8 hex> --dry-run --out plan.json
+wrfcoin node bond deposit --dry-run --admission-cosign \
+  --deployment-id <deployment id> --owner-key <owner public key> \
+  --payout-address <payout address> --payout-key <payout public key> \
+  --server-key <server public key> --consumer-key <consumer public key> \
+  --governance-key <admission public key> --service-alias node-<8 hex> \
+  --genesis-hash <genesis hash> --chain-id 888 --network-id testnet \
+  --activation-height <activation height> \
+  --api-url http://127.0.0.1:8556 --operator-token-file <operator token file> \
+  --out plan.json
 # 2. Server and consumer approvals.
-wrfcoin node bond sign --transaction-file plan.json --role server   --key-file server.key   ... --out s.json
-wrfcoin node bond sign --transaction-file s.json    --role consumer --key-file consumer.key ... --out sc.json
-# 3. Bind the node's public P2P address to the packet (peer identity key).
+wrfcoin node bond sign --transaction-file plan.json --role server   --key-file server.key \
+  --chain-id 888 --network-id testnet --out s.json
+wrfcoin node bond sign --transaction-file s.json    --role consumer --key-file consumer.key \
+  --chain-id 888 --network-id testnet --out sc.json
+# 3. Bind the node's public P2P address to the packet, signed with the node's
+#    existing peer identity key (never a newly generated one).
 wrfcoin node bond admission-request --transaction-file sc.json \
-  --multiaddr /ip4/<public ip>/tcp/9000/p2p/<peer id> --chain-id 888 --network-id testnet --out request.json
+  --multiaddr /ip4/<public ip>/tcp/9000/p2p/<peer id> --chain-id 888 --network-id testnet \
+  --p2p-key-file <node data dir>/peer_identity.key --out request.json
+```
+
+Without `--p2p-key-file`, the CLI looks for `$WRFCOIN_DATA_DIR/peer_identity.key`,
+or `./data/peer_identity.key` when that variable is unset.
+
+On the Windows node from the installer, the same three steps in PowerShell
+(paths from the [Windows node guide](https://github.com/wrfcoin/core4/blob/main/docs/operator/windows-node.md#where-the-data-lives)):
+
+```powershell
+$cli  = "$env:LOCALAPPDATA\Programs\WRFCoin Node\wrfcoin.exe"
+$data = "$env:LOCALAPPDATA\WRFCoin"
+& $cli node bond deposit --dry-run --admission-cosign `
+  --deployment-id <deployment id> --owner-key <owner public key> `
+  --payout-address <payout address> --payout-key <payout public key> `
+  --server-key <server public key> --consumer-key <consumer public key> `
+  --governance-key <admission public key> --service-alias node-<8 hex> `
+  --genesis-hash <genesis hash> --chain-id 888 --network-id testnet `
+  --activation-height <activation height> `
+  --api-url http://127.0.0.1:8556 --operator-token-file "$data\operator.token" `
+  --out plan.json
+& $cli node bond sign --transaction-file plan.json --role server --key-file "$data\server.key" `
+  --chain-id 888 --network-id testnet --out s.json
+& $cli node bond sign --transaction-file s.json --role consumer --key-file <consumer key file> `
+  --chain-id 888 --network-id testnet --out sc.json
+& $cli node bond admission-request --transaction-file sc.json `
+  --multiaddr /ip4/<public ip>/tcp/9000/p2p/<peer id> --chain-id 888 --network-id testnet `
+  --p2p-key-file "$data\data\peer_identity.key" --out request.json
 ```
 
 `POST /bond-admission` with `request.json`. On success the answer carries the
