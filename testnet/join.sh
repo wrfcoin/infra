@@ -85,6 +85,7 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 
 # --- Prerequisite checks --------------------------------------------------
 command -v git >/dev/null 2>&1 || die "git is required. Install git and re-run."
+command -v python3 >/dev/null 2>&1 || die "python3 is required on the host (the join script uses it to check the chain identity). Install Python 3 and re-run."
 
 if ! command -v docker >/dev/null 2>&1; then
   die "Docker is required. Install Docker Desktop (macOS) or Docker Engine (Linux) and re-run."
@@ -116,7 +117,7 @@ clone_repo() {
   # clone_repo <target-dir> <ssh-url> <https-url> <label>
   local target="$1" ssh_url="$2" https_url="$3" label="$4"
   if [ -d "${target}/.git" ]; then
-    say "${label}: already cloned at ${target} — skipping (git pull manually to update)."
+    say "${label}: already cloned at ${target} — skipping (to update: git -C <infra> pull --ff-only, then re-run join.sh)."
     return 0
   fi
   if [ -e "${target}" ]; then
