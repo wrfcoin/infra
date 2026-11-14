@@ -276,6 +276,8 @@ EXPECTED = {
     "public_wallet_send_passkey_nonce": ("GET", "path_regexp ^/api/wallet/send-passkey/nonce/0x[0-9a-f]{40}$", BACKEND),
     # backend#30 public balance read for the passkey wallet: no bearer, GET, exact path, no query.
     "public_balance_read": ("GET", "path_regexp ^/api/public/balance/0x[0-9a-fA-F]{40}$", BACKEND),
+    # public-station-history-routes.ts: alias only (STATION_ALIAS_RE in station-alias.js).
+    "public_station_history_read": ("GET", "path_regexp ^/api/public/station-history/st_[0-9a-f]{12}$", BACKEND),
     # Owner ruling 2026-11-01: bring-your-own-key Wolfram reading check. POST, exact path, JSON only,
     # no query, 2 KiB body cap, its own rate zone; the caller's AppID rides in the body.
     "wolfram_reading_check": (
@@ -356,6 +358,7 @@ GATED = frozenset({
     "public_wallet_send_passkey",
     "public_wallet_send_passkey_nonce",
     "public_balance_read",
+    "public_station_history_read",
     "wolfram_reading_check",
     "public_readonly_stations",
     "public_readonly_station_detail",
@@ -483,6 +486,10 @@ READONLY_QUERY_LOCK = {
     "public_wallet_send_passkey": 'expression `{query} == ""`',
     "public_wallet_send_passkey_nonce": 'expression `{query} == ""`',
     "public_balance_read": 'expression `{query} == ""`',
+    # fromHeight[&toHeight][&after&offset][&limit], digits only, limit at most 500 (backend HISTORY_MAX_LIMIT).
+    "public_station_history_read": (
+        "expression `{query}.matches('^fromHeight=[1-9][0-9]{0,11}(&toHeight=[1-9][0-9]{0,11})?(&after=(0|[1-9][0-9]{0,11})&offset=(0|[1-9][0-9]{0,5}))?(&limit=([1-9]|[1-9][0-9]|[1-4][0-9]{2}|500))?$')`"
+    ),
     "wolfram_reading_check": 'expression `{query} == ""`',
     "public_readonly_stations": 'expression `{query} == ""`',
     "public_readonly_station_detail": 'expression `{query} == "" || {query} == "limit=1"`',
@@ -814,7 +821,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/public/station-history/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent",
             "}",
             "key {client_ip}",
             "events 30",
