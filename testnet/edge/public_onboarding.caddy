@@ -661,8 +661,9 @@
 
 	# Network status page (owner decision 2026-11-01: Grafana/Prometheus stay private; frontend /status,
 	# backend public-network-status-routes.ts): aggregate numbers only (block pace, producers online by
-	# public label, peer count, newest paid node-pay epoch, scheduled upgrades). No keys, addresses, hosts
-	# or IPs. EXACT path, GET only, no query. The backend builds it at most once a minute for every caller,
+	# approved public alias or opaque "producer N" (never the configured producer_id), peer count, newest
+	# paid node-pay epoch, scheduled upgrades; chain/network shown only as the fixed 888/testnet). No ids,
+	# keys, addresses, hosts or IPs. EXACT path, GET only, no query. The backend builds it at most once a minute for every caller,
 	# applies its own 30/min limiter and answers 404 until NETWORK_STATUS_READ_ENABLED=true. Same
 	# default-OFF gate and public_read limiter.
 	@public_readonly_network_status {
