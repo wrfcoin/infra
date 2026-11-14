@@ -1,0 +1,62 @@
+# Read-only Docker API for the monitoring containers (cadvisor, promtail).
+#
+# Mounted over the image's own template, so the env switches it ships with
+# (CONTAINERS=1, POST=1, ...) have no effect here: only the exact read
+# endpoints below are served, with GET or HEAD. Everything else is 403.
+#
+#   cadvisor: /_ping, /version, /info, /containers/<id>/json
+#   promtail: /containers/json and /networks (discovery),
+#             /containers/<id>/json, /containers/<id>/logs (streamed)
+#
+# Not served on purpose: /containers/<id>/archive and /export (file
+# contents), /exec, /images, /networks/<id>, /volumes, /events, /system, and every
+# write. ${BIND_CONFIG} is filled in by the image's entrypoint.
+global
+    log stdout format raw daemon "${LOG_LEVEL}"
+    pidfile /run/haproxy.pid
+    maxconn 512
+
+defaults
+    mode http
+    log global
+    option httplog
+    option dontlognull
+    option http-server-close
+    retries 3
+    timeout http-request 10s
+    timeout queue 1m
+    timeout connect 10s
+    timeout client 10m
+    timeout server 10m
+    timeout http-keep-alive 10s
+    maxconn 256
+    errorfile 400 /usr/local/etc/haproxy/errors/400.http
+    errorfile 403 /usr/local/etc/haproxy/errors/403.http
+    errorfile 408 /usr/local/etc/haproxy/errors/408.http
+    errorfile 500 /usr/local/etc/haproxy/errors/500.http
+    errorfile 502 /usr/local/etc/haproxy/errors/502.http
+    errorfile 503 /usr/local/etc/haproxy/errors/503.http
+    errorfile 504 /usr/local/etc/haproxy/errors/504.http
+
+backend dockerbackend
+    server dockersocket $SOCKET_PATH
+
+# Followed log streams stay open while a container is quiet.
+backend docker-logs
+    server dockersocket $SOCKET_PATH
+    timeout server 24h
+
+frontend dockerfrontend
+    bind ${BIND_CONFIG}
+    acl read_method method GET HEAD
+    acl ping      path,url_dec -m reg ^(/v[0-9.]+)?/_ping$
+    acl version   path,url_dec -m reg ^(/v[0-9.]+)?/version$
+    acl info      path,url_dec -m reg ^(/v[0-9.]+)?/info$
+    acl list      path,url_dec -m reg ^(/v[0-9.]+)?/containers/json$
+    acl networks  path,url_dec -m reg ^(/v[0-9.]+)?/networks$
+    acl inspect   path,url_dec -m reg ^(/v[0-9.]+)?/containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/json$
+    acl logs      path,url_dec -m reg ^(/v[0-9.]+)?/containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/logs$
+    http-request deny unless read_method
+    http-request deny unless ping or version or info or list or networks or inspect or logs
+    use_backend docker-logs if logs
+    default_backend dockerbackend
