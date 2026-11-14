@@ -989,6 +989,21 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Claim mailbox read (epic 6 receipts; backend claim-mailbox-routes.ts -> infra claim-mailbox):
+	# a bonded node's `wrfcoin node receipt auto` reads the claims another bonded node made for
+	# it. No bearer, GET only, one bond id (64 lowercase hex) and one epoch, no query. Claims are
+	# public chain data; writes never come through the edge. The backend route is 404 unless
+	# CLAIM_MAILBOX_PROXY_ENABLED=true. Counted by the public_read zone.
+	@public_claim_mailbox_read {
+		method GET
+		path_regexp ^/api/claim-mailbox/claims/[0-9a-f]{64}/(0|[1-9][0-9]{0,8})$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_claim_mailbox_read {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Bring-your-own-key Wolfram reading check (owner ruling 2026-11-01; backend
 	# wolfram-reading-check-routes.ts). The browser cannot call Wolfram|Alpha itself (its API
 	# sends no Access-Control-Allow-Origin), so the backend relays ONE fixed question ("is this
@@ -1583,7 +1598,7 @@
 		# is already counted by the onboarding zone above).
 		zone public_read {
 			match {
-				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/public/station-history/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent
+				path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/public/station-history/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent /api/claim-mailbox/claims/*
 			}
 			key {client_ip}
 			events 30
