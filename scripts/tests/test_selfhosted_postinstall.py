@@ -65,7 +65,7 @@ def test_helper_change_runs_every_service_probe(tmp_path):
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "PR": "123", "GITHUB_REPOSITORY": "synthetic/infra", "GITHUB_OUTPUT": str(output)}
     result = subprocess.run(["bash", "-c", step["run"]], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert output.read_text().splitlines() == ["gate_self=true", "explorer=true", "faucet=true", "admission=true"]
+    assert output.read_text().splitlines() == ["gate_self=true", "explorer=true", "faucet=true", "admission=true", "mailbox=true"]
 
 
 def test_real_npm_dependency_postinstall_cannot_run(tmp_path):

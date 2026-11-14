@@ -82,6 +82,9 @@ on:
       - 'testnet/services/bond-admission/**/*.js'
       - 'testnet/services/bond-admission/package.json'
       - 'testnet/services/bond-admission/package-lock.json'
+      - 'testnet/services/claim-mailbox/**/*.js'
+      - 'testnet/services/claim-mailbox/package.json'
+      - 'testnet/services/claim-mailbox/package-lock.json'
       # --- self ---------------------------------------------------------------
       #     A change to this gate must exercise the WHOLE gate: see the
       #     `gate_self` forcing in the detect step below. Does NOT also force
@@ -130,6 +133,7 @@ jobs:
             echo "explorer=$(on '^testnet/explorer/.*(\.js|package(-lock)?\.json)$')"
             echo "faucet=$(on '^testnet/services/faucet/.*(\.js|package(-lock)?\.json)$')"
             echo "admission=$(on '^testnet/services/bond-admission/.*(\.js|package(-lock)?\.json)$')"
+            echo "mailbox=$(on '^testnet/services/claim-mailbox/.*(\.js|package(-lock)?\.json)$')"
           } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
@@ -160,16 +164,17 @@ jobs:
       # actions/setup-node still pins and downloads 22 into the runner's local
       # tool-cache, same as it always resolved on the hosted runner.
       - uses: actions/setup-node@v7
-        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true' || steps.changed.outputs.admission == 'true'
+        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true' || steps.changed.outputs.admission == 'true' || steps.changed.outputs.mailbox == 'true'
         with:
           node-version: '22'
 
       - name: Boot probe — Node services
-        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true' || steps.changed.outputs.admission == 'true'
+        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true' || steps.changed.outputs.admission == 'true' || steps.changed.outputs.mailbox == 'true'
         env:
           EXPLORER: ${{ steps.changed.outputs.explorer }}
           FAUCET: ${{ steps.changed.outputs.faucet }}
           ADMISSION: ${{ steps.changed.outputs.admission }}
+          MAILBOX: ${{ steps.changed.outputs.mailbox }}
         run: |
           set -euo pipefail
           rc=0
@@ -191,6 +196,7 @@ jobs:
           [ "$EXPLORER" = "true" ] && probe testnet/explorer
           [ "$FAUCET" = "true" ]   && probe testnet/services/faucet
           [ "$ADMISSION" = "true" ] && probe testnet/services/bond-admission
+          [ "$MAILBOX" = "true" ]   && probe testnet/services/claim-mailbox
           exit $rc
 
       # -----------------------------------------------------------------------
@@ -212,11 +218,12 @@ jobs:
       # Never pipe this through `tail`/`head` — a piped gate has reported RED runs
       # as exit 0 in this org. Use tee + PIPESTATUS if output must be captured.
       - name: Run existing service tests
-        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true' || steps.changed.outputs.admission == 'true'
+        if: steps.changed.outputs.explorer == 'true' || steps.changed.outputs.faucet == 'true' || steps.changed.outputs.admission == 'true' || steps.changed.outputs.mailbox == 'true'
         env:
           EXPLORER: ${{ steps.changed.outputs.explorer }}
           FAUCET: ${{ steps.changed.outputs.faucet }}
           ADMISSION: ${{ steps.changed.outputs.admission }}
+          MAILBOX: ${{ steps.changed.outputs.mailbox }}
         run: |
           set -euo pipefail
           rc=0
@@ -229,4 +236,5 @@ jobs:
           [ "$EXPLORER" = "true" ] && run_tests testnet/explorer
           [ "$FAUCET" = "true" ]   && run_tests testnet/services/faucet
           [ "$ADMISSION" = "true" ] && run_tests testnet/services/bond-admission
+          [ "$MAILBOX" = "true" ]   && run_tests testnet/services/claim-mailbox
           exit $rc

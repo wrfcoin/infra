@@ -135,6 +135,7 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `storage-node` | `never` |
 | `softhsm-init` | `never` |
 | `wrfcoin-bond-admission` | `never` |
+| `wrfcoin-claim-mailbox` | `never` |
 | `softhsm-seed-init` | `never` |
 | `db-migrate` | `never` |
 | `weather-collector` | `never` |

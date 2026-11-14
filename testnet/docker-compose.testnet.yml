@@ -1083,6 +1083,55 @@ services:
         max-file: "3"
 
   # =========================================================================
+  # Claim mailbox (services/claim-mailbox/CLAIM_MAILBOX.md). Default OFF.
+  # Own profile, so no existing `up` starts it. Carries bonded-service claims
+  # from the house consumer (PUT, bearer) to each bond owner's
+  # `wrfcoin node receipt auto` (GET, public). Holds no key. No host port.
+  # =========================================================================
+
+  wrfcoin-claim-mailbox:
+    image: wrfcoin/claim-mailbox:testnet
+    build:
+      context: ..
+      dockerfile: testnet/services/claim-mailbox/Dockerfile
+      args:
+        <<: *infra-build-args
+    container_name: wrfcoin-testnet-claim-mailbox
+    restart: unless-stopped
+    profiles: ["claim-mailbox"]
+    environment:
+      PORT: "8095"
+      CLAIM_MAILBOX_ENABLED: ${CLAIM_MAILBOX_ENABLED:-false}
+      # >= 32 chars; empty = every write refused (503), reads still served.
+      CLAIM_MAILBOX_WRITE_TOKEN: ${CLAIM_MAILBOX_WRITE_TOKEN:-}
+      CLAIM_MAILBOX_TTL_SECONDS: ${CLAIM_MAILBOX_TTL_SECONDS:-129600}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      CLAIM_MAILBOX_PREFIX: "claim-mailbox:"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # =========================================================================
   # WRFCoin Backend API (Node.js main_api_server)
   # =========================================================================
 
