@@ -154,3 +154,4 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `postgres-exporter` | `decided-by-599` |
 | `blackbox-exporter` | `decided-by-599` |
 | `chain-ops-exporter` | `never` |
+| `monitoring-docker-proxy` | `never` |
