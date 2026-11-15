@@ -11,7 +11,7 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 const { createMemoryAddressStore, createMemoryStore, createRedisAddressStore } = require('./store');
 const { createService, loadConfig, registeredServerKey } = require('./server');
-const { parseRecord, publicAddress, recordMessage, recordPeerMessage } = require('./address-record');
+const { canonicalIpv6, parseRecord, publicAddress, recordMessage, recordPeerMessage, verifyStrict } = require('./address-record');
 
 const READ_TOKEN = 'synthetic-node-address-read-token-0123456789'; // secret-leak-ok: fixed synthetic test bearer
 const GENESIS = 'ab'.repeat(32);
@@ -56,31 +56,48 @@ function signed(fields = {}, { server = SERVER, peer = PEER } = {}) {
   return r;
 }
 
-// A fake node: `/node/bonds/<id>` as core4 answers it (server key as a 32-number array).
+// A fake node: `/node/bonds` (list) and `/node/bonds/<id>` as core4 answers them (the
+// server key as a 32-number array; an exiting bond still says REGISTERED on the id route).
+// `reads` counts /node/bonds/<id> reads (roster refresh + per request); `listReads` the list.
 function fakeNode(state) {
   const reads = [];
+  const listReads = [];
   const readNode = async (route) => {
-    reads.push(route);
     if (state.down) throw new Error('down');
+    if (route.startsWith('/node/bonds?')) {
+      listReads.push(route);
+      return {
+        epoch: String(state.epoch), next_after: null,
+        bonds: Object.entries(state.bonds).map(([id, b]) => ({
+          deployment_id: id, status: b.exitAt != null ? 'EXITING' : 'REGISTERED', jailed: !!b.jailed,
+          last_change_epoch: String(b.changed || 1), update_pending: false,
+          exit_effective_height: b.exitAt != null ? String(b.exitAt) : null,
+        })),
+      };
+    }
+    reads.push(route);
     const id = route.replace('/node/bonds/', '');
     const bond = state.bonds[id];
     if (!bond) return { deployment_id: id, status: 'UNKNOWN', epoch: String(state.epoch), height: String(state.height), registration: null };
     return {
       deployment_id: id, status: 'REGISTERED', jailed: !!bond.jailed, epoch: String(state.epoch), height: String(state.height),
-      registration: { binding: { server_key: [...Buffer.from(bond.serverKey, 'hex')] } },
+      registration: {
+        binding: { server_key: [...Buffer.from(bond.serverKey, 'hex')], effective_epoch: bond.effective ?? 1 },
+        exit_effective_height: bond.exitAt ?? null,
+      },
     };
   };
-  return { readNode, reads };
+  return { readNode, reads, listReads };
 }
 
-async function withService(overrides, fn, { state, store } = {}) {
+async function withService(overrides, fn, { state, store, now } = {}) {
   const config = { ...loadConfig({}), addressEnabled: true, ...CHAIN, addressReadToken: READ_TOKEN, ...overrides };
   const nodeState = state || { epoch: 41, height: 27300, bonds: { [BOND]: { serverKey: K } } };
   const node = fakeNode(nodeState);
   const lines = [];
   const service = createService({
     config, store: createMemoryStore(config), addressStore: store || createMemoryAddressStore(config),
-    readNode: node.readNode, log: (l) => lines.push(l),
+    readNode: node.readNode, log: (l) => lines.push(l), now,
   });
   const server = http.createServer((req, res) => { service.handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -94,7 +111,7 @@ async function withService(overrides, fn, { state, store } = {}) {
   };
   const post = (record) => call('POST', '/addresses', { body: record });
   const get = (path, auth = `Bearer ${READ_TOKEN}`) => call('GET', path, { auth });
-  try { await fn({ call, post, get, lines, reads: node.reads, state: nodeState }); } finally { await new Promise((resolve) => server.close(resolve)); }
+  try { await fn({ call, post, get, lines, reads: node.reads, listReads: node.listReads, state: nodeState }); } finally { await new Promise((resolve) => server.close(resolve)); }
 }
 
 test('the preimage and both signatures match core4 byte for byte (frozen vector)', () => {
@@ -125,11 +142,12 @@ test('a bonded node publishes; replays and older records never win and cost no n
     assert.equal(stored.status, 200, JSON.stringify(stored.body));
     assert.equal(stored.body.data.status, 'STORED');
     assert.deepEqual((await get(`/addresses/${K}`)).body.data, first);
-    assert.equal(reads.length, 1);
+    // One roster refresh (this bond's key) plus the per-request bond read.
+    assert.equal(reads.length, 2);
 
     // The same bytes again (the node's timer, or anyone replaying it): unchanged, no node read.
     assert.equal((await post(first)).body.data.status, 'UNCHANGED');
-    assert.equal(reads.length, 1);
+    assert.equal(reads.length, 2);
 
     // A home IP change later in the epoch: newer height wins.
     const moved = signed({ height: '27310', multiaddrs: [`/ip4/198.51.99.9/tcp/9000/p2p/${PEER_ID}`] });
@@ -171,11 +189,16 @@ test('only the registered server key of a live bond, for this epoch, is accepted
     // An older record is refused from the store, even with the node down; a new one needs the node: 503.
     state.down = true;
     assert.equal(await code(signed({ height: '27305', multiaddrs: [`/ip4/198.51.99.8/tcp/9000/p2p/${PEER_ID}`] }) ), '409 STALE_RECORD');
+    // A newer record for a known bond needs the per-request read: 503, retry later.
+    assert.equal(await code(signed({ height: '27312' })), '503 NODE_UNAVAILABLE');
+    // A bond the cached roster does not know yet is refused without any node read.
     const fresh = keyFromSeed(13);
     state.bonds['04'.repeat(32)] = { serverKey: fresh.pub.toString('hex') };
-    assert.equal(await code(signed({ deployment_id: '04'.repeat(32) }, { server: fresh })), '503 NODE_UNAVAILABLE');
+    assert.equal(await code(signed({ deployment_id: '04'.repeat(32) }, { server: fresh })), '403 NOT_BONDED');
     state.down = false;
-    assert.ok(reads.length >= 7);
+    // One roster read (BOND; the jailed bond is dropped from the list), then one per-request
+    // read each for the three epoch/height refusals and the stored record. Nothing else.
+    assert.equal(reads.length, 5);
     assert.equal((await get(`/addresses/${other.pub.toString('hex')}`)).status, 404);
   }, { state });
 });
@@ -196,9 +219,15 @@ test('the chain identity, both signatures and the shape are checked before any n
     for (const addr of ['10.0.0.5', '192.168.0.110', '100.64.1.1', '127.0.0.1', '203.0.113.7']) {
       assert.equal(await code(signed({ multiaddrs: [`/ip4/${addr}/tcp/9000/p2p/${PEER_ID}`] })), '422 ADDRESS_NOT_PUBLIC', addr);
     }
-    for (const addr of ['::1', '::ffff:198.51.99.7', 'fd00::1', 'fe80::1', '2002:c633:6307::1', '2001:0:1::1', '2001:db8::1']) {
+    for (const addr of ['10.0.0.6', '192.88.99.1']) {
+      assert.equal(await code(signed({ multiaddrs: [`/ip4/${addr}/tcp/9000/p2p/${PEER_ID}`] })), '422 ADDRESS_NOT_PUBLIC', addr);
+    }
+    for (const addr of ['::1', '::ffff:198.51.99.7', 'fd00::1', 'fe80::1', '2002:c633:6307::1', '2001:0:1::1', '2001:db8::1',
+      '2001:2::1', '2001:10::1', '2001:2f::1', '3fff::1', '2a01:04f8::1', '2a01:4f8:0:0:0:0:0:1']) {
       assert.equal(await code(signed({ multiaddrs: [`/ip6/${addr}/tcp/9000/p2p/${PEER_ID}`] })), '422 ADDRESS_NOT_PUBLIC', addr);
     }
+    // Upper-case hex never matches the multiaddr shape at all.
+    assert.equal(await code(signed({ multiaddrs: [`/ip6/2a01:4F8::1/tcp/9000/p2p/${PEER_ID}`] })), '400 INVALID_RECORD');
     const shapes = [
       { ...good, extra: 1 }, (({ peer_signature, ...rest }) => rest)(good), { ...good, version: 2 },
       { ...good, epoch: 41 }, { ...good, epoch: '041' }, { ...good, server_key: K.toUpperCase() },
@@ -272,6 +301,83 @@ test('reads need the house consumer bearer; records expire after the TTL', async
   });
 });
 
+test('exiting, not-yet-effective and unknown bonds are refused; fresh keys cost no per-request node read', async () => {
+  const k6 = keyFromSeed(31);
+  const k7 = keyFromSeed(32);
+  const state = {
+    epoch: 41, height: 27300,
+    bonds: { [BOND]: { serverKey: K }, ['06'.repeat(32)]: { serverKey: k6.pub.toString('hex'), exitAt: 30000 },
+      ['07'.repeat(32)]: { serverKey: k7.pub.toString('hex'), effective: 42 } },
+  };
+  await withService({}, async ({ post, reads, listReads }) => {
+    const code = async (record) => { const r = await post(record); return `${r.status} ${r.body.error && r.body.error.code}`; };
+    // Exiting (the list says EXITING; the roster drops it).
+    assert.equal(await code(signed({ deployment_id: '06'.repeat(32) }, { server: k6 })), '403 NOT_BONDED');
+    // Registered, but its binding takes effect next epoch.
+    assert.equal(await code(signed({ deployment_id: '07'.repeat(32) }, { server: k7 })), '403 NOT_BONDED');
+    assert.equal((await post(signed())).status, 200);
+    // The bond starts exiting after the roster was cached: the per-request read refuses it.
+    state.bonds[BOND].exitAt = 31000;
+    assert.equal(await code(signed({ height: '27305' })), '403 NOT_BONDED');
+    // Twenty fresh keys with made-up bond ids: refused from the cached roster, no further node read at all.
+    const before = { reads: reads.length, list: listReads.length };
+    for (let i = 0; i < 20; i += 1) {
+      const k = keyFromSeed(100 + i);
+      assert.equal(await code(signed({ deployment_id: (100 + i).toString(16).padStart(2, '0').repeat(32) }, { server: k })), '403 NOT_BONDED');
+    }
+    assert.deepEqual({ reads: reads.length, list: listReads.length }, before);
+    assert.equal(listReads.length, 1);
+  }, { state });
+});
+
+test('the roster refreshes after its TTL, reading only new or changed bonds', async () => {
+  let now = 10_000_000;
+  const fresh = keyFromSeed(41);
+  const state = { epoch: 41, height: 27300, bonds: { [BOND]: { serverKey: K } } };
+  await withService({}, async ({ post, reads, listReads }) => {
+    assert.equal((await post(signed())).status, 200);
+    state.bonds['08'.repeat(32)] = { serverKey: fresh.pub.toString('hex') };
+    const r = signed({ deployment_id: '08'.repeat(32) }, { server: fresh });
+    assert.equal((await post(r)).body.error.code, 'NOT_BONDED'); // roster still fresh
+    now += 61_000;
+    const n = reads.length;
+    assert.equal((await post(r)).status, 200);
+    assert.equal(listReads.length, 2);
+    // The refresh read only the new bond (BOND was unchanged), then the per-request read.
+    assert.deepEqual(reads.slice(n), [`/node/bonds/${'08'.repeat(32)}`, `/node/bonds/${'08'.repeat(32)}`]);
+  }, { state, now: () => now });
+});
+
+test('strict Ed25519: small-order keys, the universal signature and S >= L are refused', async () => {
+  const identity = Buffer.alloc(32); identity[0] = 1;
+  const universal = Buffer.alloc(64); universal[0] = 1; // R = identity, S = 0
+  const msg = Buffer.from('any message at all');
+  // The vector a permissive verifier accepts for a small-order key; the strict check never does.
+  assert.equal(verifyStrict(msg, identity, universal), false);
+  const L = (1n << 252n) + 27742317777372353535851937790883648493n;
+  await withService({}, async ({ post, reads }) => {
+    const code = async (record) => { const r = await post(record); return `${r.status} ${r.body.error && r.body.error.code}`; };
+    // Small-order server key with the universal signature.
+    assert.equal(await code({ ...signed(), server_key: identity.toString('hex'), signature: universal.toString('hex') }), '403 BAD_SIGNATURE');
+    // Small-order peer key (a peer id embedding the identity point) with the universal signature.
+    const weakPeer = peerIdOf(identity);
+    const weak = { ...signed(), peer_id: weakPeer, multiaddrs: [`/ip4/198.51.99.7/tcp/9000/p2p/${weakPeer}`] };
+    weak.signature = crypto.sign(null, recordMessage(weak), SERVER.key).toString('hex');
+    weak.peer_signature = universal.toString('hex');
+    assert.equal(await code(weak), '403 BAD_SIGNATURE');
+    // A malleated signature: S + L.
+    const good = signed();
+    const sig = Buffer.from(good.signature, 'hex');
+    let sv = 0n;
+    for (let i = 63; i >= 32; i -= 1) sv = (sv << 8n) | BigInt(sig[i]);
+    sv += L;
+    for (let i = 32; i < 64; i += 1) { sig[i] = Number(sv & 0xffn); sv >>= 8n; }
+    assert.equal(await code({ ...good, signature: sig.toString('hex') }), '403 BAD_SIGNATURE');
+    assert.equal(reads.length, 0);
+    assert.equal((await post(good)).status, 200);
+  });
+});
+
 test('config: address defaults and strict numbers', () => {
   const c = loadConfig({});
   assert.equal(c.addressEnabled, false);
@@ -287,6 +393,10 @@ test('config: address defaults and strict numbers', () => {
   assert.equal(publicAddress('ip4', '198.51.99.7'), true);
   assert.equal(publicAddress('ip6', '2a01:4f8::1'), true);
   assert.equal(publicAddress('ip4', '010.0.0.1'), false);
+  assert.equal(canonicalIpv6([0x2a01, 0x4f8, 0, 0, 1, 0, 0, 1]), '2a01:4f8::1:0:0:1');
+  assert.equal(canonicalIpv6([0x2a01, 0, 0x4f8, 0, 0, 0, 0, 1]), '2a01:0:4f8::1');
+  assert.equal(canonicalIpv6([0x2a01, 0x4f8, 1, 2, 3, 4, 5, 0]), '2a01:4f8:1:2:3:4:5:0');
+  assert.equal(loadConfig({}).rosterTtlSeconds, 60);
 });
 
 test('redis address store: newer wins, replay unchanged, index and expiry through the real Lua', { skip: !process.env.CLAIM_MAILBOX_TEST_REDIS_URL }, async () => {

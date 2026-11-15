@@ -67,6 +67,8 @@ function loadConfig(env = process.env) {
     nodeReadsInFlight: int(env.NODE_ADDRESS_NODE_READS_IN_FLIGHT, 2, 1, 16),
     nodeReadsPerMinute: int(env.NODE_ADDRESS_NODE_READS_PER_MINUTE, 60, 1, 600),
     maxHeightAhead: int(env.NODE_ADDRESS_MAX_HEIGHT_AHEAD, 10, 0, 512),
+    // The cached roster of bonded server keys: refreshed at most this often.
+    rosterTtlSeconds: int(env.NODE_ADDRESS_ROSTER_TTL_SECONDS, 60, 0, 3600),
   };
 }
 
@@ -190,7 +192,64 @@ function addressConfigured(config) {
     && /^[0-9a-f]{64}$/.test(config.genesisHash);
 }
 
+// The roster of bonded server keys, cached so an unknown K is refused without any
+// per-request node read (anyone can make a fresh key that signs a valid record).
+// Refreshed at most once per rosterTtlSeconds, on demand: one keyset-paged
+// /node/bonds list, then /node/bonds/<id> only for bonds that are new or changed
+// since the last refresh. Only REGISTERED (not exiting), not jailed bonds are kept.
+// Bounded at MAX_ROSTER bonds. A failed refresh keeps the last roster for up to
+// 10 TTLs, then refuses with NODE_UNAVAILABLE.
+const MAX_ROSTER = 256;
+
+function createRoster({ readNode, ttlMs, now }) {
+  let bonds = new Map(); // deployment id -> { key, change }
+  let refreshedAt = -Infinity;
+  let pending = null;
+
+  async function refresh() {
+    const next = new Map();
+    let after = '';
+    for (let page = 0; page < Math.ceil(MAX_ROSTER / 200) + 1 && next.size < MAX_ROSTER; page += 1) {
+      const list = await readNode(`/node/bonds?limit=200${after ? `&after=${after}` : ''}`);
+      for (const row of Array.isArray(list?.bonds) ? list.bonds : []) {
+        if (next.size >= MAX_ROSTER) break;
+        const id = row?.deployment_id;
+        if (typeof id !== 'string' || !/^[0-9a-f]{64}$/.test(id)) continue;
+        if (row.status !== 'REGISTERED' || row.jailed === true || row.exit_effective_height != null) continue;
+        const change = `${row.last_change_epoch}|${row.update_pending === true}`;
+        const old = bonds.get(id);
+        if (old && old.change === change) { next.set(id, old); continue; }
+        const bond = await readNode(`/node/bonds/${id}`);
+        const key = registeredServerKey(bond);
+        if (key) next.set(id, { key, change });
+      }
+      after = typeof list?.next_after === 'string' && /^[0-9a-f]{64}$/.test(list.next_after) ? list.next_after : '';
+      if (!after) break;
+    }
+    bonds = next;
+    refreshedAt = now();
+  }
+
+  return {
+    // The registered server key of a live bond, or null. Throws when no fresh-enough roster exists.
+    async keyOf(deploymentId) {
+      if (now() - refreshedAt >= ttlMs) {
+        pending = pending || refresh().finally(() => { pending = null; });
+        try {
+          await pending;
+        } catch (_error) {
+          if (now() - refreshedAt >= Math.max(ttlMs, 1000) * 10) {
+            throw new MailboxError(503, 'NODE_UNAVAILABLE', 'The bond roster could not be read from the node');
+          }
+        }
+      }
+      return bonds.get(deploymentId)?.key || null;
+    },
+  };
+}
+
 function createAddressService({ config, addressStore, readNode, log, now = () => Date.now() }) {
+  const roster = createRoster({ readNode, ttlMs: config.rosterTtlSeconds * 1000, now });
   let inFlight = 0;
   let windowStart = 0;
   let windowReads = 0;
@@ -241,12 +300,19 @@ function createAddressService({ config, addressStore, readNode, log, now = () =>
       const [ce, ch, re, rh] = [current.epoch, current.height, record.epoch, record.height].map(BigInt);
       if (re < ce || (re === ce && rh <= ch)) throw decide(409, 'STALE_RECORD', 'A newer record for this server key is already stored');
     }
+    // Only a bonded node's K gets past here, from the cached roster: a fresh key
+    // costs no per-request node read and no budget.
+    const rosterKey = await roster.keyOf(record.deployment_id);
+    if (!rosterKey) throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is exiting or jailed) on chain');
+    if (rosterKey !== record.server_key) throw decide(403, 'SERVER_KEY_MISMATCH', 'K is not this bond\'s registered server key');
+    // Counted only after both signatures verified and K is bonded: only K's holder spends K's budget.
     if (await addressStore.hit(record.server_key) > config.addressWritesPerHour) {
       throw decide(429, 'RATE_LIMITED', `At most ${config.addressWritesPerHour} records an hour per server key`);
     }
     const bond = await throttledRead(`/node/bonds/${record.deployment_id}`);
-    if (bond?.status !== 'REGISTERED' || bond?.jailed === true) {
-      throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is jailed) on chain');
+    // An exiting bond still reads REGISTERED until its exit takes effect: refuse it too.
+    if (bond?.status !== 'REGISTERED' || bond?.jailed === true || bond?.registration?.exit_effective_height != null) {
+      throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is exiting or jailed) on chain');
     }
     if (registeredServerKey(bond) !== record.server_key) {
       throw decide(403, 'SERVER_KEY_MISMATCH', 'K is not this bond\'s registered server key');
@@ -254,6 +320,10 @@ function createAddressService({ config, addressStore, readNode, log, now = () =>
     const epoch = typeof bond.epoch === 'string' && /^\d{1,15}$/.test(bond.epoch) ? BigInt(bond.epoch) : null;
     const height = typeof bond.height === 'string' && /^\d{1,15}$/.test(bond.height) ? BigInt(bond.height) : null;
     if (epoch === null || height === null) throw decide(503, 'NODE_UNAVAILABLE', 'The node did not report the epoch');
+    const effective = bond?.registration?.binding?.effective_epoch;
+    if (!Number.isSafeInteger(effective) || BigInt(effective) > BigInt(record.epoch)) {
+      throw decide(403, 'NOT_BONDED', 'This bond is not in effect for the record epoch');
+    }
     if (BigInt(record.epoch) < epoch) throw decide(409, 'STALE_EPOCH', 'The record is for an earlier epoch');
     if (BigInt(record.epoch) > epoch) throw decide(409, 'FUTURE_EPOCH', 'The record is for a later epoch than the chain');
     if (BigInt(record.height) > height + BigInt(config.maxHeightAhead)) {

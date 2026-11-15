@@ -50,7 +50,7 @@ const NOT_PUBLIC_V4 = new net.BlockList();
 for (const [address, prefix] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
   ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15],
-  ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
+  ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4], ['192.88.99.0', 24],
 ]) NOT_PUBLIC_V4.addSubnet(address, prefix, 'ipv4');
 
 function ipv6Groups(address) {
@@ -64,15 +64,78 @@ function ipv6Groups(address) {
   return groups.map((g) => parseInt(g, 16));
 }
 
-// Global unicast (2000::/3) only, minus Teredo (2001::/32), docs (2001:db8::/32), 6to4 (2002::/16).
+// RFC 5952 text, the form core4's CLI writes (Rust `Ipv6Addr` Display): lowercase, no
+// leading zeros, the longest run of two or more zero groups (leftmost on a tie) as `::`.
+function canonicalIpv6(g) {
+  let best = -1;
+  let bestLen = 1;
+  for (let i = 0; i < 8;) {
+    if (g[i] !== 0) { i += 1; continue; }
+    let j = i;
+    while (j < 8 && g[j] === 0) j += 1;
+    if (j - i > bestLen) { best = i; bestLen = j - i; }
+    i = j;
+  }
+  const hex = g.map((x) => x.toString(16));
+  if (best < 0) return hex.join(':');
+  return `${hex.slice(0, best).join(':')}::${hex.slice(best + bestLen).join(':')}`;
+}
+
+// Global unicast (2000::/3) only, minus Teredo (2001::/32), benchmarking (2001:2::/48),
+// ORCHID (2001:10::/28), ORCHIDv2 (2001:20::/28), docs (2001:db8::/32, 3fff::/20) and
+// 6to4 (2002::/16). Must be written in canonical form, as core4 writes it.
 function publicAddress(family, address) {
   if (family === 'ip4') return IPV4.test(address) && !NOT_PUBLIC_V4.check(address, 'ipv4');
   if (net.isIP(address) !== 6) return false;
   const g = ipv6Groups(address);
-  if (!g) return false;
+  if (!g || canonicalIpv6(g) !== address) return false;
   if (g[0] < 0x2000 || g[0] > 0x3fff) return false;
-  if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return false;
+  if (g[0] === 0x2001 && (g[1] === 0 || (g[1] === 2 && g[2] === 0) || (g[1] & 0xfff0) === 0x10
+    || (g[1] & 0xfff0) === 0x20 || g[1] === 0xdb8)) return false;
+  if (g[0] === 0x3fff && (g[1] & 0xf000) === 0) return false;
   return g[0] !== 0x2002;
+}
+
+// Strict Ed25519, to match core4 (ed25519-dalek verify_strict): OpenSSL's verify accepts a
+// small-order public key with R = identity and S = 0 for ANY message. Refuse small-order and
+// non-canonical encodings of A and R, and S >= L, before calling crypto.verify.
+const P = (1n << 255n) - 19n;
+const L = (1n << 252n) + 27742317777372353535851937790883648493n;
+// libsodium's small-order list (compared with the sign bit cleared): the 8-torsion points
+// plus the non-canonical encodings of y = p and p + 1.
+const SMALL_ORDER = [
+  '0000000000000000000000000000000000000000000000000000000000000000',
+  '0100000000000000000000000000000000000000000000000000000000000000',
+  '26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05',
+  'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a',
+  'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+].map((h) => Buffer.from(h, 'hex'));
+
+function littleEndian(bytes) {
+  let n = 0n;
+  for (let i = bytes.length - 1; i >= 0; i -= 1) n = (n << 8n) | BigInt(bytes[i]);
+  return n;
+}
+
+function strongPoint(bytes) {
+  if (bytes.length !== 32) return false;
+  const cleared = Buffer.from(bytes);
+  cleared[31] &= 0x7f;
+  if (littleEndian(cleared) >= P) return false; // non-canonical y
+  return !SMALL_ORDER.some((weak) => weak.equals(cleared));
+}
+
+function verifyStrict(message, publicKey, signature) {
+  if (!strongPoint(publicKey) || signature.length !== 64) return false;
+  if (!strongPoint(signature.subarray(0, 32))) return false;
+  if (littleEndian(signature.subarray(32)) >= L) return false;
+  try {
+    return crypto.verify(null, message, ed25519Key(publicKey), signature);
+  } catch (_error) {
+    return false;
+  }
 }
 
 function decodePeerPublicKey(peerId) {
@@ -160,19 +223,14 @@ function parseRecord(body, { chainId, networkId, genesisHash }) {
     throw new RecordError('WRONG_CHAIN', 'The record is for another chain, network or genesis');
   }
   const peerKey = decodePeerPublicKey(body.peer_id);
-  let ok = false;
-  try {
-    ok = crypto.verify(null, recordMessage(body), ed25519Key(Buffer.from(body.server_key, 'hex')), Buffer.from(body.signature, 'hex'))
-      && crypto.verify(null, recordPeerMessage(body), ed25519Key(peerKey), Buffer.from(body.peer_signature, 'hex'));
-  } catch (_error) {
-    ok = false;
-  }
+  const ok = verifyStrict(recordMessage(body), Buffer.from(body.server_key, 'hex'), Buffer.from(body.signature, 'hex'))
+    && verifyStrict(recordPeerMessage(body), peerKey, Buffer.from(body.peer_signature, 'hex'));
   if (!ok) throw new RecordError('BAD_SIGNATURE', 'The server or peer signature does not verify');
   // One canonical field order, so the same record always stores as the same text.
   return Object.fromEntries(FIELDS.map((f) => [f, f === 'multiaddrs' ? [...body.multiaddrs] : body[f]]));
 }
 
 module.exports = {
-  MAX_ADDRESSES, RECORD_DOMAIN, RECORD_PEER_DOMAIN, RecordError, decodePeerPublicKey, parseRecord, publicAddress,
-  recordMessage, recordPeerMessage,
+  MAX_ADDRESSES, RECORD_DOMAIN, RECORD_PEER_DOMAIN, RecordError, canonicalIpv6, decodePeerPublicKey, parseRecord,
+  publicAddress, recordMessage, recordPeerMessage, strongPoint, verifyStrict,
 };
