@@ -236,5 +236,20 @@ jobs:
           [ "$EXPLORER" = "true" ] && run_tests testnet/explorer
           [ "$FAUCET" = "true" ]   && run_tests testnet/services/faucet
           [ "$ADMISSION" = "true" ] && run_tests testnet/services/bond-admission
-          [ "$MAILBOX" = "true" ]   && run_tests testnet/services/claim-mailbox
+          if [ "$MAILBOX" = "true" ]; then
+            # The claim mailbox's Redis suites (claims + node address records) run the real Lua
+            # scripts only with CLAIM_MAILBOX_TEST_REDIS_URL set: a throwaway Redis on this hosted
+            # runner, loopback only, no persistence, removed at the end of the job.
+            docker run -d --rm --name ci-claim-mailbox-redis -p 127.0.0.1:6399:6379 redis:7.4-alpine \
+              redis-server --save '' --appendonly no >/dev/null
+            for _ in $(seq 1 30); do
+              docker exec ci-claim-mailbox-redis redis-cli ping 2>/dev/null | grep -q PONG && break
+              sleep 1
+            done
+            docker exec ci-claim-mailbox-redis redis-cli ping | grep -q PONG || { echo "::error::throwaway Redis did not start"; exit 1; }
+            export CLAIM_MAILBOX_TEST_REDIS_URL=redis://127.0.0.1:6399
+            run_tests testnet/services/claim-mailbox
+            unset CLAIM_MAILBOX_TEST_REDIS_URL
+            docker rm -f ci-claim-mailbox-redis >/dev/null || true
+          fi
           exit $rc

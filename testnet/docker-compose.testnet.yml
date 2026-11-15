@@ -1107,6 +1107,19 @@ services:
       CLAIM_MAILBOX_TTL_SECONDS: ${CLAIM_MAILBOX_TTL_SECONDS:-129600}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       CLAIM_MAILBOX_PREFIX: "claim-mailbox:"
+      # Node address records (services/claim-mailbox/NODE_ADDRESSES.md). Own switch, default OFF.
+      NODE_ADDRESS_ENABLED: ${NODE_ADDRESS_ENABLED:-false}
+      # Must be 888 on the live testnet (the CT101 .env sets it); records for any other chain are refused.
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      WRFCOIN_NETWORK_ID: testnet
+      # 64 hex; empty = publishing refused (503 NOT_CONFIGURED).
+      WRFCOIN_GENESIS_HASH: ${WRFCOIN_GENESIS_HASH:-}
+      NODE_ADDRESS_NODE_URL: http://wrfcoin-node:8556
+      # /node/bonds needs a Reader bearer on the node (same fallback as bond admission).
+      NODE_ADDRESS_NODE_READER_TOKEN: ${NODE_ADDRESS_NODE_READER_TOKEN:-${WRFCOIN_READER_TOKEN:-}}
+      # The house consumer's read bearer, >= 32 chars; empty = reads refused (503).
+      NODE_ADDRESS_READ_TOKEN: ${NODE_ADDRESS_READ_TOKEN:-}
+      NODE_ADDRESS_TTL_SECONDS: ${NODE_ADDRESS_TTL_SECONDS:-118272}
     depends_on:
       redis:
         condition: service_healthy

@@ -256,6 +256,8 @@ EXPECTED = {
     # 48 KiB (the backend's cap); the recent list is a public read.
     "public_bond_admission": ("POST", "path /api/bond-admission", ("request_body {", "max_size 49152", "}", *BACKEND)),
     "public_readonly_bond_admission_recent": ("GET", "path /api/bond-admission/recent", BACKEND),
+    # node-address-routes.ts (epic 6, option B): a node's own signed address record, 4 KiB.
+    "public_node_address_publish": ("POST", "path /api/node-addresses", ("request_body {", "max_size 4096", "}", *BACKEND)),
     "public_forecasts_mine": ("GET", "path /api/forecasts/mine", BACKEND),
     "public_forecasts_draft": ("POST", "path /api/forecasts/draft", ("request_body {", "max_size 2048", "}", *BACKEND)),
     "public_forecasts_submit": ("POST", "path /api/forecasts/submit", ("request_body {", "max_size 8192", "}", *BACKEND)),
@@ -393,6 +395,7 @@ GATED = frozenset({
     "public_readonly_forecasts_status",
     "public_bond_admission",
     "public_readonly_bond_admission_recent",
+    "public_node_address_publish",
     "public_forecasts_mine",
     "public_forecasts_draft",
     "public_forecasts_submit",
@@ -458,7 +461,7 @@ BEARER_LOCK = {
     "public_forecasts_submit": 'header Authorization "Bearer *"',
 }
 # JSON-body writes: the matcher also pins Content-Type (last directive).
-JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_bond_admission", "public_notifications_unsubscribe",
+JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_bond_admission", "public_node_address_publish", "public_notifications_unsubscribe",
     "public_notifications_passkey_challenge", "public_notifications_passkey_subscribe", "public_notifications_passkey_unsubscribe",
     "public_wallet_security_key_actions", "public_wallet_send_allowlist_actions",
     "public_governance_advisory_actions",
@@ -531,6 +534,7 @@ READONLY_QUERY_LOCK = {
     "public_readonly_forecasts_status": 'expression `{query} == ""`',
     "public_bond_admission": 'expression `{query} == ""`',
     "public_readonly_bond_admission_recent": 'expression `{query} == ""`',
+    "public_node_address_publish": 'expression `{query} == ""`',
     "public_forecasts_mine": 'expression `{query} == ""`',
     "public_forecasts_draft": 'expression `{query} == ""`',
     "public_forecasts_submit": 'expression `{query} == ""`',
@@ -802,7 +806,7 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write", "bond_admission", "governance_advisory_write"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write", "bond_admission", "node_address_write", "governance_advisory_write"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
@@ -871,6 +875,16 @@ def verify(root: Path = ROOT) -> None:
             "}",
             "key {client_ip}",
             "events 3",
+            "window 1m",
+        ],
+        # Epic 6 option B: node address record writes (each may cost the mailbox one node read).
+        "node_address_write": [
+            "match {",
+            "method POST",
+            "path /api/node-addresses",
+            "}",
+            "key {client_ip}",
+            "events 4",
             "window 1m",
         ],
         # backend#58: website forecast writes (each may relay to the node under the site's one credential).
@@ -1648,6 +1662,17 @@ def self_test() -> None:
             lambda s: s.replace(
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 8192",
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 1048576",
+            ),
+        ),
+        "node address publish ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/node-addresses\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/node-addresses\n"),
+        ),
+        "node address publish body cap raised": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @public_node_address_publish {\n\t\trequest_body {\n\t\t\tmax_size 4096",
+                "handle @public_node_address_publish {\n\t\trequest_body {\n\t\t\tmax_size 65536",
             ),
         ),
         "bond admission ungated": (
