@@ -1446,6 +1446,27 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Node address records (epic 6, option B; backend node-address-routes.ts -> infra claim-mailbox
+	# /addresses). A bonded node's `wrfcoin node address publish` posts its own signed "server key K is
+	# at this address" record once an epoch. No bearer: the record's server-key and peer signatures are
+	# the proof, and the mailbox checks K against the bond on chain. JSON only, 4 KiB, exact path, no
+	# query. Reads never come through the edge (house consumer bearer, inside the network only). Each
+	# POST can cost the mailbox one node read, so writes get their own small zone node_address_write.
+	# The backend answers 404 until NODE_ADDRESS_PROXY_ENABLED=true.
+	@public_node_address_publish {
+		method POST
+		path /api/node-addresses
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+		header Content-Type application/json
+	}
+	handle @public_node_address_publish {
+		request_body {
+			max_size 4096
+		}
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Make a forecast from the website (epic 7; backend#58 website-forecast-routes.ts, frontend /forecast/new).
 	# The status read is public; the draft, the signed submit and the caller's own list need a wallet login
 	# Bearer (the backend verifies it and reads the forecaster from it). Exact paths, no query, JSON writes:
@@ -1681,6 +1702,17 @@
 			}
 			key {client_ip}
 			events 3
+			window 1m
+		}
+		# Node address records (epic 6, option B): a node posts one record a timer run (every 30 min);
+		# each may cost the mailbox one node read. The mailbox limits again (6 new records an hour per K).
+		zone node_address_write {
+			match {
+				method POST
+				path /api/node-addresses
+			}
+			key {client_ip}
+			events 4
 			window 1m
 		}
 		# Website forecasts (backend#58): each draft or submit can end in a node relay under the site's one

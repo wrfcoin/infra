@@ -70,3 +70,8 @@ port: once the follow-up backend proxy and edge rule land, only the backend reac
 
 Off switch: `CLAIM_MAILBOX_ENABLED=false` and recreate the container. Owners then simply find no claim
 (`NO_CLAIM`, exit 0); nothing on chain changes.
+
+## Node address records
+
+The same service also keeps each bonded node's own signed address record, under its own switch
+(`NODE_ADDRESS_ENABLED`, default off). See [NODE_ADDRESSES.md](NODE_ADDRESSES.md).

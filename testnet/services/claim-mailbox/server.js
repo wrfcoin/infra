@@ -17,9 +17,11 @@
 
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { MAX_CLAIMS, createMemoryStore, createRedisStore } = require('./store');
+const { MAX_CLAIMS, createMemoryAddressStore, createMemoryStore, createRedisAddressStore, createRedisStore } = require('./store');
+const { RecordError, parseRecord } = require('./address-record');
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_RECORD_BYTES = 4 * 1024;
 const MAX_CLAIM_HEX = 2 * 1536; // core4 MAX_NODE_CLAIM_BYTES
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX = /^(?:[0-9a-f]{2})+$/;
@@ -50,6 +52,21 @@ function loadConfig(env = process.env) {
     port: int(env.PORT, 8095, 1, 65535),
     // About three chain-888 epochs (512 blocks at ~77 s is ~11 h each).
     ttlSeconds: int(env.CLAIM_MAILBOX_TTL_SECONDS, 129600, 3600, 1209600),
+    // Node address records (NODE_ADDRESSES.md). A separate switch, default OFF.
+    addressEnabled: env.NODE_ADDRESS_ENABLED === 'true',
+    chainId: env.WRFCOIN_CHAIN_ID || '',
+    networkId: env.WRFCOIN_NETWORK_ID || '',
+    genesisHash: (env.WRFCOIN_GENESIS_HASH || '').toLowerCase().replace(/^0x/, ''),
+    nodeUrl: (env.NODE_ADDRESS_NODE_URL || 'http://127.0.0.1:8556').replace(/\/+$/, ''),
+    nodeReaderToken: env.NODE_ADDRESS_NODE_READER_TOKEN || '',
+    // The house consumer's bearer for reads; under 32 characters = reads refused (503).
+    addressReadToken: env.NODE_ADDRESS_READ_TOKEN || '',
+    // Three chain-888 epochs: 3 x 512 blocks x ~77 s.
+    addressTtlSeconds: int(env.NODE_ADDRESS_TTL_SECONDS, 118272, 3600, 1209600),
+    addressWritesPerHour: int(env.NODE_ADDRESS_WRITES_PER_HOUR, 6, 1, 60),
+    nodeReadsInFlight: int(env.NODE_ADDRESS_NODE_READS_IN_FLIGHT, 2, 1, 16),
+    nodeReadsPerMinute: int(env.NODE_ADDRESS_NODE_READS_PER_MINUTE, 60, 1, 600),
+    maxHeightAhead: int(env.NODE_ADDRESS_MAX_HEIGHT_AHEAD, 10, 0, 512),
   };
 }
 
@@ -118,14 +135,14 @@ function sendError(res, error) {
   return send(res, 500, { ok: false, error: { code: 'MAILBOX_FAILED', message: 'Claim mailbox failed' } });
 }
 
-function readBody(req) {
+function readBody(req, limit = MAX_BODY_BYTES, tooLarge = 'CLAIMS_TOO_LARGE') {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        reject(new MailboxError(413, 'CLAIMS_TOO_LARGE', 'Request too large'));
+      if (size > limit) {
+        reject(new MailboxError(413, tooLarge, 'Request too large'));
         req.destroy();
         return;
       }
@@ -135,14 +152,163 @@ function readBody(req) {
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       } catch (_error) {
-        reject(new MailboxError(400, 'INVALID_CLAIMS', 'Body must be JSON'));
+        reject(new MailboxError(400, tooLarge === 'CLAIMS_TOO_LARGE' ? 'INVALID_CLAIMS' : 'INVALID_RECORD', 'Body must be JSON'));
       }
     });
     req.on('error', reject);
   });
 }
 
-function createService({ config, store, log = () => {} }) {
+function createNodeReader({ nodeUrl, nodeReaderToken }) {
+  return async (route) => {
+    const response = await fetch(`${nodeUrl}${route}`, {
+      headers: nodeReaderToken ? { Authorization: `Bearer ${nodeReaderToken}` } : {},
+      redirect: 'manual',
+      signal: AbortSignal.timeout(5000),
+    });
+    const text = await response.text();
+    if (text.length > 256 * 1024) throw new Error('node answer too large');
+    const body = JSON.parse(text);
+    if (!response.ok || body?.ok === false || body?.error) throw new Error('node read refused');
+    return body?.data ?? body;
+  };
+}
+
+// `/node/bonds/<id>` names the binding's server key as a 32-number array
+// (serde of [u8; 32]); hex is accepted too.
+function registeredServerKey(bond) {
+  const key = bond?.registration?.binding?.server_key;
+  if (typeof key === 'string') return key.toLowerCase().replace(/^0x/, '');
+  if (Array.isArray(key) && key.length === 32 && key.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) {
+    return Buffer.from(key).toString('hex');
+  }
+  return null;
+}
+
+function addressConfigured(config) {
+  return /^[0-9A-Za-z_-]{1,32}$/.test(config.chainId) && /^[0-9A-Za-z_-]{1,32}$/.test(config.networkId)
+    && /^[0-9a-f]{64}$/.test(config.genesisHash);
+}
+
+function createAddressService({ config, addressStore, readNode, log, now = () => Date.now() }) {
+  let inFlight = 0;
+  let windowStart = 0;
+  let windowReads = 0;
+
+  // Bounds node reads: a few in flight and a per-minute budget, else 429 BUSY.
+  async function throttledRead(route) {
+    const t = now();
+    if (t - windowStart >= 60000) { windowStart = t; windowReads = 0; }
+    if (inFlight >= config.nodeReadsInFlight || windowReads >= config.nodeReadsPerMinute) {
+      throw new MailboxError(429, 'BUSY', 'Too many address records right now; try again later');
+    }
+    inFlight += 1;
+    windowReads += 1;
+    try {
+      return await readNode(route);
+    } catch (_error) {
+      throw new MailboxError(503, 'NODE_UNAVAILABLE', 'The bond could not be read from the node');
+    } finally {
+      inFlight -= 1;
+    }
+  }
+
+  async function publish(req) {
+    if (!addressConfigured(config)) throw new MailboxError(503, 'NOT_CONFIGURED', 'Chain identity is not configured');
+    let record;
+    try {
+      record = parseRecord(await readBody(req, MAX_RECORD_BYTES, 'RECORD_TOO_LARGE'), config);
+    } catch (error) {
+      if (error instanceof RecordError) {
+        const status = error.code === 'BAD_SIGNATURE' ? 403 : error.code === 'ADDRESS_NOT_PUBLIC' ? 422 : 400;
+        throw new MailboxError(status, error.code, error.message);
+      }
+      throw error;
+    }
+    const k = record.server_key.slice(0, 8);
+    const decide = (status, code, message) => {
+      log(`[claim-mailbox] address decision=${code} key=${k} epoch=${record.epoch}`);
+      return new MailboxError(status, code, message);
+    };
+    // A replay of what is stored, or of anything older, is answered from the
+    // store without a node read and without spending K's budget: only a record
+    // newer than the stored one (which only K's holder can sign) counts.
+    const current = await addressStore.get(record.server_key);
+    if (current) {
+      if (JSON.stringify(current) === JSON.stringify(record)) {
+        return { status: 'UNCHANGED', server_key: record.server_key, epoch: record.epoch, height: record.height };
+      }
+      const [ce, ch, re, rh] = [current.epoch, current.height, record.epoch, record.height].map(BigInt);
+      if (re < ce || (re === ce && rh <= ch)) throw decide(409, 'STALE_RECORD', 'A newer record for this server key is already stored');
+    }
+    if (await addressStore.hit(record.server_key) > config.addressWritesPerHour) {
+      throw decide(429, 'RATE_LIMITED', `At most ${config.addressWritesPerHour} records an hour per server key`);
+    }
+    const bond = await throttledRead(`/node/bonds/${record.deployment_id}`);
+    if (bond?.status !== 'REGISTERED' || bond?.jailed === true) {
+      throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is jailed) on chain');
+    }
+    if (registeredServerKey(bond) !== record.server_key) {
+      throw decide(403, 'SERVER_KEY_MISMATCH', 'K is not this bond\'s registered server key');
+    }
+    const epoch = typeof bond.epoch === 'string' && /^\d{1,15}$/.test(bond.epoch) ? BigInt(bond.epoch) : null;
+    const height = typeof bond.height === 'string' && /^\d{1,15}$/.test(bond.height) ? BigInt(bond.height) : null;
+    if (epoch === null || height === null) throw decide(503, 'NODE_UNAVAILABLE', 'The node did not report the epoch');
+    if (BigInt(record.epoch) < epoch) throw decide(409, 'STALE_EPOCH', 'The record is for an earlier epoch');
+    if (BigInt(record.epoch) > epoch) throw decide(409, 'FUTURE_EPOCH', 'The record is for a later epoch than the chain');
+    if (BigInt(record.height) > height + BigInt(config.maxHeightAhead)) {
+      throw decide(409, 'FUTURE_HEIGHT', 'The record height is ahead of the chain');
+    }
+    const outcome = await addressStore.put(record);
+    if (outcome === 'STALE_RECORD') throw decide(409, 'STALE_RECORD', 'A newer record for this server key is already stored');
+    // One line per decision: first 8 hex of K and the epoch only. Never the address.
+    log(`[claim-mailbox] address decision=${outcome} key=${k} epoch=${record.epoch}`);
+    return { status: outcome, server_key: record.server_key, epoch: record.epoch, height: record.height };
+  }
+
+  async function read(req, pathname) {
+    if (config.addressReadToken.length < MIN_TOKEN_LENGTH) {
+      throw new MailboxError(503, 'ADDRESSES_NOT_READABLE', 'No read token is configured');
+    }
+    if (!bearerMatches(req.headers.authorization, config.addressReadToken)) {
+      throw new MailboxError(401, 'UNAUTHORIZED', 'A valid bearer is required to read');
+    }
+    if (pathname === '/addresses') return { records: await addressStore.list() };
+    const match = /^\/addresses\/([0-9a-f]{64})$/.exec(pathname);
+    if (!match) throw new MailboxError(400, 'INVALID_ADDRESS_ROUTE', 'Expected /addresses/<64 lowercase hex server key>');
+    const record = await addressStore.get(match[1]);
+    if (!record) throw new MailboxError(404, 'NO_RECORD', 'No live address record for this server key');
+    return record;
+  }
+
+  return { publish, read };
+}
+
+function createService({ config, store, addressStore, readNode, log = () => {}, now }) {
+  const addresses = createAddressService({
+    config,
+    addressStore: addressStore || createMemoryAddressStore(config),
+    readNode: readNode || createNodeReader(config),
+    log,
+    now,
+  });
+
+  async function handleAddresses(req, res, pathname) {
+    if (!config.addressEnabled) {
+      return send(res, 404, { ok: false, error: { code: 'ADDRESSES_DISABLED', message: 'Node address records are not enabled' } });
+    }
+    try {
+      if (req.method === 'POST' && pathname === '/addresses') {
+        return send(res, 200, { ok: true, data: await addresses.publish(req) });
+      }
+      if (req.method === 'GET') return send(res, 200, { ok: true, data: await addresses.read(req, pathname) });
+      return send(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'POST /addresses or GET with the read bearer' } });
+    } catch (error) {
+      if (!(error instanceof MailboxError)) console.error('[claim-mailbox] unexpected address failure:', error && error.name);
+      return sendError(res, error);
+    }
+  }
+
   async function handle(req, res) {
     let url;
     try {
@@ -151,7 +317,15 @@ function createService({ config, store, log = () => {} }) {
       return send(res, 400, { ok: false, error: { code: 'INVALID_CLAIM_ROUTE', message: 'Bad URL' } });
     }
     if (req.method === 'GET' && url.pathname === '/health') {
-      return send(res, 200, { ok: true, enabled: config.enabled, writable: config.writeToken.length >= MIN_TOKEN_LENGTH });
+      return send(res, 200, {
+        ok: true,
+        enabled: config.enabled,
+        writable: config.writeToken.length >= MIN_TOKEN_LENGTH,
+        addresses: { enabled: config.addressEnabled, configured: addressConfigured(config), readable: config.addressReadToken.length >= MIN_TOKEN_LENGTH },
+      });
+    }
+    if (url.pathname === '/addresses' || url.pathname.startsWith('/addresses/')) {
+      return handleAddresses(req, res, url.pathname);
     }
     let route;
     try {
@@ -201,19 +375,22 @@ function createService({ config, store, log = () => {} }) {
 async function main() {
   const config = loadConfig();
   let store;
+  let addressStore;
   if (config.redisUrl) {
     const { createClient } = require('redis');
     const client = createClient({ url: config.redisUrl });
     client.on('error', (error) => console.error('[claim-mailbox] redis error:', error && error.code));
     await client.connect();
     store = createRedisStore(client, config);
+    addressStore = createRedisAddressStore(client, config);
   } else {
-    if (config.enabled) throw new Error('REDIS_URL is required when CLAIM_MAILBOX_ENABLED=true');
+    if (config.enabled || config.addressEnabled) throw new Error('REDIS_URL is required when the mailbox or address records are enabled');
     store = createMemoryStore(config);
+    addressStore = createMemoryAddressStore(config);
   }
-  const service = createService({ config, store, log: console.log });
+  const service = createService({ config, store, addressStore, log: console.log });
   http.createServer((req, res) => { service.handle(req, res); }).listen(config.port, () => {
-    console.log(`[claim-mailbox] listening on ${config.port}; enabled=${config.enabled}`);
+    console.log(`[claim-mailbox] listening on ${config.port}; enabled=${config.enabled} addresses=${config.addressEnabled}`);
   });
 }
 
@@ -224,4 +401,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { MailboxError, MIN_TOKEN_LENGTH, bearerMatches, createService, loadConfig, parseClaims, parseRoute };
+module.exports = {
+  MailboxError, MIN_TOKEN_LENGTH, bearerMatches, createNodeReader, createService, loadConfig, parseClaims, parseRoute, registeredServerKey,
+};
