@@ -220,6 +220,8 @@ services:
         VITE_ENABLE_MY_STATIONS: ${VITE_ENABLE_MY_STATIONS:-}
         # Advisory voting (backend ADVISORY_GOVERNANCE_RELAY_ENABLED). Public switch: empty = off, or exactly `true`.
         VITE_ENABLE_ADVISORY_VOTING: ${VITE_ENABLE_ADVISORY_VOTING:-}
+        # Network status page /status (backend NETWORK_STATUS_READ_ENABLED). Public switch: empty = off, or exactly `true`.
+        VITE_ENABLE_STATUS_PAGE: ${VITE_ENABLE_STATUS_PAGE:-}
 
   # ---------------------------------------------------------------------------
   # DB Migrate — override base image with local build (#238)
