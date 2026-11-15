@@ -7,7 +7,7 @@
 # Pinned to the Caddy release compiled below; refresh through normal image review.
 FROM caddy:2.11.8-builder@sha256:d4eb070c36154bd2d4c94b40359a03c6168346d5af5404963c74691ab77fb63f AS builder
 
-RUN xcaddy build v2.11.6 \
+RUN xcaddy build v2.11.8 \
     --with github.com/mholt/caddy-ratelimit@v0.1.0
 
 FROM caddy:2.11.8-alpine@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9
