@@ -383,6 +383,10 @@
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
       {
+        "path": "scripts/tests/test-house-consumer-roster.sh",
+        "reason": "Portable source/fixture regression; no owner credentials or live host required."
+      },
+      {
         "path": "scripts/tests/test-route-ledger.sh",
         "reason": "Portable source/fixture regression; no owner credentials or live host required."
       },
