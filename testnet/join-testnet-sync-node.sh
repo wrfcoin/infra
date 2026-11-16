@@ -552,8 +552,10 @@ if [ "${ready}" = "1" ]; then
     echo "  built from core4 $(cut -c1-8 < "${SCRIPT_DIR}/.core4-commit")"
   fi
   echo ""
-  echo "peer_count > 0 and a rising chain_height mean you are syncing. NOTE:"
-  echo "height 0 shortly after joining is normal — blocks are up to 4h apart."
+  echo "Chain identity is correct; this does not yet prove synchronization to the current tip."
+  echo "Chain 888 targets a new block about every 77 seconds. Initial replay can take longer."
+  echo "peer_count > 0 and a rising chain_height show replay progress; a flat height needs investigation."
+  echo "If height stays flat, check peers, logs, and /network/upgrade for an unsupported activation."
   echo "Watch sync:  watch -n5 'curl -s http://localhost:8556/network/info | jq .chain_height'"
   echo "Logs:        docker compose -f docker-compose.testnet.yml logs -f wrfcoin-node"
 
