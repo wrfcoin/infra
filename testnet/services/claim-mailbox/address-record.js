@@ -232,5 +232,5 @@ function parseRecord(body, { chainId, networkId, genesisHash }) {
 
 module.exports = {
   MAX_ADDRESSES, RECORD_DOMAIN, RECORD_PEER_DOMAIN, RecordError, canonicalIpv6, decodePeerPublicKey, parseRecord,
-  publicAddress, recordMessage, recordPeerMessage, strongPoint, verifyStrict,
+  publicAddress, recordMessage, recordPeerMessage, str, strongPoint, u32, u64, verifyStrict,
 };

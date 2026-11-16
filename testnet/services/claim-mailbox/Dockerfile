@@ -23,7 +23,7 @@ LABEL org.opencontainers.image.revision="$WRFCOIN_BUILD_REVISION" \
       org.opencontainers.image.created="$WRFCOIN_BUILD_CREATED"
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY --chown=wrfcoin:wrfcoin testnet/services/claim-mailbox/server.js testnet/services/claim-mailbox/store.js testnet/services/claim-mailbox/address-record.js ./
+COPY --chown=wrfcoin:wrfcoin testnet/services/claim-mailbox/server.js testnet/services/claim-mailbox/store.js testnet/services/claim-mailbox/address-record.js testnet/services/claim-mailbox/attester-application.js ./
 
 USER wrfcoin
 

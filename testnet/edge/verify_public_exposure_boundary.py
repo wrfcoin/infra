@@ -124,6 +124,14 @@ EXPECTED = {
         "path /status.json",
         ("root * /srv/status", "file_server"),
     ),
+    # Attester rung v2: the public, versioned house attester settings (testnet/attester/README.md).
+    # One exact GET path, rewritten to the one file, so nothing else in /srv/attester is reachable.
+    # Gated by its OWN switch (OWN_GATE below), not PUBLIC_READONLY_API.
+    "public_attester_settings": (
+        "GET",
+        "path /api/attester/settings",
+        ("root * /srv/attester", "rewrite * /attester-888.conf", 'header Content-Type "text/plain; charset=utf-8"', "file_server"),
+    ),
     # sonnet-r1 (docs/plans/2026-09-09-sonnet-r1.md) — read-only public viewer
     # surface. GET-only, safety-audited: no per-address balances/positions, no
     # PII. Explicitly excluded from this expansion (see the route ledger doc):
@@ -354,6 +362,12 @@ EXPECTED = {
 # match — measured on the pinned image). Every gated route carries the same
 # third matcher directive, and no ungated route may carry it.
 READONLY_GATE = "vars {env.PUBLIC_READONLY_API} on"
+# Routes OFF behind a switch of their own (so PUBLIC_READONLY_API=on does not open them): the exact
+# gate line and query lock, and the compose line that must ship it off on the funnel edge.
+OWN_GATE = {
+    "public_attester_settings": ("vars {env.ATTESTER_SETTINGS_PUBLIC} on", 'expression `{query} == ""`'),
+}
+OWN_GATE_COMPOSE_LINES = {"ATTESTER_SETTINGS_PUBLIC": "ATTESTER_SETTINGS_PUBLIC: ${ATTESTER_SETTINGS_PUBLIC:-off}"}
 GATED = frozenset({
     "public_wallet_send",
     "public_wallet_send_nonce",
@@ -720,7 +734,7 @@ def verify(root: Path = ROOT) -> None:
     for name, expected in EXPECTED.items():
         approved = [f"method {expected[0]}", expected[1]] + (
             [READONLY_GATE, READONLY_QUERY_LOCK[name]] if name in GATED else []
-        ) + ([QUERY_LOCK[name]] if name in QUERY_LOCK else []) + ([BEARER_LOCK[name]] if name in BEARER_LOCK else [])
+        ) + (list(OWN_GATE[name]) if name in OWN_GATE else []) + ([QUERY_LOCK[name]] if name in QUERY_LOCK else []) + ([BEARER_LOCK[name]] if name in BEARER_LOCK else [])
         if name in JSON_BODY:
             approved += ['header Content-Type application/json']
         if name in MULTIPART_BODY:
@@ -940,6 +954,13 @@ def verify(root: Path = ROOT) -> None:
         toggles = [line.strip() for line in compose_text.splitlines() if "PUBLIC_READONLY_API" in line and not line.lstrip().startswith("#")]
         if toggles != [READONLY_COMPOSE_LINE]:
             raise AssertionError(f"{compose_label} must pass exactly `{READONLY_COMPOSE_LINE}` (default OFF), got {toggles}")
+        # Own-switch routes ship OFF: the funnel edge passes exactly the default-off line; the direct edge
+        # may pass nothing or that same line.
+        for var, line in OWN_GATE_COMPOSE_LINES.items():
+            own = [x.strip() for x in compose_text.splitlines() if var in x and not x.lstrip().startswith("#")]
+            allowed = ([[line]] if config == "Caddyfile.funnel" else [[], [line]])
+            if own not in allowed:
+                raise AssertionError(f"{compose_label} must pass exactly `{line}` (default OFF), got {own}")
 
     csp_lines = [line.strip() for line in nginx.splitlines()
                  if "Content-Security-Policy" in line and not line.lstrip().startswith("#")]
@@ -1663,6 +1684,27 @@ def self_test() -> None:
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 8192",
                 "handle @public_forecast_check_submit {\n\t\trequest_body {\n\t\t\tmax_size 1048576",
             ),
+        ),
+        "attester settings ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/attester/settings\n\t\tvars {env.ATTESTER_SETTINGS_PUBLIC} on\n", "path /api/attester/settings\n"),
+        ),
+        "attester settings on the shared readonly gate": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("vars {env.ATTESTER_SETTINGS_PUBLIC} on", "vars {env.PUBLIC_READONLY_API} on"),
+        ),
+        "attester settings serves the whole directory": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("\t\trewrite * /attester-888.conf\n", ""),
+        ),
+        "attester settings query unlocked": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/attester/settings\n\t\tvars {env.ATTESTER_SETTINGS_PUBLIC} on\n\t\texpression `{query} == \"\"`\n",
+                                "path /api/attester/settings\n\t\tvars {env.ATTESTER_SETTINGS_PUBLIC} on\n"),
+        ),
+        "attester settings default on in the funnel compose": (
+            "testnet/docker-compose.funnel-edge.yml",
+            lambda s: s.replace("ATTESTER_SETTINGS_PUBLIC: ${ATTESTER_SETTINGS_PUBLIC:-off}", "ATTESTER_SETTINGS_PUBLIC: ${ATTESTER_SETTINGS_PUBLIC:-on}"),
         ),
         "node address publish ungated": (
             "testnet/edge/public_onboarding.caddy",

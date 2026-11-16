@@ -75,3 +75,9 @@ Off switch: `CLAIM_MAILBOX_ENABLED=false` and recreate the container. Owners the
 
 The same service also keeps each bonded node's own signed address record, under its own switch
 (`NODE_ADDRESS_ENABLED`, default off). See [NODE_ADDRESSES.md](NODE_ADDRESSES.md).
+
+## Attester applications
+
+The same service also takes signed attester applications (apply / step down) from bonded nodes, under its
+own switch (`ATTESTER_APPLICATIONS_ENABLED`, default off). See
+[ATTESTER_APPLICATIONS.md](ATTESTER_APPLICATIONS.md).

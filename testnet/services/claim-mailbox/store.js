@@ -184,7 +184,133 @@ function createMemoryAddressStore({ addressTtlSeconds }) {
   };
 }
 
+
+// Attester applications (ATTESTER_APPLICATIONS.md): one hash per bond holding the whole
+// record, its (epoch, height) and its oracle key, plus a string per oracle key naming the
+// bond that holds it, so one oracle key has at most one live application. A write replaces
+// the bond's record only when newer; the same bytes again are UNCHANGED; older is STALE;
+// an oracle key another live bond holds is ORACLE_KEY_IN_USE. A newer record that names a
+// different oracle key releases the old one. An index (sorted set, score = expiry ms) lists
+// live records; every key expires. A per-K counter bounds accepted writes per hour.
+const APPLICATION_PUT_LUA = `-- attester-application-put
+local epoch = tonumber(ARGV[1])
+local height = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[4])
+local now = tonumber(ARGV[5])
+local old = redis.call('HMGET', KEYS[1], 'epoch', 'height', 'record', 'oracle')
+if old[3] then
+  if old[3] == ARGV[3] then return 0 end
+  local oe = tonumber(old[1])
+  local oh = tonumber(old[2])
+  if epoch < oe or (epoch == oe and height <= oh) then return -1 end
+end
+local holder = redis.call('GET', KEYS[2])
+if holder and holder ~= ARGV[6] then return -2 end
+redis.call('HSET', KEYS[1], 'epoch', ARGV[1], 'height', ARGV[2], 'record', ARGV[3], 'oracle', ARGV[7])
+redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('SET', KEYS[2], ARGV[6], 'EX', ttl)
+if old[4] and old[4] ~= ARGV[7] then
+  local oldKey = ARGV[8] .. old[4]
+  if redis.call('GET', oldKey) == ARGV[6] then redis.call('DEL', oldKey) end
+end
+redis.call('ZADD', KEYS[3], now + ttl * 1000, ARGV[6])
+redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', now)
+return 1`;
+
+const APPLICATION_OUTCOME = { 1: 'STORED', 0: 'UNCHANGED', '-1': 'STALE_RECORD', '-2': 'ORACLE_KEY_IN_USE' };
+
+function applicationKey(prefix, bondId) { return `${prefix}attapp:${bondId}`; }
+function applicationOracleKey(prefix, oracle) { return `${prefix}attapp-oracle:${oracle}`; }
+function applicationIndex(prefix) { return `${prefix}attapp-index`; }
+function applicationRateKey(prefix, serverKey) { return `${prefix}attapp-rate:${serverKey}`; }
+
+function applicationCounts(records) {
+  const counts = { apply: 0, step_down: 0 };
+  for (const r of records) counts[r.kind] += 1;
+  return counts;
+}
+
+function createRedisApplicationStore(client, { prefix, attesterTtlSeconds }) {
+  return {
+    async put(record, nowMs = Date.now()) {
+      const code = await client.eval(APPLICATION_PUT_LUA, {
+        keys: [applicationKey(prefix, record.bond_id), applicationOracleKey(prefix, record.oracle_pubkey), applicationIndex(prefix)],
+        arguments: [record.epoch, record.height, JSON.stringify(record), String(attesterTtlSeconds), String(nowMs),
+          record.bond_id, record.oracle_pubkey, applicationOracleKey(prefix, '')],
+      });
+      return APPLICATION_OUTCOME[String(code)];
+    },
+    async get(bondId) {
+      const text = await client.hGet(applicationKey(prefix, bondId), 'record');
+      return text ? JSON.parse(text) : null;
+    },
+    async list(nowMs = Date.now()) {
+      await client.zRemRangeByScore(applicationIndex(prefix), '-inf', nowMs);
+      const ids = await client.zRange(applicationIndex(prefix), 0, MAX_LISTED - 1);
+      const out = [];
+      for (const id of ids) {
+        const record = await this.get(id);
+        if (record) out.push(record);
+      }
+      return out.sort((a, b) => (a.bond_id < b.bond_id ? -1 : 1));
+    },
+    async counts(nowMs = Date.now()) {
+      return applicationCounts(await this.list(nowMs));
+    },
+    async hit(serverKey) {
+      return Number(await client.eval(RATE_LUA, { keys: [applicationRateKey(prefix, serverKey)], arguments: ['3600'] }));
+    },
+  };
+}
+
+function createMemoryApplicationStore({ attesterTtlSeconds }) {
+  const records = new Map(); // bond -> { record, text, epoch, height, expiresAt }
+  const rates = new Map();
+  let clock = () => Date.now();
+  const live = (bond) => {
+    const entry = records.get(bond);
+    if (entry && entry.expiresAt <= clock()) { records.delete(bond); return null; }
+    return entry || null;
+  };
+  const holderOf = (oracle) => [...records.keys()].map((b) => [b, live(b)]).find(([, e]) => e && e.record.oracle_pubkey === oracle)?.[0];
+  const store = {
+    setClock(fn) { clock = fn; },
+    async put(record) {
+      const text = JSON.stringify(record);
+      const old = live(record.bond_id);
+      const epoch = BigInt(record.epoch);
+      const height = BigInt(record.height);
+      if (old) {
+        if (old.text === text) return 'UNCHANGED';
+        if (epoch < old.epoch || (epoch === old.epoch && height <= old.height)) return 'STALE_RECORD';
+      }
+      const holder = holderOf(record.oracle_pubkey);
+      if (holder && holder !== record.bond_id) return 'ORACLE_KEY_IN_USE';
+      records.set(record.bond_id, { record, text, epoch, height, expiresAt: clock() + attesterTtlSeconds * 1000 });
+      return 'STORED';
+    },
+    async get(bondId) {
+      const entry = live(bondId);
+      return entry ? JSON.parse(entry.text) : null;
+    },
+    async list() {
+      return [...records.keys()].map(live).filter(Boolean).slice(0, MAX_LISTED)
+        .map((e) => JSON.parse(e.text)).sort((a, b) => (a.bond_id < b.bond_id ? -1 : 1));
+    },
+    async counts() { return applicationCounts(await store.list()); },
+    async hit(serverKey) {
+      const now = clock();
+      const entry = rates.get(serverKey);
+      if (!entry || entry.resetAt <= now) { rates.set(serverKey, { n: 1, resetAt: now + 3600 * 1000 }); return 1; }
+      entry.n += 1;
+      return entry.n;
+    },
+  };
+  return store;
+}
+
 module.exports = {
-  ADDRESS_PUT_LUA, MAX_CLAIMS, MAX_LISTED, PUT_LUA, addressKey, claimsKey, createMemoryAddressStore, createMemoryStore,
-  createRedisAddressStore, createRedisStore,
+  ADDRESS_PUT_LUA, APPLICATION_PUT_LUA, MAX_CLAIMS, MAX_LISTED, PUT_LUA, addressKey, applicationKey, applicationOracleKey, claimsKey,
+  createMemoryAddressStore, createMemoryApplicationStore, createMemoryStore, createRedisAddressStore, createRedisApplicationStore,
+  createRedisStore,
 };

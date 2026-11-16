@@ -93,6 +93,7 @@ The node's checked first-tranche route contract is supplied by core4 draft PR #3
 | `GET` | `/join/manifest.json` | none/read-only |
 | `GET` | `/join/snapshot.tar.gz` | none/read-only |
 | `GET` | `/status.json` | none/read-only |
+| `GET` | `/api/attester/settings` | none/read-only; **OFF unless the edge env has `ATTESTER_SETTINGS_PUBLIC=on`** (compose default off); query string must be exactly none (anything else 404s) |
 | `GET` | `/api/forecast-verification/summary` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
 | `GET` | `regex: ^/api/forecast-verification/forecasts/[0-9a-f]{64}$` | none/read-only; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
 | `POST` | `/api/forecast-verification/forecasts` | route-specific; **OFF unless the edge env has `PUBLIC_READONLY_API=on`** (compose default off); query string must be exactly none (anything else 404s) |
