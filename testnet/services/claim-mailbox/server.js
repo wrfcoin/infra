@@ -17,8 +17,11 @@
 
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { MAX_CLAIMS, createMemoryAddressStore, createMemoryStore, createRedisAddressStore, createRedisStore } = require('./store');
+const {
+  MAX_CLAIMS, createMemoryAddressStore, createMemoryApplicationStore, createMemoryStore, createRedisAddressStore, createRedisApplicationStore, createRedisStore,
+} = require('./store');
 const { RecordError, parseRecord } = require('./address-record');
+const { parseApplication } = require('./attester-application');
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_RECORD_BYTES = 4 * 1024;
@@ -69,6 +72,17 @@ function loadConfig(env = process.env) {
     maxHeightAhead: int(env.NODE_ADDRESS_MAX_HEIGHT_AHEAD, 10, 0, 512),
     // The cached roster of bonded server keys: refreshed at most this often.
     rosterTtlSeconds: int(env.NODE_ADDRESS_ROSTER_TTL_SECONDS, 60, 0, 3600),
+    // Attester applications (ATTESTER_APPLICATIONS.md). A separate switch, default OFF. They share the
+    // chain identity, node reader, roster and node-read budget above.
+    attesterEnabled: env.ATTESTER_APPLICATIONS_ENABLED === 'true',
+    // The owner's bearer for reads; under 32 characters = reads refused (503).
+    attesterOwnerToken: env.ATTESTER_APPLICATION_OWNER_TOKEN || '',
+    // Six chain-888 epochs: 6 x 512 blocks x ~77 s (outlives a weekend).
+    attesterTtlSeconds: int(env.ATTESTER_APPLICATION_TTL_SECONDS, 236544, 3600, 2419200),
+    attesterWritesPerHour: int(env.ATTESTER_APPLICATION_WRITES_PER_HOUR, 6, 1, 60),
+    // Public keys no application may name as its oracle key (governance, producers, snapshot signers).
+    attesterForbiddenKeys: String(env.ATTESTER_APPLICATION_FORBIDDEN_KEYS || '').split(',').map((k) => k.trim().toLowerCase())
+      .filter((k) => /^[0-9a-f]{64}$/.test(k)),
   };
 }
 
@@ -248,18 +262,21 @@ function createRoster({ readNode, ttlMs, now }) {
   };
 }
 
-function createAddressService({ config, addressStore, readNode, log, now = () => Date.now() }) {
+// The node-facing checks both signed-record routes share: one cached roster and one
+// node-read budget for the whole process, so a second route never doubles the load.
+function createBondChecks({ config, readNode, now }) {
   const roster = createRoster({ readNode, ttlMs: config.rosterTtlSeconds * 1000, now });
   let inFlight = 0;
   let windowStart = 0;
   let windowReads = 0;
+  let oracleSet = null; // { ids: Set, at }
 
   // Bounds node reads: a few in flight and a per-minute budget, else 429 BUSY.
   async function throttledRead(route) {
     const t = now();
     if (t - windowStart >= 60000) { windowStart = t; windowReads = 0; }
     if (inFlight >= config.nodeReadsInFlight || windowReads >= config.nodeReadsPerMinute) {
-      throw new MailboxError(429, 'BUSY', 'Too many address records right now; try again later');
+      throw new MailboxError(429, 'BUSY', 'Too many signed records right now; try again later');
     }
     inFlight += 1;
     windowReads += 1;
@@ -271,6 +288,57 @@ function createAddressService({ config, addressStore, readNode, log, now = () =>
       inFlight -= 1;
     }
   }
+
+  // Step 5 (no node read): the bond is in the cached roster and K is its server key.
+  async function rosterCheck(deploymentId, serverKey, decide) {
+    const rosterKey = await roster.keyOf(deploymentId);
+    if (!rosterKey) throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is exiting or jailed) on chain');
+    if (rosterKey !== serverKey) throw decide(403, 'SERVER_KEY_MISMATCH', 'K is not this bond\'s registered server key');
+  }
+
+  // Step 7 (one budgeted node read): live bond, K, the current epoch, height not ahead.
+  async function liveBondCheck(deploymentId, serverKey, recordEpoch, recordHeight, decide) {
+    const bond = await throttledRead(`/node/bonds/${deploymentId}`);
+    // An exiting bond still reads REGISTERED until its exit takes effect: refuse it too.
+    if (bond?.status !== 'REGISTERED' || bond?.jailed === true || bond?.registration?.exit_effective_height != null) {
+      throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is exiting or jailed) on chain');
+    }
+    if (registeredServerKey(bond) !== serverKey) {
+      throw decide(403, 'SERVER_KEY_MISMATCH', 'K is not this bond\'s registered server key');
+    }
+    const epoch = typeof bond.epoch === 'string' && /^\d{1,15}$/.test(bond.epoch) ? BigInt(bond.epoch) : null;
+    const height = typeof bond.height === 'string' && /^\d{1,15}$/.test(bond.height) ? BigInt(bond.height) : null;
+    if (epoch === null || height === null) throw decide(503, 'NODE_UNAVAILABLE', 'The node did not report the epoch');
+    const effective = bond?.registration?.binding?.effective_epoch;
+    if (!Number.isSafeInteger(effective) || BigInt(effective) > BigInt(recordEpoch)) {
+      throw decide(403, 'NOT_BONDED', 'This bond is not in effect for the record epoch');
+    }
+    if (BigInt(recordEpoch) < epoch) throw decide(409, 'STALE_EPOCH', 'The record is for an earlier epoch');
+    if (BigInt(recordEpoch) > epoch) throw decide(409, 'FUTURE_EPOCH', 'The record is for a later epoch than the chain');
+    if (BigInt(recordHeight) > height + BigInt(config.maxHeightAhead)) {
+      throw decide(409, 'FUTURE_HEIGHT', 'The record height is ahead of the chain');
+    }
+    return bond;
+  }
+
+  // The seated oracle set (GET /transactions/oracle/config, Reader), cached for the roster TTL and
+  // read through the same budget. Fails closed: no fresh set = 503.
+  async function seatedOracles() {
+    const t = now();
+    if (oracleSet && t - oracleSet.at < Math.max(config.rosterTtlSeconds * 1000, 1000)) return oracleSet.ids;
+    const answer = await throttledRead('/transactions/oracle/config');
+    const ids = Array.isArray(answer?.oracle_set) ? answer.oracle_set : null;
+    if (!ids || !ids.every((id) => typeof id === 'string' && /^[0-9a-f]{64}$/.test(id))) {
+      throw new MailboxError(503, 'NODE_UNAVAILABLE', 'The node did not report the oracle set');
+    }
+    oracleSet = { ids: new Set(ids), at: t };
+    return oracleSet.ids;
+  }
+
+  return { rosterCheck, liveBondCheck, seatedOracles };
+}
+
+function createAddressService({ config, addressStore, bonds, log }) {
 
   async function publish(req) {
     if (!addressConfigured(config)) throw new MailboxError(503, 'NOT_CONFIGURED', 'Chain identity is not configured');
@@ -302,33 +370,12 @@ function createAddressService({ config, addressStore, readNode, log, now = () =>
     }
     // Only a bonded node's K gets past here, from the cached roster: a fresh key
     // costs no per-request node read and no budget.
-    const rosterKey = await roster.keyOf(record.deployment_id);
-    if (!rosterKey) throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is exiting or jailed) on chain');
-    if (rosterKey !== record.server_key) throw decide(403, 'SERVER_KEY_MISMATCH', 'K is not this bond\'s registered server key');
+    await bonds.rosterCheck(record.deployment_id, record.server_key, decide);
     // Counted only after both signatures verified and K is bonded: only K's holder spends K's budget.
     if (await addressStore.hit(record.server_key) > config.addressWritesPerHour) {
       throw decide(429, 'RATE_LIMITED', `At most ${config.addressWritesPerHour} records an hour per server key`);
     }
-    const bond = await throttledRead(`/node/bonds/${record.deployment_id}`);
-    // An exiting bond still reads REGISTERED until its exit takes effect: refuse it too.
-    if (bond?.status !== 'REGISTERED' || bond?.jailed === true || bond?.registration?.exit_effective_height != null) {
-      throw decide(403, 'NOT_BONDED', 'This bond is not registered (or is exiting or jailed) on chain');
-    }
-    if (registeredServerKey(bond) !== record.server_key) {
-      throw decide(403, 'SERVER_KEY_MISMATCH', 'K is not this bond\'s registered server key');
-    }
-    const epoch = typeof bond.epoch === 'string' && /^\d{1,15}$/.test(bond.epoch) ? BigInt(bond.epoch) : null;
-    const height = typeof bond.height === 'string' && /^\d{1,15}$/.test(bond.height) ? BigInt(bond.height) : null;
-    if (epoch === null || height === null) throw decide(503, 'NODE_UNAVAILABLE', 'The node did not report the epoch');
-    const effective = bond?.registration?.binding?.effective_epoch;
-    if (!Number.isSafeInteger(effective) || BigInt(effective) > BigInt(record.epoch)) {
-      throw decide(403, 'NOT_BONDED', 'This bond is not in effect for the record epoch');
-    }
-    if (BigInt(record.epoch) < epoch) throw decide(409, 'STALE_EPOCH', 'The record is for an earlier epoch');
-    if (BigInt(record.epoch) > epoch) throw decide(409, 'FUTURE_EPOCH', 'The record is for a later epoch than the chain');
-    if (BigInt(record.height) > height + BigInt(config.maxHeightAhead)) {
-      throw decide(409, 'FUTURE_HEIGHT', 'The record height is ahead of the chain');
-    }
+    await bonds.liveBondCheck(record.deployment_id, record.server_key, record.epoch, record.height, decide);
     const outcome = await addressStore.put(record);
     if (outcome === 'STALE_RECORD') throw decide(409, 'STALE_RECORD', 'A newer record for this server key is already stored');
     // One line per decision: first 8 hex of K and the epoch only. Never the address.
@@ -354,14 +401,109 @@ function createAddressService({ config, addressStore, readNode, log, now = () =>
   return { publish, read };
 }
 
-function createService({ config, store, addressStore, readNode, log = () => {}, now }) {
+// Attester applications (ATTESTER_APPLICATIONS.md): a bonded node asks to be seated as an
+// oracle attester (kind "apply") or to leave (kind "step_down"). Signed by the bond's server
+// key K AND the oracle key; one live record per bond and per oracle key; owner-bearer reads.
+function createAttesterService({ config, applicationStore, bonds, log }) {
+  async function publish(req) {
+    if (!addressConfigured(config)) throw new MailboxError(503, 'NOT_CONFIGURED', 'Chain identity is not configured');
+    let record;
+    try {
+      record = parseApplication(await readBody(req, MAX_RECORD_BYTES, 'RECORD_TOO_LARGE'), config);
+    } catch (error) {
+      if (error instanceof RecordError) {
+        const status = error.code === 'BAD_SIGNATURE' || error.code === 'KEY_REUSE' ? 403 : 400;
+        throw new MailboxError(status, error.code, error.message);
+      }
+      throw error;
+    }
+    // One line per decision: first 8 hex of the bond and the oracle key, the kind and epoch. No address, no IP.
+    const tag = `kind=${record.kind} bond=${record.bond_id.slice(0, 8)} oracle=${record.oracle_pubkey.slice(0, 8)} epoch=${record.epoch}`;
+    const decide = (status, code, message) => {
+      log(`[claim-mailbox] attester decision=${code} ${tag}`);
+      return new MailboxError(status, code, message);
+    };
+    if (config.attesterForbiddenKeys.includes(record.oracle_pubkey)) {
+      throw decide(403, 'FORBIDDEN_KEY', 'That key holds another network role and cannot be an oracle key');
+    }
+    // A replay of what is stored, or of anything older, is answered without a node read or budget.
+    const current = await applicationStore.get(record.bond_id);
+    if (current) {
+      if (JSON.stringify(current) === JSON.stringify(record)) {
+        return { status: 'UNCHANGED', bond_id: record.bond_id, kind: record.kind, epoch: record.epoch, height: record.height };
+      }
+      const [ce, ch, re, rh] = [current.epoch, current.height, record.epoch, record.height].map(BigInt);
+      if (re < ce || (re === ce && rh <= ch)) throw decide(409, 'STALE_RECORD', 'A newer application for this bond is already stored');
+    }
+    await bonds.rosterCheck(record.bond_id, record.server_key, decide);
+    if (await applicationStore.hit(record.server_key) > config.attesterWritesPerHour) {
+      throw decide(429, 'RATE_LIMITED', `At most ${config.attesterWritesPerHour} applications an hour per server key`);
+    }
+    await bonds.liveBondCheck(record.bond_id, record.server_key, record.epoch, record.height, decide);
+    const seated = await bonds.seatedOracles();
+    if (seated.has(record.server_key)) throw decide(403, 'FORBIDDEN_KEY', 'The bond server key is a seated oracle key');
+    if (record.kind === 'apply' && seated.has(record.oracle_pubkey)) {
+      throw decide(409, 'ALREADY_SEATED', 'This oracle key is already seated');
+    }
+    if (record.kind === 'step_down' && !seated.has(record.oracle_pubkey)) {
+      throw decide(409, 'NOT_SEATED', 'This oracle key is not seated, so there is nothing to step down from');
+    }
+    const outcome = await applicationStore.put(record);
+    if (outcome === 'STALE_RECORD') throw decide(409, 'STALE_RECORD', 'A newer application for this bond is already stored');
+    if (outcome === 'ORACLE_KEY_IN_USE') throw decide(409, 'ORACLE_KEY_IN_USE', 'Another bond has a live application for this oracle key');
+    log(`[claim-mailbox] attester decision=${outcome} ${tag}`);
+    return { status: outcome, bond_id: record.bond_id, kind: record.kind, epoch: record.epoch, height: record.height };
+  }
+
+  async function read(req, pathname) {
+    if (pathname === '/attester-applications/counts') return applicationStore.counts();
+    if (config.attesterOwnerToken.length < MIN_TOKEN_LENGTH) {
+      throw new MailboxError(503, 'APPLICATIONS_NOT_READABLE', 'No owner read token is configured');
+    }
+    if (!bearerMatches(req.headers.authorization, config.attesterOwnerToken)) {
+      throw new MailboxError(401, 'UNAUTHORIZED', 'The owner bearer is required to read applications');
+    }
+    if (pathname === '/attester-applications') return { applications: await applicationStore.list() };
+    const match = /^\/attester-applications\/([0-9a-f]{64})$/.exec(pathname);
+    if (!match) throw new MailboxError(400, 'INVALID_APPLICATION_ROUTE', 'Expected /attester-applications/<64 lowercase hex bond id>');
+    const record = await applicationStore.get(match[1]);
+    if (!record) throw new MailboxError(404, 'NO_RECORD', 'No live application for this bond');
+    return record;
+  }
+
+  return { publish, read };
+}
+
+function createService({ config, store, addressStore, applicationStore, readNode, log = () => {}, now = () => Date.now() }) {
+  const bonds = createBondChecks({ config, readNode: readNode || createNodeReader(config), now });
   const addresses = createAddressService({
     config,
     addressStore: addressStore || createMemoryAddressStore(config),
-    readNode: readNode || createNodeReader(config),
+    bonds,
     log,
-    now,
   });
+  const attesters = createAttesterService({
+    config,
+    applicationStore: applicationStore || createMemoryApplicationStore(config),
+    bonds,
+    log,
+  });
+
+  async function handleAttesters(req, res, pathname) {
+    if (!config.attesterEnabled) {
+      return send(res, 404, { ok: false, error: { code: 'APPLICATIONS_DISABLED', message: 'Attester applications are not enabled' } });
+    }
+    try {
+      if (req.method === 'POST' && pathname === '/attester-applications') {
+        return send(res, 200, { ok: true, data: await attesters.publish(req) });
+      }
+      if (req.method === 'GET') return send(res, 200, { ok: true, data: await attesters.read(req, pathname) });
+      return send(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'POST /attester-applications or GET with the owner bearer' } });
+    } catch (error) {
+      if (!(error instanceof MailboxError)) console.error('[claim-mailbox] unexpected attester failure:', error && error.name);
+      return sendError(res, error);
+    }
+  }
 
   async function handleAddresses(req, res, pathname) {
     if (!config.addressEnabled) {
@@ -392,7 +534,11 @@ function createService({ config, store, addressStore, readNode, log = () => {}, 
         enabled: config.enabled,
         writable: config.writeToken.length >= MIN_TOKEN_LENGTH,
         addresses: { enabled: config.addressEnabled, configured: addressConfigured(config), readable: config.addressReadToken.length >= MIN_TOKEN_LENGTH },
+        attesters: { enabled: config.attesterEnabled, configured: addressConfigured(config), readable: config.attesterOwnerToken.length >= MIN_TOKEN_LENGTH },
       });
+    }
+    if (url.pathname === '/attester-applications' || url.pathname.startsWith('/attester-applications/')) {
+      return handleAttesters(req, res, url.pathname);
     }
     if (url.pathname === '/addresses' || url.pathname.startsWith('/addresses/')) {
       return handleAddresses(req, res, url.pathname);
@@ -446,6 +592,7 @@ async function main() {
   const config = loadConfig();
   let store;
   let addressStore;
+  let applicationStore;
   if (config.redisUrl) {
     const { createClient } = require('redis');
     const client = createClient({ url: config.redisUrl });
@@ -453,14 +600,18 @@ async function main() {
     await client.connect();
     store = createRedisStore(client, config);
     addressStore = createRedisAddressStore(client, config);
+    applicationStore = createRedisApplicationStore(client, config);
   } else {
-    if (config.enabled || config.addressEnabled) throw new Error('REDIS_URL is required when the mailbox or address records are enabled');
+    if (config.enabled || config.addressEnabled || config.attesterEnabled) {
+      throw new Error('REDIS_URL is required when the mailbox, address records or attester applications are enabled');
+    }
     store = createMemoryStore(config);
     addressStore = createMemoryAddressStore(config);
+    applicationStore = createMemoryApplicationStore(config);
   }
-  const service = createService({ config, store, addressStore, log: console.log });
+  const service = createService({ config, store, addressStore, applicationStore, log: console.log });
   http.createServer((req, res) => { service.handle(req, res); }).listen(config.port, () => {
-    console.log(`[claim-mailbox] listening on ${config.port}; enabled=${config.enabled} addresses=${config.addressEnabled}`);
+    console.log(`[claim-mailbox] listening on ${config.port}; enabled=${config.enabled} addresses=${config.addressEnabled} attesters=${config.attesterEnabled}`);
   });
 }
 

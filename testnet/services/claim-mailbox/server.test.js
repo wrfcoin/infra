@@ -41,7 +41,7 @@ test('default off: every claim route is 404, health says disabled', async () => 
     assert.equal((await put(call, BOND, 40, [claim(1)])).body.error.code, 'MAILBOX_DISABLED');
     assert.equal((await call('GET', '/claims/not-hex/40')).body.error.code, 'MAILBOX_DISABLED');
     const health = await call('GET', '/health');
-    assert.deepEqual(health.body, { ok: true, enabled: false, writable: true, addresses: { enabled: false, configured: false, readable: false } });
+    assert.deepEqual(health.body, { ok: true, enabled: false, writable: true, addresses: { enabled: false, configured: false, readable: false }, attesters: { enabled: false, configured: false, readable: false } });
   });
 });
 

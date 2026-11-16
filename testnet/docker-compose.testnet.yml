@@ -1120,6 +1120,14 @@ services:
       # The house consumer's read bearer, >= 32 chars; empty = reads refused (503).
       NODE_ADDRESS_READ_TOKEN: ${NODE_ADDRESS_READ_TOKEN:-}
       NODE_ADDRESS_TTL_SECONDS: ${NODE_ADDRESS_TTL_SECONDS:-118272}
+      # Attester applications (services/claim-mailbox/ATTESTER_APPLICATIONS.md). Own switch, default OFF.
+      # Shares the chain identity, node reader and node-read budget above.
+      ATTESTER_APPLICATIONS_ENABLED: ${ATTESTER_APPLICATIONS_ENABLED:-false}
+      # The owner's read bearer, >= 32 chars; empty = reads refused (503). Never the house consumer's token.
+      ATTESTER_APPLICATION_OWNER_TOKEN: ${ATTESTER_APPLICATION_OWNER_TOKEN:-}
+      ATTESTER_APPLICATION_TTL_SECONDS: ${ATTESTER_APPLICATION_TTL_SECONDS:-236544}
+      # Comma-separated public keys that may never be an oracle key (governance, producers, snapshot signers).
+      ATTESTER_APPLICATION_FORBIDDEN_KEYS: ${ATTESTER_APPLICATION_FORBIDDEN_KEYS:-}
     depends_on:
       redis:
         condition: service_healthy

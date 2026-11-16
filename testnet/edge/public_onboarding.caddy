@@ -1272,6 +1272,24 @@
 		respond "Not found" 404
 	}
 
+	# Attester settings (testnet/attester/README.md): the public, versioned house reference settings a
+	# new attester copies (no secrets). Static file, exact GET path, no query, served from the file the
+	# funnel edge mounts read-only at /srv/attester. OFF by default behind its OWN switch
+	# ATTESTER_SETTINGS_PUBLIC=on (compose default off), so turning on PUBLIC_READONLY_API does not
+	# publish it. The direct-443 edge has no mount: 404 there, fail closed.
+	@public_attester_settings {
+		method GET
+		path /api/attester/settings
+		vars {env.ATTESTER_SETTINGS_PUBLIC} on
+		expression `{query} == ""`
+	}
+	handle @public_attester_settings {
+		root * /srv/attester
+		rewrite * /attester-888.conf
+		header Content-Type "text/plain; charset=utf-8"
+		file_server
+	}
+
 	# Forecast check (owner demo queue 2026-11-01 item 7; backend forecast-verification-routes.ts, frontend
 	# /forecast-check): on-chain forecasts scored against station readings and NOAA. Two reads (the 30-day
 	# summary, one record by its 64-hex commit id) and the record hand-in POST. The hand-in needs NO bearer:

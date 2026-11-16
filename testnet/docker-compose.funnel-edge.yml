@@ -53,6 +53,8 @@ services:
       # (backend#1222) is deployed; see @public_readonly_* in
       # edge/public_onboarding.caddy. Flipping it is an owner deploy-window call.
       PUBLIC_READONLY_API: ${PUBLIC_READONLY_API:-off}
+      # Public attester settings (attester/README.md): its own switch, OFF unless exactly `on`.
+      ATTESTER_SETTINGS_PUBLIC: ${ATTESTER_SETTINGS_PUBLIC:-off}
     # Loopback ONLY — reachable solely from CT101 itself; the tailscale
     # funnel proxy is the single intended client.
     ports:
@@ -76,6 +78,8 @@ services:
       # (docker inspect), so the writer and the server cannot disagree.
       - ${WRFCOIN_JOIN_SNAPSHOT_DIR:-/var/lib/wrfcoin-testnet-join/public}:/srv/join:ro
       - /var/lib/wrfcoin-testnet-uptime/public:/srv/status:ro
+      # The versioned attester settings file from this release tree (public, no secrets).
+      - ./attester:/srv/attester:ro
     # backend#1229: pinned on wrfcoin-ingress (declared in the base compose) so
     # the backend trusts exactly this hop; it proxies only to the backend and
     # frontend, both of which are on that network.
