@@ -86,7 +86,13 @@ def main(binary):
                         before = len(Stub.calls)
                         body = b'a' * size if size else None
                         conn = http.client.HTTPConnection('127.0.0.1', listen, timeout=30)
-                        conn.request(method, path, body=body, headers=headers)
+                        try:
+                            conn.request(method, path, body=body, headers=headers)
+                        except (BrokenPipeError, ConnectionResetError):
+                            # Caddy >= 2.11.8 answers an over-cap body and closes before the client has
+                            # sent all of it. The answer is still on the socket; it must still be read
+                            # and must still be the expected status, so nothing is excused here.
+                            pass
                         response = conn.getresponse(); got = response.status; response.read(); conn.close()
                         label = (method, path, sorted(headers.items()), size)
                         assert got == want, (label, 'want', want, 'got', got)

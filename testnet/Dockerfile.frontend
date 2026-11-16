@@ -122,6 +122,12 @@ ENV VITE_ENABLE_MY_STATIONS=$VITE_ENABLE_MY_STATIONS
 # the same rules as above.
 ARG VITE_ENABLE_ADVISORY_VOTING=
 ENV VITE_ENABLE_ADVISORY_VOTING=$VITE_ENABLE_ADVISORY_VOTING
+# Network status page /status and its home-page link: aggregate chain numbers
+# from the backend's GET /api/public/network-status (it needs the backend's
+# NETWORK_STATUS_READ_ENABLED and the edge rule from #146). Public switch on
+# the same rules as above.
+ARG VITE_ENABLE_STATUS_PAGE=
+ENV VITE_ENABLE_STATUS_PAGE=$VITE_ENABLE_STATUS_PAGE
 COPY infra/testnet/frontend-build-flags-guard.sh /usr/local/bin/frontend-build-flags-guard
 RUN WRFCOIN_FRONTEND_BUILD_VARIANT="$WRFCOIN_FRONTEND_BUILD_VARIANT" \
     sh /usr/local/bin/frontend-build-flags-guard /app
@@ -182,6 +188,8 @@ ARG VITE_ENABLE_MY_STATIONS=
 LABEL org.wrfcoin.stage.my-stations="$VITE_ENABLE_MY_STATIONS"
 ARG VITE_ENABLE_ADVISORY_VOTING=
 LABEL org.wrfcoin.stage.advisory-voting="$VITE_ENABLE_ADVISORY_VOTING"
+ARG VITE_ENABLE_STATUS_PAGE=
+LABEL org.wrfcoin.stage.status-page="$VITE_ENABLE_STATUS_PAGE"
 
 # Install curl for healthcheck
 RUN apk add --no-cache curl
