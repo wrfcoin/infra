@@ -56,6 +56,7 @@ DENIED_PUBLIC_READS = (
     "/api/stations/abc/submissions",
     "/api/stations/abc/earnings",
     "/api/stations/st_0123456789ab/compare",
+    "/api/stations/st_0123456789ab/reward-trail",
     # Internal only: these return provider keys to the collector on the compose
     # network. The public edge must never admit them, whatever the caller sends.
     "/api/weather/stations/collector-roster",
@@ -162,6 +163,26 @@ READONLY_COMPARE_SIBLINGS_DENIED = (
     "/api/stations/st_0123456789ab/compare/",
     "/api/stations/st_0123456789ab/compare/x",
     "/api/stations/st_0123456789ab/comparex",
+)
+# Reading trail — GET /api/stations/<alias>/reward-trail, same gate, its own container (own
+# rate-limit budget). ALIAS ONLY and NO query: the backend reads core4 evidence per reading.
+READONLY_REWARD_TRAIL_READS = (
+    "/api/stations/st_0123456789ab/reward-trail",
+    "/api/stations/st_ffffffffffff/reward-trail",
+)
+READONLY_REWARD_TRAIL_QUERY_DENIED = (
+    "/api/stations/st_0123456789ab/reward-trail?limit=25",
+    "/api/stations/st_0123456789ab/reward-trail?x=1",
+)
+READONLY_REWARD_TRAIL_NON_GET_METHODS = ("POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD")
+READONLY_REWARD_TRAIL_SIBLINGS_DENIED = (
+    "/api/stations/abc/reward-trail",
+    "/api/stations/KMAWELLE-12_x/reward-trail",
+    "/api/stations/st_0123456789AB/reward-trail",
+    "/api/stations/st_0123456789a/reward-trail",
+    "/api/stations/st_0123456789ab/reward-trail/",
+    "/api/stations/st_0123456789ab/reward-trail/x",
+    "/api/stations/st_0123456789ab/reward-trailx",
 )
 # backend#1456 / frontend#535 (owner ruling 2026-10-06) — the weather leaderboard, same gate, its own
 # containers (public_read is 30 requests/min per client). The ONE admitted grammar, in this order:
@@ -1908,6 +1929,18 @@ def main() -> None:
             non_get_methods=READONLY_COMPARE_NON_GET_METHODS, non_get_paths=1,
         )
     prove_readonly_gate("direct-edge-compare", config, "8080", None, reads=READONLY_COMPARE_READS)
+    # Reading trail: same gate, in its own container (own rate-limit budget).
+    for value in READONLY_GATE_OFF_VALUES:
+        prove_readonly_gate("funnel-edge-reward-trail", funnel_text, "8444", value, reads=READONLY_REWARD_TRAIL_READS)
+    for label, text, port in (
+        ("funnel-edge-reward-trail", funnel_text, "8444"), ("direct-edge-reward-trail", config, "8080"),
+    ):
+        prove_readonly_gate(
+            label, text, port, "on", reads=READONLY_REWARD_TRAIL_READS,
+            siblings=READONLY_REWARD_TRAIL_SIBLINGS_DENIED, query_denied=READONLY_REWARD_TRAIL_QUERY_DENIED,
+            non_get_from=0, non_get_methods=READONLY_REWARD_TRAIL_NON_GET_METHODS, non_get_paths=1,
+        )
+    prove_readonly_gate("direct-edge-reward-trail", config, "8080", None, reads=READONLY_REWARD_TRAIL_READS)
     # backend#1456: the leaderboard. Container 1 proves toggle-off, admitted shapes, non-GET and siblings;
     # container 2 (own rate-limit budget) proves the query lock refuses every denied shape.
     for value in READONLY_GATE_OFF_VALUES:

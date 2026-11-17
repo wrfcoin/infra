@@ -201,6 +201,12 @@ EXPECTED = {
         "path_regexp ^/api/stations/st_[0-9a-f]{12}/compare$",
         BACKEND,
     ),
+    # Reading trail: stages only, alias only, no query (backend reads core4 evidence per reading).
+    "public_readonly_station_reward_trail": (
+        "GET",
+        "path_regexp ^/api/stations/st_[0-9a-f]{12}/reward-trail$",
+        BACKEND,
+    ),
     # Epic 8, station owner only: wallet Bearer, alias only, exact path, no query.
     "station_owner_compare_history": (
         "GET",
@@ -385,6 +391,7 @@ GATED = frozenset({
     "public_readonly_station_detail",
     "public_readonly_station_earnings",
     "public_readonly_station_compare",
+    "public_readonly_station_reward_trail",
     "station_owner_compare_history",
     "station_owner_site_check",
     "public_readonly_block_detail",
@@ -521,6 +528,8 @@ READONLY_QUERY_LOCK = {
     "public_readonly_station_earnings": 'expression `{query} == ""`',
     # compare takes NO query (the frontend sends none; it fans out to core4 + NWS).
     "public_readonly_station_compare": 'expression `{query} == ""`',
+    # reward-trail takes NO query (the frontend sends none; it reads core4 evidence per reading).
+    "public_readonly_station_reward_trail": 'expression `{query} == ""`',
     # the owner reads take NO query (the frontend sends none).
     "station_owner_compare_history": 'expression `{query} == ""`',
     "station_owner_site_check": 'expression `{query} == ""`',
@@ -1227,6 +1236,28 @@ def self_test() -> None:
         "epic8 compare regex unanchored (prefix admit)": (
             "testnet/edge/public_onboarding.caddy",
             lambda s: s.replace("/compare$\n", "/compare\n"),
+        ),
+        "reward trail query lock removed (any query admitted)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "reward-trail$\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
+                "reward-trail$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+            ),
+        ),
+        "reward trail gate removed (read admitted unconditionally)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "reward-trail$\n\t\tvars {env.PUBLIC_READONLY_API} on\n",
+                "reward-trail$\n",
+            ),
+        ),
+        "reward trail widened to raw station ids": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("st_[0-9a-f]{12}/reward-trail$", "[A-Za-z0-9_-]{1,64}/reward-trail$"),
+        ),
+        "reward trail regex unanchored (prefix admit)": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("/reward-trail$\n", "/reward-trail\n"),
         ),
         "epic8 owner compare history bearer requirement removed (visitor requests proxied)": (
             "testnet/edge/public_onboarding.caddy",

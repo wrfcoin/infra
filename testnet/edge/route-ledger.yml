@@ -208,6 +208,10 @@ services:
       same gate and public-read limiter: alias only and no query string, because it fans
       out to core4 and NWS; it returns aggregates only (nearby median from at least 3
       stations), never another station's id or coordinates.
+      (reading trail) GET /api/stations/st_<12 hex>/reward-trail is admitted behind the
+      same gate and public-read limiter: alias only and no query string, because it reads
+      core4 reward evidence per reading (fixed window of 10); it returns stages, block
+      heights and fixed reason codes only, never an amount, total or address.
       (Epic 8, station owner only) GET /api/stations/st_<12 hex>/compare/history and
       /site-check are admitted behind the same gate and public-read limiter, only with an
       Authorization Bearer header: alias only, exact path, GET only, no query string. The
