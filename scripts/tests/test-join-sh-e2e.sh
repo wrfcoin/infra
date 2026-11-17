@@ -558,6 +558,22 @@ dirty_same_pin() {
 check "dirty tracked source at the pin -> refused before provenance/start" dirty_same_pin unstaged
 check "staged source at the pin -> refused before provenance/start" dirty_same_pin staged
 check "staged edits hidden by a restored working file are refused and preserved" dirty_same_pin staged-reverted
+untracked_same_pin() {
+  local ws; ws="$(make_ws untracked-same)"
+  gitq -C "${ws}/core4" checkout --quiet --detach "$(cat "${ws}/pin")"
+  mkdir -p "${ws}/core4/.cargo"; printf '[patch]\n' > "${ws}/core4/.cargo/config.toml"
+  refused "${ws}" "untracked files" --snapshot "${ws}/snap" --yes && not_started "${ws}" \
+    && [ ! -e "${ws}/infra/testnet/.core4-commit" ] && [ -f "${ws}/core4/.cargo/config.toml" ]
+}
+check "untracked file in source at the pin -> refused before provenance/start, file kept" untracked_same_pin
+ignored_same_pin() {
+  local ws; ws="$(make_ws ignored-same)"
+  gitq -C "${ws}/core4" checkout --quiet --detach "$(cat "${ws}/pin")"
+  mkdir -p "${ws}/core4/.git/info"; printf 'target/\n' >> "${ws}/core4/.git/info/exclude"
+  mkdir -p "${ws}/core4/target"; printf 'x\n' > "${ws}/core4/target/build-output"
+  run_join "${ws}" --snapshot "${ws}/snap" --yes && ! grep -q 'untracked files' "${ws}/out.log"
+}
+check "gitignored build output at the pin is not mistaken for untracked source" ignored_same_pin
 
 pins_without_core4() {
   local ws; ws="$(make_ws nopin)"; sed -i '/^WRFCOIN_CUT_CORE4_COMMIT=/d' "${ws}/infra/testnet/cut-pins.env"

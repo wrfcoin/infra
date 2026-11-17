@@ -177,6 +177,21 @@ check_core4_pin() {
     return 1
   fi
 
+  # The image build copies the whole core4 tree, so an untracked file (a stray
+  # .cargo/config.toml, a new crate) changes the binary just as an edit does.
+  # Gitignored files (target/) are not counted.
+  local untracked
+  untracked="$(git -C "${dir}" ls-files --others --exclude-standard 2>/dev/null)" \
+    || { die "Could not list untracked files in core4 at ${dir}."; return 1; }
+  if [ -n "${untracked}" ]; then
+    die "core4 at ${dir} has untracked files (HEAD ${short_head}), for example:
+       $(printf '%s\n' "${untracked}" | head -n 1)
+       Refusing to build the cut commit ${short_pin}: the build copies the whole tree, so these
+       files would be in the node but not in any commit. Move them out, or commit them, then re-run.
+       See them all with: git -C ${dir} status --short. CORE4_PIN does not bypass this check."
+    return 1
+  fi
+
   if [ "${head}" = "$(git -C "${dir}" rev-parse "${pin}")" ]; then
     say "core4 pinned at ${short_pin} — matches the cut."
     return 0
