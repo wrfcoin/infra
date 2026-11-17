@@ -552,6 +552,23 @@
 		reverse_proxy wrfcoin-testnet-backend:4001
 	}
 
+	# Reading trail (backend station-detail-routes.ts GET /api/stations/<alias>/reward-trail):
+	# where each of the station's newest chain readings is on its way to the owner's wallet,
+	# as stages only (submitted, accepted, eligible, settled, in wallet) with block heights and
+	# fixed reason codes. No amount, no total, no address. Its own matcher: ALIAS ONLY and NO
+	# query string, because the backend reads core4 reward evidence per reading (a fixed window
+	# of 10, shared cache with /earnings). Same gate as its siblings (OFF unless the edge env has
+	# PUBLIC_READONLY_API=on exactly), GET only, counted in public_read.
+	@public_readonly_station_reward_trail {
+		method GET
+		path_regexp ^/api/stations/st_[0-9a-f]{12}/reward-trail$
+		vars {env.PUBLIC_READONLY_API} on
+		expression `{query} == ""`
+	}
+	handle @public_readonly_station_reward_trail {
+		reverse_proxy wrfcoin-testnet-backend:4001
+	}
+
 	# Owner ruling 2026-10-06 (backend#1456, frontend#535): the public weather
 	# leaderboard (earnings tab) is read-only public. Same gate as the station
 	# reads (OFF unless the edge env has PUBLIC_READONLY_API=on exactly), GET
