@@ -167,19 +167,34 @@ check_core4_pin() {
   short_head="$(git -C "${dir}" rev-parse --short=8 HEAD)"
   short_pin="$(git -C "${dir}" rev-parse --short=8 "${pin}")"
 
+  # A dirty tree would build something no commit describes. Say so before
+  # touching it, and never discard an operator's work silently.
+  if ! git -C "${dir}" diff --quiet 2>/dev/null || ! git -C "${dir}" diff --cached --quiet 2>/dev/null; then
+    die "core4 at ${dir} has uncommitted changes (HEAD ${short_head}).
+       Refusing to build the cut commit ${short_pin} from modified source — your work would be
+       in the build but not in any commit, so nobody could reproduce the node.
+       Commit or stash your tracked edits, then re-run. CORE4_PIN does not bypass this check."
+    return 1
+  fi
+
+  # The image build copies the whole core4 tree, so an untracked file (a stray
+  # .cargo/config.toml, a new crate) changes the binary just as an edit does.
+  # Gitignored files (target/) are not counted.
+  local untracked
+  untracked="$(git -C "${dir}" ls-files --others --exclude-standard 2>/dev/null)" \
+    || { die "Could not list untracked files in core4 at ${dir}."; return 1; }
+  if [ -n "${untracked}" ]; then
+    die "core4 at ${dir} has untracked files (HEAD ${short_head}), for example:
+       $(printf '%s\n' "${untracked}" | head -n 1)
+       Refusing to build the cut commit ${short_pin}: the build copies the whole tree, so these
+       files would be in the node but not in any commit. Move them out, or commit them, then re-run.
+       See them all with: git -C ${dir} status --short. CORE4_PIN does not bypass this check."
+    return 1
+  fi
+
   if [ "${head}" = "$(git -C "${dir}" rev-parse "${pin}")" ]; then
     say "core4 pinned at ${short_pin} — matches the cut."
     return 0
-  fi
-
-  # A dirty tree would build something no commit describes. Say so before
-  # touching it, and never discard an operator's work silently.
-  if ! git -C "${dir}" diff --quiet HEAD 2>/dev/null; then
-    die "core4 at ${dir} has uncommitted changes (HEAD ${short_head}).
-       Refusing to move it to the cut commit ${short_pin} — your work would be
-       in the build but not in any commit, so nobody could reproduce the node.
-       Commit or stash, then re-run. To build your tree as-is: CORE4_PIN=${short_head}"
-    return 1
   fi
 
   say "core4: at ${short_head}, cut is ${short_pin} — checking out the cut commit."

@@ -491,6 +491,11 @@ sync_only_no_inbound() {
   grep -q 'Chain identity verified' "${ws}/out.log" || { echo "    (no identity verification)" >&2; return 1; }
   grep -q 'syncing from genesis' "${ws}/out.log" || { echo "    (not a genesis sync)" >&2; return 1; }
   grep -q 'outbound connections only' "${ws}/out.log" || { echo "    (outbound-only not announced)" >&2; return 1; }
+  grep -q 'every 77 seconds' "${ws}/out.log" || { echo "    (missing current cadence)" >&2; return 1; }
+  grep -q 'does not yet prove synchronization' "${ws}/out.log" || { echo "    (identity mistaken for sync)" >&2; return 1; }
+  grep -q '/network/upgrade' "${ws}/out.log" || { echo "    (missing upgrade diagnostic)" >&2; return 1; }
+  ! grep -q 'blocks are up to 4h apart' "${ws}/out.log" || { echo "    (stale cadence reassurance)" >&2; return 1; }
+
   [ "$(env_val "${ws}" BOOTSTRAP_PEERS)" = "${CUT_BOOTSTRAP}" ] || { echo "    (default bootstrap != pinned seed)" >&2; return 1; }
   [ -z "$(env_val "${ws}" WRFCOIN_P2P_EXTERNAL_ADDR)" ] || { echo "    (an address was invented)" >&2; return 1; }
   ! grep -q 'dialing ' "${ws}/out.log" || { echo "    (dialed an address with none advertised)" >&2; return 1; }
@@ -540,6 +545,36 @@ dirty_core4() {
     && grep -q 'local edit' "${ws}/core4/README"
 }
 check "dirty core4 at another commit -> refused, operator's work untouched" dirty_core4
+dirty_same_pin() {
+  local ws mode="$1"; ws="$(make_ws "dirty-same-$mode")"
+  gitq -C "${ws}/core4" checkout --quiet --detach "$(cat "${ws}/pin")"
+  printf 'same-pin local edit\n' >> "${ws}/core4/README"
+  [ "$mode" = unstaged ] || gitq -C "${ws}/core4" add README
+  [ "$mode" != staged-reverted ] || gitq -C "${ws}/core4" show HEAD:README > "${ws}/core4/README"
+  refused "${ws}" "uncommitted changes" --snapshot "${ws}/snap" --yes && not_started "${ws}" \
+    && [ ! -e "${ws}/infra/testnet/.core4-commit" ] \
+    && { if [ "$mode" = staged-reverted ]; then gitq -C "${ws}/core4" show :README | grep -q 'same-pin local edit'; else grep -q 'same-pin local edit' "${ws}/core4/README"; fi; }
+}
+check "dirty tracked source at the pin -> refused before provenance/start" dirty_same_pin unstaged
+check "staged source at the pin -> refused before provenance/start" dirty_same_pin staged
+check "staged edits hidden by a restored working file are refused and preserved" dirty_same_pin staged-reverted
+untracked_same_pin() {
+  local ws; ws="$(make_ws untracked-same)"
+  gitq -C "${ws}/core4" checkout --quiet --detach "$(cat "${ws}/pin")"
+  mkdir -p "${ws}/core4/.cargo"; printf '[patch]\n' > "${ws}/core4/.cargo/config.toml"
+  refused "${ws}" "untracked files" --snapshot "${ws}/snap" --yes && not_started "${ws}" \
+    && [ ! -e "${ws}/infra/testnet/.core4-commit" ] && [ -f "${ws}/core4/.cargo/config.toml" ]
+}
+check "untracked file in source at the pin -> refused before provenance/start, file kept" untracked_same_pin
+ignored_same_pin() {
+  local ws; ws="$(make_ws ignored-same)"
+  gitq -C "${ws}/core4" checkout --quiet --detach "$(cat "${ws}/pin")"
+  mkdir -p "${ws}/core4/.git/info"; printf 'target/\n' >> "${ws}/core4/.git/info/exclude"
+  mkdir -p "${ws}/core4/target"; printf 'x\n' > "${ws}/core4/target/build-output"
+  run_join "${ws}" --snapshot "${ws}/snap" --yes && ! grep -q 'untracked files' "${ws}/out.log"
+}
+check "gitignored build output at the pin is not mistaken for untracked source" ignored_same_pin
+
 pins_without_core4() {
   local ws; ws="$(make_ws nopin)"; sed -i '/^WRFCOIN_CUT_CORE4_COMMIT=/d' "${ws}/infra/testnet/cut-pins.env"
   refused "${ws}" "does not define WRFCOIN_CUT_CORE4_COMMIT" --snapshot "${ws}/snap" --yes && not_started "${ws}"
