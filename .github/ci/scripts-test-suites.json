@@ -214,6 +214,10 @@
       {
         "path": "scripts/tests/test_weather_archive_profile.py",
         "reason": "Portable daemonless Compose render; retained unchanged, requires pinned Compose5.1.4 semantics."
+      },
+      {
+        "path": "scripts/tests/test_node_release_compatibility.py",
+        "reason": "Offline source compatibility gate with real temporary Git histories, stale/truncated schedule refusals and missing-fix red controls."
       }
     ],
     "shell": [
