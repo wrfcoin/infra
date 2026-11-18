@@ -1,5 +1,5 @@
 # rust:1.88-bookworm (multi-arch index digest, resolved 2026-10-05; same digest as infra/docker/Dockerfile.storage)
-FROM rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
+FROM rust:1.100-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS builder
 WORKDIR /src
 ARG DEFI_REVISION
 COPY .cache/source/ /src/
