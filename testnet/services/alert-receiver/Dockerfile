@@ -1,7 +1,7 @@
 # WRFCoin testnet AlertManager webhook receiver + notification forwarder (infra#601).
 # Baked into a local image (NOT bind-mounted): CT 101 is unprivileged LXC and
 # ZFS bind mounts are not supported. Local build only — never push to a registry.
-FROM python:3.14-alpine
+FROM python:3.15-alpine
 
 COPY alertmanager-webhook-receiver.py /app/alertmanager-webhook-receiver.py
 
