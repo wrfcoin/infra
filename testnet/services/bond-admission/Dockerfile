@@ -8,14 +8,14 @@
 # is a read-only bind mount at run time.
 
 # node:24-slim (Debian bookworm): the CLI is a glibc binary and links libssl.
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS deps
+FROM node:24-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS deps
 
 WORKDIR /app
 
 COPY testnet/services/bond-admission/package.json testnet/services/bond-admission/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS runtime
+FROM node:24-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS runtime
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
