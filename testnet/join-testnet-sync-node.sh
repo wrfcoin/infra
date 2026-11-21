@@ -287,10 +287,38 @@ if [ "${PREFLIGHT}" = "1" ]; then
   exit 0
 fi
 
+# --- Build the node image BEFORE .env -------------------------------------
+# setup-env.sh refuses to write a .env without an accepted runtime image: the
+# default public-release profile needs the real local image id (sha256:<64 hex>).
+# A brand-new host has no image yet, so the old order (setup-env, then
+# `compose up --build`) stopped every fresh joiner seconds in with
+# RUNTIME_IMAGE_FAIL. Build first, then hand setup-env the id of the image this
+# node will actually run, which keeps the IMMUTABLE class honest.
+#
+# Plain `docker build`, not `docker compose build`: compose cannot load the
+# project before .env exists (other services' required `:?` variables fail
+# interpolation). This mirrors the wrfcoin-node `build:` in
+# docker-compose.override.yml (context, dockerfile, core build args, tag);
+# scripts/tests/test-join-sh-e2e.sh checks the two stay equal.
+NODE_IMAGE_TAG="wrfcoin/native-chain:testnet-local"
+echo "==> Building the node image ${NODE_IMAGE_TAG} from ${WRFCOIN_ROOT} (first build can take a while) ..."
+docker build \
+  -f "${WRFCOIN_ROOT}/infra/infra/docker/Dockerfile.core" \
+  --build-arg "WRFCOIN_BUILD_REVISION=${WRFCOIN_CORE4_BUILD_REVISION:-}" \
+  --build-arg "WRFCOIN_BUILD_CREATED=${WRFCOIN_BUILD_CREATED:-}" \
+  -t "${NODE_IMAGE_TAG}" \
+  "${WRFCOIN_ROOT}"
+NODE_IMAGE_ID="$(docker image inspect -f '{{.Id}}' "${NODE_IMAGE_TAG}")"
+if [[ ! "${NODE_IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "ERROR: built ${NODE_IMAGE_TAG} but its local image id is '${NODE_IMAGE_ID}', not sha256:<64 hex>." >&2
+  exit 1
+fi
+echo "==> Node image id: ${NODE_IMAGE_ID}"
+
 # --- Generate .env on first run ---
 if [ ! -f .env ]; then
   echo "==> Generating .env (secrets) via setup-env.sh ..."
-  bash setup-env.sh
+  WRFCOIN_TESTNET_RUNTIME_IMAGE="${NODE_IMAGE_ID}" bash setup-env.sh
 fi
 
 # --- Helper: idempotently set KEY=VALUE in .env ---
@@ -312,6 +340,8 @@ set_env() {
 }
 
 echo "==> Configuring sync-only testnet node ..."
+# Record the image that will run (a re-run rebuilds after `git pull`).
+set_env WRFCOIN_TESTNET_RUNTIME_IMAGE "${NODE_IMAGE_ID}"
 set_env BOOTSTRAP_PEERS "${BOOTSTRAP_PEERS}"
 set_env WRFCOIN_NETWORK_ID "${WRFCOIN_CUT_NETWORK_ID}"
 set_env WRFCOIN_CHAIN_ID "${WRFCOIN_CUT_CHAIN_ID}"
@@ -427,9 +457,17 @@ else
   fi
 fi
 
-echo "==> Building + starting postgres, redis, wrfcoin-node (first build can take a while) ..."
+echo "==> Starting postgres, redis, wrfcoin-node (node image already built above) ..."
+# --no-build: the node must run exactly the image whose id .env records.
 docker compose -f docker-compose.testnet.yml -f docker-compose.override.yml \
-  up -d --build postgres redis wrfcoin-node
+  up -d --no-build postgres redis wrfcoin-node
+
+# The running node must be that image (the gate setup-env used; release profile only).
+if [ "$(sed -n 's/^WRFCOIN_RUNTIME_IMAGE_PROFILE=//p' .env | tail -1)" = "public-release" ]; then
+  bash "${SCRIPT_DIR}/scripts/validate-runtime-image.sh" --profile public-release \
+    --image "${NODE_IMAGE_ID}" --check-running --container wrfcoin-testnet-node \
+    || { echo "ERROR: the running node is not the image recorded in .env (${NODE_IMAGE_ID})." >&2; exit 1; }
+fi
 
 echo "==> Waiting for the node API ..."
 ready=0

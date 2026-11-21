@@ -361,7 +361,7 @@ guard_before_compose_up() {
   # the refusal must run BEFORE compose can create an empty node
   local guard_line up_line
   guard_line="$(grep -n "no '\${node_data_volume}' volume" "${JOINER}" | head -1 | cut -d: -f1)"
-  up_line="$(grep -n "up -d --build postgres" "${JOINER}" | head -1 | cut -d: -f1)"
+  up_line="$(grep -n "up -d --no-build postgres" "${JOINER}" | head -1 | cut -d: -f1)"
   [ -n "${guard_line}" ] && [ -n "${up_line}" ] && [ "${guard_line}" -lt "${up_line}" ]
 }
 check "fresh-node guard precedes compose up" guard_before_compose_up
