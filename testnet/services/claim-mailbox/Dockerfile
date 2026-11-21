@@ -1,14 +1,14 @@
 # WRFCoin testnet claim mailbox (CLAIM_MAILBOX.md). Default OFF.
 # Holds no key and no chain client: it stores and serves public claim hex only.
 
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS deps
+FROM node:24-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS deps
 
 WORKDIR /app
 
 COPY testnet/services/claim-mailbox/package.json testnet/services/claim-mailbox/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS runtime
+FROM node:24-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS runtime
 
 WORKDIR /app
 
