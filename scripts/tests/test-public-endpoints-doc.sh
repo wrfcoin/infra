@@ -46,8 +46,9 @@ gated_rows=$(grep -cF 'OFF unless the edge env has `PUBLIC_READONLY_API=on`' "${
 # The public network status page adds its one read (owner decision 2026-11-01).
 # Epic 6 option B adds the node address record POST (owner ruling 2026-11-14).
 # The reading trail adds the per-station stages read (alias only, no query).
-if [[ "$gated_rows" != 71 ]]; then
-  echo "FAIL: expected 71 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
+# Phone station registration adds the request POST and its status read (core4 station_registrar_key).
+if [[ "$gated_rows" != 73 ]]; then
+  echo "FAIL: expected 73 gated rows in PUBLIC_ENDPOINTS.md, found ${gated_rows}" >&2
   exit 1
 fi
 sed '/vars {env.PUBLIC_READONLY_API} on/d' "${ROOT}/testnet/edge/public_onboarding.caddy" >"$tmp/ungated.caddy"

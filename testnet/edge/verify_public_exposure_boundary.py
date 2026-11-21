@@ -272,6 +272,10 @@ EXPECTED = {
     "public_readonly_bond_admission_recent": ("GET", "path /api/bond-admission/recent", BACKEND),
     # node-address-routes.ts (epic 6, option B): a node's own signed address record, 4 KiB.
     "public_node_address_publish": ("POST", "path /api/node-addresses", ("request_body {", "max_size 4096", "}", *BACKEND)),
+    # station-registrar-routes.ts (core4 station_registrar_key): one owner-signed phone row, 8 KiB; the
+    # status of one request by its phone station id is a public read.
+    "public_station_registrar_request": ("POST", "path /api/station-registrar/requests", ("request_body {", "max_size 8192", "}", *BACKEND)),
+    "public_readonly_station_registrar_status": ("GET", "path_regexp ^/api/station-registrar/requests/mob-[0-9a-f]{32}$", BACKEND),
     "public_forecasts_mine": ("GET", "path /api/forecasts/mine", BACKEND),
     "public_forecasts_draft": ("POST", "path /api/forecasts/draft", ("request_body {", "max_size 2048", "}", *BACKEND)),
     "public_forecasts_submit": ("POST", "path /api/forecasts/submit", ("request_body {", "max_size 8192", "}", *BACKEND)),
@@ -417,6 +421,8 @@ GATED = frozenset({
     "public_bond_admission",
     "public_readonly_bond_admission_recent",
     "public_node_address_publish",
+    "public_station_registrar_request",
+    "public_readonly_station_registrar_status",
     "public_forecasts_mine",
     "public_forecasts_draft",
     "public_forecasts_submit",
@@ -482,7 +488,7 @@ BEARER_LOCK = {
     "public_forecasts_submit": 'header Authorization "Bearer *"',
 }
 # JSON-body writes: the matcher also pins Content-Type (last directive).
-JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_bond_admission", "public_node_address_publish", "public_notifications_unsubscribe",
+JSON_BODY = frozenset({"public_wallet_send", "public_wallet_send_passkey", "wolfram_reading_check", "public_notifications_subscribe", "public_forecast_check_submit", "public_challenges_write", "public_duels_write", "public_duel_record", "public_forecasts_draft", "public_forecasts_submit", "public_bond_admission", "public_node_address_publish", "public_station_registrar_request", "public_notifications_unsubscribe",
     "public_notifications_passkey_challenge", "public_notifications_passkey_subscribe", "public_notifications_passkey_unsubscribe",
     "public_wallet_security_key_actions", "public_wallet_send_allowlist_actions",
     "public_governance_advisory_actions",
@@ -558,6 +564,8 @@ READONLY_QUERY_LOCK = {
     "public_bond_admission": 'expression `{query} == ""`',
     "public_readonly_bond_admission_recent": 'expression `{query} == ""`',
     "public_node_address_publish": 'expression `{query} == ""`',
+    "public_station_registrar_request": 'expression `{query} == ""`',
+    "public_readonly_station_registrar_status": 'expression `{query} == ""`',
     "public_forecasts_mine": 'expression `{query} == ""`',
     "public_forecasts_draft": 'expression `{query} == ""`',
     "public_forecasts_submit": 'expression `{query} == ""`',
@@ -829,7 +837,7 @@ def verify(root: Path = ROOT) -> None:
     # protection, not widening one. Note this pin fixes only the zone NAME set;
     # zone bodies are unpinned, so a change to those events/window/key values
     # would not fail this gate.
-    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write", "bond_admission", "node_address_write", "governance_advisory_write"}:
+    if zone_names != {"onboarding", "faucet_claim", "join_snapshot", "public_read", "station_owner_actions", "weather_noaa", "wallet_send", "wolfram_reading_check", "notify_write", "wallet_protection_actions", "forecast_write", "bond_admission", "node_address_write", "station_registrar_write", "governance_advisory_write"}:
         raise AssertionError(f"rate-limit zone set drifted: {sorted(zone_names)}")
     expected_zones = {
         "wallet_send": ["match {", "method POST", "path /api/wallet/send", "}", "key {client_ip}", "events 5", "window 1m"],
@@ -856,7 +864,7 @@ def verify(root: Path = ROOT) -> None:
         ],
         "public_read": [
             "match {",
-            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/public/station-history/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent /api/claim-mailbox/claims/* /api/public/network-status",
+            "path /api/faucet/bond-grants /api/blockchain/* /api/weather/coverage-zones /api/build /api/capabilities /api/stations/* /api/weather/leaderboard /api/earnings/leaderboard /api/operators/c_*/profile /api/wallet/* /api/governance/* /api/public/balance/* /api/public/station-history/* /api/forecasters /api/forecasters/c_* /api/explorer/summary /api/proofs/* /api/network/nodes /api/competitions /api/competitions/* /api/notifications/config /api/calibration-certificates/station/* /api/forecast-verification/* /api/challenges /api/challenges/* /api/duels /api/duels/* /api/forecasts/* /api/bond-admission/recent /api/claim-mailbox/claims/* /api/public/network-status /api/station-registrar/requests/*",
             "}",
             "key {client_ip}",
             "events 30",
@@ -908,6 +916,16 @@ def verify(root: Path = ROOT) -> None:
             "}",
             "key {client_ip}",
             "events 4",
+            "window 1m",
+        ],
+        # core4 station_registrar_key: phone station registration requests (each costs a CLI check).
+        "station_registrar_write": [
+            "match {",
+            "method POST",
+            "path /api/station-registrar/requests",
+            "}",
+            "key {client_ip}",
+            "events 3",
             "window 1m",
         ],
         # backend#58: website forecast writes (each may relay to the node under the site's one credential).
@@ -1736,6 +1754,24 @@ def self_test() -> None:
         "attester settings default on in the funnel compose": (
             "testnet/docker-compose.funnel-edge.yml",
             lambda s: s.replace("ATTESTER_SETTINGS_PUBLIC: ${ATTESTER_SETTINGS_PUBLIC:-off}", "ATTESTER_SETTINGS_PUBLIC: ${ATTESTER_SETTINGS_PUBLIC:-on}"),
+        ),
+        "station registrar request ungated": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace("path /api/station-registrar/requests\n\t\tvars {env.PUBLIC_READONLY_API} on\n", "path /api/station-registrar/requests\n"),
+        ),
+        "station registrar request body cap raised": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "handle @public_station_registrar_request {\n\t\trequest_body {\n\t\t\tmax_size 8192",
+                "handle @public_station_registrar_request {\n\t\trequest_body {\n\t\t\tmax_size 65536",
+            ),
+        ),
+        "station registrar status path widened": (
+            "testnet/edge/public_onboarding.caddy",
+            lambda s: s.replace(
+                "path_regexp ^/api/station-registrar/requests/mob-[0-9a-f]{32}$",
+                "path_regexp ^/api/station-registrar/requests/.*$",
+            ),
         ),
         "node address publish ungated": (
             "testnet/edge/public_onboarding.caddy",
