@@ -34,6 +34,7 @@ services:
   storage-node:        { exposure: never }   # ipfs-storage: internal app client only
   softhsm-init:        { exposure: never }
   wrfcoin-bond-admission: { exposure: never }   # no host port; only the backend proxy reaches it (backend bond-admission-routes)
+  wrfcoin-station-registrar: { exposure: never }   # no host port, no edge or backend route yet (STATION_REGISTRAR.md)
   wrfcoin-claim-mailbox: { exposure: never }   # no host port; only the backend proxy reaches it (claim reads, node address POST)
   softhsm-seed-init:   { exposure: never }   # seed profile: RETIRED on CT101 2026-09-27 (infra#1057 Q4), kept for rollback
   db-migrate:          { exposure: never }

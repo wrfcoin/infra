@@ -103,7 +103,8 @@ are deleted after 30 days.
 - What a stolen online key costs: up to 128 fake phone stations at most one a
   block (about 2.7 h to fill), phone class only, no effect on existing
   stations. The owner deactivates each with the governance key. Retiring the
-  key takes a release; the pinned cold spare carries on.
+  key is a schedule extension (`station_registrar_key_retire_0`/`_1`, core4
+  #186); the pinned cold spare carries on.
 
 ## The CLI contract this service calls
 
@@ -151,13 +152,40 @@ nothing (fail closed).
 | `STATION_REGISTRAR_RETENTION_SECONDS` | `2592000` (30 days) |
 | `PORT` | `8095` |
 
+## Image (compose profile `station-registrar`)
+
+`docker compose --profile station-registrar` starts `wrfcoin-station-registrar`.
+It has no host port, and no backend or edge route reaches it yet, so even when
+running it answers nobody outside the compose network.
+
+1. Build the release CLI on CT102 inside the same base as the node image
+   (Debian bookworm, glibc), from a core4 revision that pins the chain 888
+   registrar keys (core4 #172, live since r4.3). Copy it to
+   `testnet/services/station-registrar/bin/wrfcoin`; that directory is
+   git-ignored.
+2. Build with `STATION_REGISTRAR_CLI_SHA256=<sha256 of that file>`. The build
+   refuses a missing or different hash and checks that the binary has
+   `station registrar-sign`.
+3. Key: the online seed file `registrar-online.key` (64 hex), owned by uid
+   1001, mode 0600, in a host directory named by `STATION_REGISTRAR_KEY_DIR`,
+   mounted read-only at `/run/station-registrar`. A missing directory or file
+   means nothing is ever signed.
+4. Set `STATION_REGISTRAR_GENESIS_HASH`, `STATION_REGISTRAR_NODE_TOKEN` and
+   `STATION_REGISTRAR_IP_SALT` (16+ chars) in the host env file. Any of them
+   empty answers 503. `STATION_REGISTRAR_ENABLED` stays `false` until the
+   owner switches it on after `station_registrar_key` is active.
+
+State lives in the named volume `station-registrar-state`
+(`/var/lib/station-registrar/state.json`). The stop file is
+`/var/lib/station-registrar/STOP`:
+`docker exec wrfcoin-testnet-station-registrar touch /var/lib/station-registrar/STOP`.
+The container runs read-only, no capabilities, `/tmp` tmpfs only.
+
 ## Not in this change
 
-- No Dockerfile, compose entry, backend proxy or edge route. The service
-  needs the core4 CLI built with the pinned keys, so its image comes with the
-  release that pins them.
-- Nothing is enabled. The chain refuses every registrar registration until
-  `station_registrar_key` is pinned for this chain and scheduled.
+- No backend proxy or edge route, and the phone app does not call it yet.
+- Nothing is enabled or deployed. The chain refuses every registrar
+  registration until `station_registrar_key` is scheduled and active.
 
 ## Tests
 
