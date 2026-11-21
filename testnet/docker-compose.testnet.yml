@@ -1153,6 +1153,87 @@ services:
         max-file: "3"
 
   # =========================================================================
+  # Station registrar (services/station-registrar/STATION_REGISTRAR.md). Default OFF.
+  # Own profile, so no existing `up` starts it. Signs NEW phone-station
+  # registrations with the pinned online registrar key (core4
+  # station_registrar_key) after its checks pass and a 24 h hold. The chain
+  # refuses every registrar registration until that feature is scheduled and
+  # active, so this entry changes nothing about how stations register today.
+  # No host port and no edge or backend route yet.
+  # Before building: copy the release CLI to services/station-registrar/bin/wrfcoin
+  # and set STATION_REGISTRAR_CLI_SHA256 to its sha256 (the build refuses otherwise).
+  # The online seed is a read-only bind mount, owned by uid 1001, mode 0600.
+  # =========================================================================
+
+  wrfcoin-station-registrar:
+    image: wrfcoin/station-registrar:testnet
+    build:
+      context: ..
+      dockerfile: testnet/services/station-registrar/Dockerfile
+      args:
+        <<: *infra-build-args
+        WRFCOIN_CLI_SHA256: ${STATION_REGISTRAR_CLI_SHA256:-}
+    container_name: wrfcoin-testnet-station-registrar
+    restart: unless-stopped
+    profiles: ["station-registrar"]
+    environment:
+      PORT: "8095"
+      STATION_REGISTRAR_ENABLED: ${STATION_REGISTRAR_ENABLED:-false}
+      # While this file exists nothing is accepted or signed, no restart:
+      #   docker exec wrfcoin-testnet-station-registrar touch /var/lib/station-registrar/STOP
+      STATION_REGISTRAR_STOP_FILE: /var/lib/station-registrar/STOP
+      WRFCOIN_NETWORK_ID: testnet
+      WRFCOIN_CHAIN_ID: "${WRFCOIN_CHAIN_ID:-777}"
+      # Required: the chain's block-1 hash. Empty = 503 (fail closed).
+      STATION_REGISTRAR_GENESIS_HASH: ${STATION_REGISTRAR_GENESIS_HASH:-}
+      STATION_REGISTRAR_NODE_URL: http://wrfcoin-node:8556
+      # Operator bearer: the station list and the station POST. Empty = 503.
+      STATION_REGISTRAR_NODE_TOKEN: ${STATION_REGISTRAR_NODE_TOKEN:-}
+      # Path INSIDE the container. The host directory is STATION_REGISTRAR_KEY_DIR below.
+      STATION_REGISTRAR_KEY_FILE: /run/station-registrar/registrar-online.key
+      STATION_REGISTRAR_STATE_FILE: /var/lib/station-registrar/state.json
+      # Required (>= 16 chars) for the salted address hash; empty = 503 (fail closed).
+      STATION_REGISTRAR_IP_SALT: ${STATION_REGISTRAR_IP_SALT:-}
+      # The edge's addresses, once an edge route exists. Unset trusts none.
+      STATION_REGISTRAR_TRUSTED_PROXIES: ${STATION_REGISTRAR_TRUSTED_PROXIES:-}
+      STATION_REGISTRAR_DAILY_TOTAL: ${STATION_REGISTRAR_DAILY_TOTAL:-20}
+      STATION_REGISTRAR_DAILY_PER_IP: ${STATION_REGISTRAR_DAILY_PER_IP:-3}
+      STATION_REGISTRAR_DAILY_PER_CELL: ${STATION_REGISTRAR_DAILY_PER_CELL:-3}
+      STATION_REGISTRAR_HOLD_SECONDS: ${STATION_REGISTRAR_HOLD_SECONDS:-86400}
+      STATION_REGISTRAR_SOFT_CEILING: ${STATION_REGISTRAR_SOFT_CEILING:-128}
+    volumes:
+      # Absent directory = no key = nothing is ever signed, never a crash.
+      - ${STATION_REGISTRAR_KEY_DIR:-./station-registrar-key-absent}:/run/station-registrar:ro
+      # Request records (address HMACs only, 30 days) and the stop file.
+      - station-registrar-state:/var/lib/station-registrar
+    depends_on:
+      wrfcoin-node:
+        condition: service_healthy
+    networks:
+      - wrfcoin-testnet
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Row files live here for one signature each; HOME=/tmp for the CLI.
+      - /tmp:noexec,nosuid,size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # =========================================================================
   # WRFCoin Backend API (Node.js main_api_server)
   # =========================================================================
 
@@ -2969,3 +3050,4 @@ volumes:
   sdr-ingest-logs: {}
   weather-collector-state: {}
   weather-collector-multi-state: {}
+  station-registrar-state: {}
