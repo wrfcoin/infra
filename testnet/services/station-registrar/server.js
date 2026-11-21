@@ -192,9 +192,13 @@ function createService({ config, store, runCli, node, now = () => Date.now() }) 
     return Boolean(config.stopFile) && fs.existsSync(config.stopFile);
   }
 
+  // The service is only ever reached through the backend proxy. With no trusted
+  // proxy every request would be keyed on the proxy's own address, so the
+  // per-address limit would become one shared limit for everyone: refuse instead.
   function configured() {
     return Boolean(config.chainId && config.networkId === 'testnet' && HEX64.test(config.genesisHash)
-      && config.keyFile && config.stateFile && config.nodeToken && config.ipSalt.length >= 16);
+      && config.keyFile && config.stateFile && config.nodeToken && config.ipSalt.length >= 16
+      && config.trustedProxies.length > 0);
   }
 
   function unavailable(message) {

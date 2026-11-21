@@ -183,6 +183,21 @@ test('not configured is refused', async () => {
   assert.equal(m.service.configured(), false);
 });
 
+test('enabled with no trusted proxy is refused, never limited on the proxy address', async () => {
+  for (const proxies of ['', ' , ']) {
+    const s = setup({ STATION_REGISTRAR_TRUSTED_PROXIES: proxies });
+    assert.equal(s.service.configured(), false);
+    await withServer(s.service, async (base) => {
+      const r = await post(base, row());
+      assert.equal(r.status, 503);
+      assert.equal(r.body.error.code, 'REGISTRAR_UNAVAILABLE');
+    });
+    assert.deepEqual(await s.service.tick(), { action: 'idle' });
+    assert.equal(s.cli.calls.length, 0);
+  }
+  assert.equal(setup({ STATION_REGISTRAR_TRUSTED_PROXIES: '10.251.0.20' }).service.configured(), true);
+});
+
 test('a good request is held 24 h, then signed once and submitted', async () => {
   const s = setup();
   const r1 = row();
