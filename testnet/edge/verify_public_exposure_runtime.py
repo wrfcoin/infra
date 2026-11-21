@@ -1700,6 +1700,29 @@ BOND_ADMISSION_CASES = (
     ("GET", f"{_BA}/x/../recent", (), 400),
 )
 
+# Phone station registration (backend station-registrar-routes.ts, core4 station_registrar_key): JSON row
+# POST with no bearer; the status of one request by its phone station id is a public read. Exact paths, no
+# query. Every POST case counts against station_registrar_write (3/min), so the proofs run 3 per edge.
+_SR = "/api/station-registrar/requests"
+_SR_ID = "mob-" + "3c" * 16
+STATION_REGISTRAR_CASES = (
+    ("POST", _SR, _JSON, 502),
+    ("GET", f"{_SR}/{_SR_ID}", (), 502),
+    ("POST", _SR, (), 404),  # JSON only
+    ("POST", f"{_SR}?x=1", _JSON, 404),
+    ("GET", f"{_SR}/{_SR_ID}?x=1", (), 404),
+    ("GET", _SR, (), 404),  # no list of requests
+    ("GET", f"{_SR}/", (), 404),
+    ("GET", f"{_SR}/mob-" + "3C" * 16, (), 404),  # lowercase hex only
+    ("GET", f"{_SR}/mob-" + "3c" * 15, (), 404),
+    ("GET", f"{_SR}/ws-1", (), 404),
+    ("PUT", _SR, _JSON, 404),
+    ("POST", f"{_SR}/{_SR_ID}", _JSON, 404),
+    ("POST", "/api/station-registrar/sign", _JSON, 404),  # signing is the service's, never a public route
+    ("GET", "/station-registrar/requests", (), 404),  # the service's own path is not admitted
+    ("GET", f"{_SR}/x/../{_SR_ID}", (), 400),
+)
+
 # Passkey-wallet payout notifications (backend feat/passkey-payout-subscribe): no JWT, so no Bearer; the
 # body carries a WebAuthn assertion over a single-use nonce. JSON only, exact paths, no query.
 _NP = f"{_N}/passkey"
@@ -2004,6 +2027,8 @@ def main() -> None:
         prove_parity_reads(f"{label}-website-forecasts", text, port, "on", WEBSITE_FORECAST_CASES, 8)
         prove_parity_reads(f"{label}-bond-admission-gate", text, port, None, BOND_ADMISSION_CASES[:2], 12)
         prove_parity_reads(f"{label}-bond-admission", text, port, "on", BOND_ADMISSION_CASES, 6)
+        prove_parity_reads(f"{label}-station-registrar-gate", text, port, None, STATION_REGISTRAR_CASES[:2], 3)
+        prove_parity_reads(f"{label}-station-registrar", text, port, "on", STATION_REGISTRAR_CASES, 3)
         prove_parity_reads(f"{label}-station-owner-insights-gate", text, port, None, STATION_OWNER_INSIGHT_CASES[:4], 12)
         prove_parity_reads(f"{label}-station-owner-insights", text, port, "on", STATION_OWNER_INSIGHT_CASES, 13)
 
@@ -2057,6 +2082,15 @@ def main() -> None:
             caddy_src.replace("path /api/bond-admission\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n",
                               "path /api/bond-admission\n\t\tvars {env.PUBLIC_READONLY_API} on\n"),
             BOND_ADMISSION_CASES,
+        ),
+        "station registrar request admitted without JSON": (
+            caddy_src.replace("path /api/station-registrar/requests\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n\t\theader Content-Type application/json\n",
+                              "path /api/station-registrar/requests\n\t\tvars {env.PUBLIC_READONLY_API} on\n\t\texpression `{query} == \"\"`\n"),
+            STATION_REGISTRAR_CASES, 3,
+        ),
+        "station registrar status widened to any segment": (
+            caddy_src.replace("^/api/station-registrar/requests/mob-[0-9a-f]{32}$", "^/api/station-registrar/requests/[^/]+$"),
+            STATION_REGISTRAR_CASES, 3,
         ),
         "proof card widened to any segment": (
             caddy_src.replace("^/api/proofs/[0-9a-f]{64}$", "^/api/proofs/[^/]+$"), PROOF_CARD_CASES,
