@@ -28,6 +28,7 @@ render() {
 render > "$scratch/off.json"
 render --profile station-registrar > "$scratch/on.json"
 STATION_REGISTRAR_KEY_DIR=/root/station-registrar render --profile station-registrar > "$scratch/keyed.json"
+STATION_REGISTRAR_ENABLED=true STATION_REGISTRAR_TRUSTED_PROXIES='' render --profile station-registrar > "$scratch/enabled-empty.json"
 node - "$scratch" <<'JS'
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
@@ -40,7 +41,7 @@ assert.equal(s.environment.STATION_REGISTRAR_ENABLED, 'false');
 assert.equal(s.environment.WRFCOIN_NETWORK_ID, 'testnet');
 assert.equal(s.environment.STATION_REGISTRAR_SOFT_CEILING, '128');
 assert.equal(s.environment.STATION_REGISTRAR_HOLD_SECONDS, '86400');
-for (const k of ['STATION_REGISTRAR_GENESIS_HASH', 'STATION_REGISTRAR_NODE_TOKEN', 'STATION_REGISTRAR_IP_SALT', 'STATION_REGISTRAR_TRUSTED_PROXIES']) {
+for (const k of ['STATION_REGISTRAR_GENESIS_HASH', 'STATION_REGISTRAR_NODE_TOKEN', 'STATION_REGISTRAR_IP_SALT']) {
   assert.equal(s.environment[k], '', `${k} empty by default (fail closed)`);
 }
 assert.equal(s.environment.STATION_REGISTRAR_KEY_FILE, '/run/station-registrar/registrar-online.key');
@@ -54,6 +55,20 @@ const state = s.volumes.find((v) => v.target === '/var/lib/station-registrar');
 assert.equal(state.type, 'volume');
 assert.ok(s.environment.STATION_REGISTRAR_STOP_FILE.startsWith('/var/lib/station-registrar/'));
 assert.ok(s.environment.STATION_REGISTRAR_STATE_FILE.startsWith('/var/lib/station-registrar/'));
+// Trusted proxy: exactly the backend's pinned wrfcoin-ingress address, reached by an ingress-only alias.
+const backend = read('on')['wrfcoin-backend'];
+const backendIngress = backend.networks['wrfcoin-ingress'].ipv4_address;
+assert.equal(backendIngress, '10.251.0.20');
+assert.equal(s.environment.STATION_REGISTRAR_TRUSTED_PROXIES, backendIngress, 'trusts the backend, and only it');
+assert.deepEqual(s.networks['wrfcoin-ingress'].aliases, ['station-registrar-ingress']);
+assert.ok(!(s.networks['wrfcoin-testnet'].aliases || []).includes('station-registrar-ingress'), 'alias is ingress-only');
+assert.equal(backend.environment.STATION_REGISTRAR_URL, 'http://station-registrar-ingress:8095');
+assert.equal(backend.environment.STATION_REGISTRAR_PROXY_ENABLED, 'false');
+// Enabled with the host env setting the list empty still renders the backend's address (`:-`),
+// so an empty trusted list cannot come from the env file; the service refuses one anyway.
+const enabledEmpty = read('enabled-empty')[name].environment;
+assert.equal(enabledEmpty.STATION_REGISTRAR_ENABLED, 'true');
+assert.equal(enabledEmpty.STATION_REGISTRAR_TRUSTED_PROXIES, '10.251.0.20');
 const keyed = read('keyed')[name].volumes.find((v) => v.target === '/run/station-registrar');
 assert.equal(keyed.source, '/root/station-registrar');
 assert.equal(keyed.read_only, true);
@@ -76,5 +91,8 @@ fi
 while read -r f; do
     grep -q "testnet/services/station-registrar/$f.js" "$dockerfile" || { echo "image misses $f.js" >&2; exit 1; }
 done < <(grep -o "require('\./[a-z-]*')" "$repo/testnet/services/station-registrar/server.js" | sed "s/require('\.\/\(.*\)')/\1/")
+# The service refuses to run enabled with no trusted proxy (configured() is false -> 503).
+grep -q 'config.trustedProxies.length > 0' "$repo/testnet/services/station-registrar/server.js" \
+    || { echo "server.js must refuse an empty trusted proxy list" >&2; exit 1; }
 git -C "$repo" check-ignore -q testnet/services/station-registrar/bin/wrfcoin || { echo "bin/wrfcoin must be git-ignored" >&2; exit 1; }
 echo "station registrar compose entry: inert by default"

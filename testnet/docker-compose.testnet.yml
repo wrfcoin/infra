@@ -1194,8 +1194,10 @@ services:
       STATION_REGISTRAR_STATE_FILE: /var/lib/station-registrar/state.json
       # Required (>= 16 chars) for the salted address hash; empty = 503 (fail closed).
       STATION_REGISTRAR_IP_SALT: ${STATION_REGISTRAR_IP_SALT:-}
-      # The edge's addresses, once an edge route exists. Unset trusts none.
-      STATION_REGISTRAR_TRUSTED_PROXIES: ${STATION_REGISTRAR_TRUSTED_PROXIES:-}
+      # The backend proxy's fixed address on wrfcoin-ingress (backend#1229 pins it). The backend
+      # reaches this service only by its ingress-only alias below, so its requests always come
+      # from 10.251.0.20 and its single X-Forwarded-For value is the visitor's. Empty = 503.
+      STATION_REGISTRAR_TRUSTED_PROXIES: ${STATION_REGISTRAR_TRUSTED_PROXIES:-10.251.0.20}
       STATION_REGISTRAR_DAILY_TOTAL: ${STATION_REGISTRAR_DAILY_TOTAL:-20}
       STATION_REGISTRAR_DAILY_PER_IP: ${STATION_REGISTRAR_DAILY_PER_IP:-3}
       STATION_REGISTRAR_DAILY_PER_CELL: ${STATION_REGISTRAR_DAILY_PER_CELL:-3}
@@ -1210,7 +1212,14 @@ services:
       wrfcoin-node:
         condition: service_healthy
     networks:
-      - wrfcoin-testnet
+      # wrfcoin-node and the rest of the stack.
+      wrfcoin-testnet: {}
+      # Only so the backend proxy can reach it from its pinned address. The alias exists on
+      # this network only, so the backend's connection never takes the dynamic wrfcoin-testnet
+      # path. The edges never proxy here (route ledger: never exposed).
+      wrfcoin-ingress:
+        aliases:
+          - station-registrar-ingress
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -1387,6 +1396,11 @@ services:
       # Anything else — including this backend's own 127.0.0.1:4001 port — is
       # keyed on its socket peer, and the backend never bans a private peer.
       TRUSTED_PROXIES: "127.0.0.1,::1,10.251.0.1,10.251.0.10,10.251.0.11,10.251.0.12,10.251.0.13"
+      # Phone station registrar proxy (backend station-registrar-routes.ts). Default OFF (404).
+      # The URL is the registrar's ingress-only alias, so the registrar sees this backend at its
+      # pinned 10.251.0.20 (the registrar's STATION_REGISTRAR_TRUSTED_PROXIES).
+      STATION_REGISTRAR_PROXY_ENABLED: ${STATION_REGISTRAR_PROXY_ENABLED:-false}
+      STATION_REGISTRAR_URL: ${STATION_REGISTRAR_URL:-http://station-registrar-ingress:8095}
       # infra#972: advisory oracle-reference shadow scoring. OFF by default.
       # Enable only through docker-compose.reference-shadow.yml plus
       # `--profile oracle-reference`. It never changes a reward and does not

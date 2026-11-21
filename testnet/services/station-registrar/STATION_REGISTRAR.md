@@ -45,7 +45,7 @@ stop a bad day before it is on chain.
 | # | Check | Refusal |
 |---|---|---|
 | 1 | `STATION_REGISTRAR_ENABLED=true` and no stop file | 503 `REGISTRAR_STOPPED` |
-| 2 | Chain id, network `testnet`, genesis hash, key file path, state file, node token, address salt ≥ 16 chars | 503 `REGISTRAR_UNAVAILABLE` |
+| 2 | Chain id, network `testnet`, genesis hash, key file path, state file, node token, address salt ≥ 16 chars, at least one trusted proxy | 503 `REGISTRAR_UNAVAILABLE` |
 | 3 | The visitor's address is known (from the edge's `X-Forwarded-For` only when the connection comes from a listed proxy) | 400 `CLIENT_ADDRESS_UNKNOWN` |
 | 4 | Shape: exactly the nine fields; the chain's registrar limits (phone, unverified, real, slot-0 `mob-` id, on the grid, no elevation) | 422 `REGISTRATION_REFUSED` |
 | 5 | The node is on this chain; `station_registrar_key` is active; `station_coordinates_fixed_point` is not (this service doesn't build integer coordinates yet) | 503 `REGISTRAR_WRONG_CHAIN` / `REGISTRAR_NOT_ACTIVE` / `REGISTRAR_FORMAT_UNSUPPORTED` |
@@ -140,7 +140,7 @@ nothing (fail closed).
 | `STATION_REGISTRAR_NODE_URL` | `http://127.0.0.1:8556` |
 | `STATION_REGISTRAR_NODE_TOKEN` | Operator bearer: the station list and the station POST |
 | `STATION_REGISTRAR_IP_SALT` | required, ≥ 16 chars |
-| `STATION_REGISTRAR_TRUSTED_PROXIES` | comma list of the edge's addresses; unset trusts none |
+| `STATION_REGISTRAR_TRUSTED_PROXIES` | comma list of the proxy addresses allowed to set `X-Forwarded-For`; required (empty answers 503, or every visitor would share the proxy's per-address limit). Compose: `10.251.0.20`, the backend on `wrfcoin-ingress` |
 | `STATION_REGISTRAR_CLI` | `wrfcoin` |
 | `STATION_REGISTRAR_DAILY_TOTAL` | `20` (1–100) |
 | `STATION_REGISTRAR_DAILY_PER_IP` | `3` (1–100) |
@@ -155,8 +155,10 @@ nothing (fail closed).
 ## Image (compose profile `station-registrar`)
 
 `docker compose --profile station-registrar` starts `wrfcoin-station-registrar`.
-It has no host port, and no backend or edge route reaches it yet, so even when
-running it answers nobody outside the compose network.
+It has no host port. Only the backend proxy (backend `station-registrar-routes.ts`) calls it,
+at `http://station-registrar-ingress:8095`: an alias on the pinned `wrfcoin-ingress` network
+only, so the service always sees the backend at `10.251.0.20` and can trust its one
+`X-Forwarded-For` value. The public edge reaches the backend, never this service.
 
 1. Build the release CLI on CT102 inside the same base as the node image
    (Debian bookworm, glibc), from a core4 revision that pins the chain 888
@@ -183,7 +185,7 @@ The container runs read-only, no capabilities, `/tmp` tmpfs only.
 
 ## Not in this change
 
-- No backend proxy or edge route, and the phone app does not call it yet.
+- The phone app does not call it yet.
 - Nothing is enabled or deployed. The chain refuses every registrar
   registration until `station_registrar_key` is scheduled and active.
 
