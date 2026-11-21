@@ -1719,7 +1719,7 @@ STATION_REGISTRAR_CASES = (
     ("PUT", _SR, _JSON, 404),
     ("POST", f"{_SR}/{_SR_ID}", _JSON, 404),
     ("POST", "/api/station-registrar/sign", _JSON, 404),  # signing is the service's, never a public route
-    ("GET", "/station-registrar/requests", (), 404),  # the service's own path is not admitted
+    ("GET", "/api/station-registrar/health", (), 404),  # nothing else under the prefix is admitted
     ("GET", f"{_SR}/x/../{_SR_ID}", (), 400),
 )
 
