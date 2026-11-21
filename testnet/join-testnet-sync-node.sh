@@ -287,7 +287,7 @@ if [ "${PREFLIGHT}" = "1" ]; then
   exit 0
 fi
 
-# --- Build the node image BEFORE .env -------------------------------------
+# --- The node image is built BEFORE a new .env -----------------------------
 # setup-env.sh refuses to write a .env without an accepted runtime image: the
 # default public-release profile needs the real local image id (sha256:<64 hex>).
 # A brand-new host has no image yet, so the old order (setup-env, then
@@ -300,23 +300,29 @@ fi
 # interpolation). This mirrors the wrfcoin-node `build:` in
 # docker-compose.override.yml (context, dockerfile, core build args, tag);
 # scripts/tests/test-join-sh-e2e.sh checks the two stay equal.
+# On a first run the build must come before setup-env (it needs the id); with an
+# existing .env it runs just before start, after every cheap pre-start check.
 NODE_IMAGE_TAG="wrfcoin/native-chain:testnet-local"
-echo "==> Building the node image ${NODE_IMAGE_TAG} from ${WRFCOIN_ROOT} (first build can take a while) ..."
-docker build \
-  -f "${WRFCOIN_ROOT}/infra/infra/docker/Dockerfile.core" \
-  --build-arg "WRFCOIN_BUILD_REVISION=${WRFCOIN_CORE4_BUILD_REVISION:-}" \
-  --build-arg "WRFCOIN_BUILD_CREATED=${WRFCOIN_BUILD_CREATED:-}" \
-  -t "${NODE_IMAGE_TAG}" \
-  "${WRFCOIN_ROOT}"
-NODE_IMAGE_ID="$(docker image inspect -f '{{.Id}}' "${NODE_IMAGE_TAG}")"
-if [[ ! "${NODE_IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-  echo "ERROR: built ${NODE_IMAGE_TAG} but its local image id is '${NODE_IMAGE_ID}', not sha256:<64 hex>." >&2
-  exit 1
-fi
-echo "==> Node image id: ${NODE_IMAGE_ID}"
+NODE_IMAGE_ID=""
+build_node_image() {
+  echo "==> Building the node image ${NODE_IMAGE_TAG} from ${WRFCOIN_ROOT} (first build can take a while) ..."
+  docker build \
+    -f "${WRFCOIN_ROOT}/infra/infra/docker/Dockerfile.core" \
+    --build-arg "WRFCOIN_BUILD_REVISION=${WRFCOIN_CORE4_BUILD_REVISION:-}" \
+    --build-arg "WRFCOIN_BUILD_CREATED=${WRFCOIN_BUILD_CREATED:-}" \
+    -t "${NODE_IMAGE_TAG}" \
+    "${WRFCOIN_ROOT}"
+  NODE_IMAGE_ID="$(docker image inspect -f '{{.Id}}' "${NODE_IMAGE_TAG}")"
+  if [[ ! "${NODE_IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: built ${NODE_IMAGE_TAG} but its local image id is '${NODE_IMAGE_ID}', not sha256:<64 hex>." >&2
+    exit 1
+  fi
+  echo "==> Node image id: ${NODE_IMAGE_ID}"
+}
 
 # --- Generate .env on first run ---
 if [ ! -f .env ]; then
+  build_node_image
   echo "==> Generating .env (secrets) via setup-env.sh ..."
   WRFCOIN_TESTNET_RUNTIME_IMAGE="${NODE_IMAGE_ID}" bash setup-env.sh
 fi
@@ -340,8 +346,6 @@ set_env() {
 }
 
 echo "==> Configuring sync-only testnet node ..."
-# Record the image that will run (a re-run rebuilds after `git pull`).
-set_env WRFCOIN_TESTNET_RUNTIME_IMAGE "${NODE_IMAGE_ID}"
 set_env BOOTSTRAP_PEERS "${BOOTSTRAP_PEERS}"
 set_env WRFCOIN_NETWORK_ID "${WRFCOIN_CUT_NETWORK_ID}"
 set_env WRFCOIN_CHAIN_ID "${WRFCOIN_CUT_CHAIN_ID}"
@@ -456,6 +460,11 @@ else
     echo "==> Existing node data found in '${node_data_volume}' — ignoring --snapshot (it bootstraps new nodes only)."
   fi
 fi
+
+# Existing .env (re-run, or an operator-made file): build now, after the
+# pre-start checks. Record the image that will run (a re-run rebuilds after `git pull`).
+[ -n "${NODE_IMAGE_ID}" ] || build_node_image
+set_env WRFCOIN_TESTNET_RUNTIME_IMAGE "${NODE_IMAGE_ID}"
 
 echo "==> Starting postgres, redis, wrfcoin-node (node image already built above) ..."
 # --no-build: the node must run exactly the image whose id .env records.

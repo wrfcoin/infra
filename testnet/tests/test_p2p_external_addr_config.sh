@@ -811,7 +811,7 @@ assert_contains "$SYNC_JOIN" 'Preserving operator-supplied WRFCOIN_P2P_EXTERNAL_
 # `compose up` nothing listens there, so a pre-start dial aborted every fresh
 # join (2026-10-31 newcomer dry run).
 dial_line=$(grep -n 'check-p2p-external-addr.sh" "\${WRFCOIN_P2P_EXTERNAL_ADDR}"' "$SYNC_JOIN" | head -1 | cut -d: -f1)
-up_line=$(grep -n 'up -d --build postgres redis wrfcoin-node' "$SYNC_JOIN" | head -1 | cut -d: -f1)
+up_line=$(grep -n 'up -d --no-build postgres redis wrfcoin-node' "$SYNC_JOIN" | head -1 | cut -d: -f1)
 if [ -z "$dial_line" ] || [ -z "$up_line" ] || [ "$dial_line" -le "$up_line" ]; then
   echo "FAIL: sync-node advertised-address dial must come after the node is started" >&2
   exit 1
