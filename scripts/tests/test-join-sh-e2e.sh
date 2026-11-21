@@ -106,17 +106,42 @@ cat > "${BIN}/docker" <<'EOF'
 printf '%s\n' "$*" >> "${E2E_LOG:?}"
 S="${E2E_STATE:?}"; V="${S}/volumes"; mkdir -p "${V}"
 unexpected() { echo "docker-stub: unexpected command: docker $*" >&2; exit 64; }
+STUB_IMAGE_ID="sha256:$(printf 'c%.0s' $(seq 1 64))"
 case "$1 ${2:-}" in
   "compose version") [ $# -eq 2 ] || unexpected "$@"; echo "Docker Compose version v2-stub"; exit 0 ;;
   "info ") exit 0 ;;
-  "image inspect") exit 1 ;;                                   # no cached node image
+  "build -f")
+    # Only the node image build join-testnet-sync-node.sh issues before .env
+    # (it mirrors wrfcoin-node's compose `build:`): context = the workspace root.
+    [ $# -eq 10 ] && [ "$4" = --build-arg ] && [ "${5%%=*}" = WRFCOIN_BUILD_REVISION ] \
+      && [ "$6" = --build-arg ] && [ "${7%%=*}" = WRFCOIN_BUILD_CREATED ] \
+      && [ "$8" = -t ] || unexpected "$@"
+    df="$3"; shift 8; tag="$1"; shift; ctx="$1"
+    [ "$tag" = wrfcoin/native-chain:testnet-local ] || unexpected build "$tag"
+    [ -d "${ctx}/infra" ] && [ -d "${ctx}/core4" ] || unexpected build-context "${ctx}"
+    [ "${df}" = "${ctx}/infra/infra/docker/Dockerfile.core" ] || unexpected build-dockerfile "${df}"
+    [ -f "${ctx}/infra/infra/docker/Dockerfile.core" ] || unexpected build-dockerfile-missing
+    : > "${S}/image-built"; exit 0 ;;
+  "image inspect")
+    if [ "${3:-}" = -f ]; then
+      [ "$#" -eq 5 ] && [ "$4" = '{{.Id}}' ] && [ "$5" = wrfcoin/native-chain:testnet-local ] || unexpected "$@"
+      [ -e "${S}/image-built" ] || exit 1
+      printf '%s\n' "${E2E_STUB_IMAGE_ID:-${STUB_IMAGE_ID}}"; exit 0
+    fi
+    exit 1 ;;                                                  # join.sh cache hint: no cached node image
+  "inspect --format")
+    [ "$#" -eq 4 ] && [ "$3" = '{{.Image}}' ] && [ "$4" = wrfcoin-testnet-node ] || unexpected "$@"
+    [ -e "${S}/compose-up" ] || exit 1
+    printf '%s\n' "${E2E_RUNNING_IMAGE_ID:-${STUB_IMAGE_ID}}"; exit 0 ;;
   "volume inspect") [ -d "${V}/$3" ] && exit 0 || exit 1 ;;
   "volume create") [ ! -e "${V}/$3" ] || exit 1; mkdir -p "${V}/$3"; exit 0 ;;
   "volume rm") rm -rf "${V:?}/$3"; exit 0 ;;
 esac
 if [ "$1" = compose ]; then
-  [ "$*" = "compose -f docker-compose.testnet.yml -f docker-compose.override.yml up -d --build postgres redis wrfcoin-node" ] \
+  [ "$*" = "compose -f docker-compose.testnet.yml -f docker-compose.override.yml up -d --no-build postgres redis wrfcoin-node" ] \
     || unexpected "$@"
+  # --no-build means the image must already exist (built before .env).
+  [ -e "${S}/image-built" ] || { echo 'docker-stub: compose up --no-build before the node image was built' >&2; exit 66; }
   [ "${WRFCOIN_MIN_WORK_FACTOR:-missing}" = 0 ] || {
     echo 'testnet work-factor environment must be 0' >&2; exit 65;
   }
@@ -180,8 +205,16 @@ case "${url}" in
   file://*) cp "${url#file://}" "${out:?}" ;;           # join-snapshot-restore --base-url file://
   http://localhost:8556/readyz) exit 0 ;;
   http://localhost:8556/network/info)
-    printf '{"network_id":"%s","chain_id":"%s","genesis_hash":"0x%s","chain_height":16500,"peer_count":1,"sync_status":"syncing"}' \
-      "${E2E_NODE_NETWORK:?}" "${E2E_NODE_CHAIN:?}" "${E2E_NODE_GENESIS:?}" ;;
+    # E2E_GENESIS_UNKNOWN_POLLS=N: a brand-new node answers at height 0 with
+    # genesis "unknown" for its first N polls (block 1 not received yet).
+    n="${E2E_GENESIS_UNKNOWN_POLLS:-0}"; c="$(grep -c 'network/info' "${E2E_CURL_LOG}")"
+    if [ "${n}" = forever ] || [ "${c}" -le "${n}" ]; then
+      printf '{"network_id":"%s","chain_id":"%s","genesis_hash":"unknown","chain_height":0,"peer_count":1,"sync_status":"genesis"}' \
+        "${E2E_NODE_NETWORK:?}" "${E2E_NODE_CHAIN:?}"
+    else
+      printf '{"network_id":"%s","chain_id":"%s","genesis_hash":"0x%s","chain_height":16500,"peer_count":1,"sync_status":"syncing"}' \
+        "${E2E_NODE_NETWORK:?}" "${E2E_NODE_CHAIN:?}" "${E2E_NODE_GENESIS:?}"
+    fi ;;
   *) exit 7 ;;
 esac
 EOF
@@ -217,6 +250,7 @@ make_ws() {
   local ws="${TMP}/$1"
   mkdir -p "${ws}/infra" "${ws}/core4"
   cp -a "${REPO}/testnet" "${ws}/infra/testnet"
+  mkdir -p "${ws}/infra/infra/docker"; cp "${REPO}/infra/docker/Dockerfile.core" "${ws}/infra/infra/docker/"
   rm -f "${ws}/infra/testnet/.env" "${ws}/infra/testnet/.core4-commit"
   gitq -C "${ws}/infra" init -q
   gitq -C "${ws}/core4" init -q
@@ -300,11 +334,24 @@ happy_path_holds() {
   # restore (volume create + unpack) strictly before the node is started
   local vc up
   vc="$(grep -n '^volume create testnet_node-data$' "${ws}/docker.log" | head -1 | cut -d: -f1)"
-  up="$(grep -n '^compose -f docker-compose.testnet.yml -f docker-compose.override.yml up -d --build postgres redis wrfcoin-node$' "${ws}/docker.log" | head -1 | cut -d: -f1)"
+  up="$(grep -n '^compose -f docker-compose.testnet.yml -f docker-compose.override.yml up -d --no-build postgres redis wrfcoin-node$' "${ws}/docker.log" | head -1 | cut -d: -f1)"
   if ! { [ -n "${vc}" ] && [ -n "${up}" ] && [ "${vc}" -lt "${up}" ] && [ "$(cat "${ws}/state/volumes/testnet_node-data/wrfcoin.redb" 2>/dev/null)" = redb-fixture ]; }; then
     echo "    (restore not before start)" >&2; return 1
   fi
+  image_recorded "${ws}" || return 1
   grep -q 'http://localhost:8556/network/info' "${ws}/curl.log"
+}
+# The runtime image (setup-env.sh's public-release gate): built before start,
+# its real id recorded in .env, and the running node checked against it.
+E2E_IMAGE_ID="sha256:$(printf 'c%.0s' $(seq 1 64))"
+image_recorded() {
+  local ws="$1" b up
+  b="$(grep -n '^build -f ' "${ws}/docker.log" | head -1 | cut -d: -f1)"
+  up="$(grep -n '^compose .* up -d --no-build ' "${ws}/docker.log" | head -1 | cut -d: -f1)"
+  { [ -n "${b}" ] && [ -n "${up}" ] && [ "${b}" -lt "${up}" ]; } || { echo "    (image not built before start)" >&2; return 1; }
+  [ "$(env_val "${ws}" WRFCOIN_TESTNET_RUNTIME_IMAGE)" = "${E2E_IMAGE_ID}" ] || { echo "    (.env runtime image != built id)" >&2; return 1; }
+  grep -q "RUNTIME_IMAGE_MATCH: container=wrfcoin-testnet-node configured=${E2E_IMAGE_ID}" "${ws}/out.log" \
+    || { echo "    (running image not checked)" >&2; return 1; }
 }
 
 echo "== the docker stub fails closed =="
@@ -377,6 +424,86 @@ for key, expected in captured.items():
 PY
 }
 check "fresh 888 join: every reviewed genesis declaration reaches .env and the node despite stale shell" fresh_888_bootstrap
+
+# The brand-new host (outside-join run, 2026-11-20): NO .env at all, so the real
+# setup-env.sh runs. Before the fix it refused with RUNTIME_IMAGE_FAIL because
+# no image existed yet; every other case here starts from a pre-made .env and
+# could not see that.
+fresh_host_no_env() {
+  local ws; ws="$(make_ws fresh-host)"
+  prepare_888 "${ws}"
+  rm -f "${ws}/infra/testnet/.env"
+  E2E_NODE_CHAIN=888 run_join "${ws}" --yes || { tail -5 "${ws}/out.log" >&2; return 1; }
+  ! grep -q RUNTIME_IMAGE_FAIL "${ws}/out.log" || return 1
+  [ "$(env_val "${ws}" WRFCOIN_RUNTIME_IMAGE_PROFILE)" = public-release ] || return 1
+  [ "$(env_val "${ws}" WRFCOIN_RUNTIME_IMAGE_CLASS)" = IMMUTABLE ] || return 1
+  image_recorded "${ws}" && grep -q 'Chain identity verified' "${ws}/out.log"
+}
+check "fresh host with no .env: image built first, setup-env gets its real id (IMMUTABLE), node runs it" fresh_host_no_env
+
+# Outside-join run 4 (2026-11-21): the brand-new node answered at height 0 with
+# genesis "unknown" and the identity check called that a mismatch. It must wait
+# for block 1, bounded, and never call "not yet" a mismatch.
+fresh_host_genesis_pending() {
+  local ws; ws="$(make_ws fresh-host-pending)"
+  prepare_888 "${ws}"; rm -f "${ws}/infra/testnet/.env"
+  E2E_NODE_CHAIN=888 E2E_GENESIS_UNKNOWN_POLLS=2 JOIN_IDENTITY_WAIT_SECS=30 run_join "${ws}" --yes \
+    || { tail -5 "${ws}/out.log" >&2; return 1; }
+  grep -q 'Genesis not known yet' "${ws}/out.log" && grep -q 'Chain identity verified' "${ws}/out.log" \
+    && ! grep -q 'genesis_hash mismatch' "${ws}/out.log"
+}
+check "fresh host: genesis 'unknown' at height 0 is waited out, then verified" fresh_host_genesis_pending
+
+fresh_host_genesis_never() {
+  local ws; ws="$(make_ws fresh-host-never)"
+  prepare_888 "${ws}"; rm -f "${ws}/infra/testnet/.env"
+  if E2E_NODE_CHAIN=888 E2E_GENESIS_UNKNOWN_POLLS=forever JOIN_IDENTITY_WAIT_SECS=10 run_join "${ws}" --yes; then return 1; fi
+  grep -q 'still has no genesis block' "${ws}/out.log" && ! grep -q 'genesis_hash mismatch' "${ws}/out.log" \
+    && ! grep -q 'Chain identity verified' "${ws}/out.log"
+}
+check "fresh host: genesis never arrives -> nonzero, says 'not verified yet', never 'mismatch' or 'verified'" fresh_host_genesis_never
+
+fresh_host_running_mismatch() {
+  local ws; ws="$(make_ws fresh-host-mismatch)"
+  prepare_888 "${ws}"
+  rm -f "${ws}/infra/testnet/.env"
+  if E2E_NODE_CHAIN=888 E2E_RUNNING_IMAGE_ID="sha256:$(printf 'd%.0s' $(seq 1 64))" run_join "${ws}" --yes; then return 1; fi
+  grep -q 'mismatch=true' "${ws}/out.log"
+}
+check "fresh host: a running node that is not the recorded image is refused" fresh_host_running_mismatch
+
+bad_image_id() {
+  local ws; ws="$(make_ws fresh-host-bad-id)"
+  prepare_888 "${ws}"
+  rm -f "${ws}/infra/testnet/.env"
+  if E2E_NODE_CHAIN=888 E2E_STUB_IMAGE_ID="testnet-local" run_join "${ws}" --yes; then return 1; fi
+  grep -q 'not sha256:<64 hex>' "${ws}/out.log" && [ ! -e "${ws}/infra/testnet/.env" ] && not_started "${ws}"
+}
+check "fresh host: a built image without a sha256 id stops before .env or start" bad_image_id
+
+# The docker build in join-testnet-sync-node.sh must stay the wrfcoin-node
+# compose build (context, dockerfile, build args, tag).
+build_mirrors_compose() {
+  python3 - "${REPO}/testnet" <<'PY'
+import re, sys, pathlib
+t = pathlib.Path(sys.argv[1])
+ov = (t / 'docker-compose.override.yml').read_text()
+block = re.search(r'(?ms)^  wrfcoin-node:\n(.*?)(?=^  \S)', ov).group(1)
+assert 'image: wrfcoin/native-chain:testnet-local' in block, 'tag'
+assert 'dockerfile: infra/infra/docker/Dockerfile.core' in block, 'dockerfile'
+assert 'context: ${WRFCOIN_ROOT:-' in block, 'context'
+assert 'args: *core-build-args' in block, 'args'
+args = re.search(r'(?m)^x-core-build-args: &core-build-args\n((?:  .*\n)+)', ov).group(1)
+keys = re.findall(r'^  ([A-Z0-9_]+): \$\{([A-Z0-9_]+):-\}', args, re.M)
+sh = (t / 'join-testnet-sync-node.sh').read_text()
+assert '-f "${WRFCOIN_ROOT}/infra/infra/docker/Dockerfile.core"' in sh
+assert '-t "${NODE_IMAGE_TAG}"' in sh and 'NODE_IMAGE_TAG="wrfcoin/native-chain:testnet-local"' in sh
+for k, v in keys:
+    assert f'--build-arg "{k}=${{{v}:-}}"' in sh, (k, v)
+assert len(re.findall(r'--build-arg ', sh)) == len(keys), 'extra/missing build args'
+PY
+}
+check "join's docker build mirrors the wrfcoin-node compose build (context, dockerfile, args, tag)" build_mirrors_compose
 
 missing_888_bootstrap() {
   local key="$1" ws; ws="$(make_ws "missing-${key}")"
@@ -512,7 +639,7 @@ unreachable_advertise_warns() {
   grep -q 'WARNING: /ip4/127.0.0.1/tcp/1 did not accept TCP' "${ws}/out.log" || return 1
   [ "$(env_val "${ws}" WRFCOIN_P2P_EXTERNAL_ADDR)" = /ip4/127.0.0.1/tcp/1 ] || { echo "    (address not persisted)" >&2; return 1; }
   local started dialed
-  started="$(grep -n 'Building + starting' "${ws}/out.log" | head -1 | cut -d: -f1)"
+  started="$(grep -n 'Starting postgres, redis, wrfcoin-node' "${ws}/out.log" | head -1 | cut -d: -f1)"
   dialed="$(grep -n '^dialing ' "${ws}/out.log" | head -1 | cut -d: -f1)"
   [ -n "${started}" ] && [ -n "${dialed}" ] && [ "${started}" -lt "${dialed}" ] || { echo "    (dial not after start)" >&2; return 1; }
 }

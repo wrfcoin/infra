@@ -287,10 +287,44 @@ if [ "${PREFLIGHT}" = "1" ]; then
   exit 0
 fi
 
+# --- The node image is built BEFORE a new .env -----------------------------
+# setup-env.sh refuses to write a .env without an accepted runtime image: the
+# default public-release profile needs the real local image id (sha256:<64 hex>).
+# A brand-new host has no image yet, so the old order (setup-env, then
+# `compose up --build`) stopped every fresh joiner seconds in with
+# RUNTIME_IMAGE_FAIL. Build first, then hand setup-env the id of the image this
+# node will actually run, which keeps the IMMUTABLE class honest.
+#
+# Plain `docker build`, not `docker compose build`: compose cannot load the
+# project before .env exists (other services' required `:?` variables fail
+# interpolation). This mirrors the wrfcoin-node `build:` in
+# docker-compose.override.yml (context, dockerfile, core build args, tag);
+# scripts/tests/test-join-sh-e2e.sh checks the two stay equal.
+# On a first run the build must come before setup-env (it needs the id); with an
+# existing .env it runs just before start, after every cheap pre-start check.
+NODE_IMAGE_TAG="wrfcoin/native-chain:testnet-local"
+NODE_IMAGE_ID=""
+build_node_image() {
+  echo "==> Building the node image ${NODE_IMAGE_TAG} from ${WRFCOIN_ROOT} (first build can take a while) ..."
+  docker build \
+    -f "${WRFCOIN_ROOT}/infra/infra/docker/Dockerfile.core" \
+    --build-arg "WRFCOIN_BUILD_REVISION=${WRFCOIN_CORE4_BUILD_REVISION:-}" \
+    --build-arg "WRFCOIN_BUILD_CREATED=${WRFCOIN_BUILD_CREATED:-}" \
+    -t "${NODE_IMAGE_TAG}" \
+    "${WRFCOIN_ROOT}"
+  NODE_IMAGE_ID="$(docker image inspect -f '{{.Id}}' "${NODE_IMAGE_TAG}")"
+  if [[ ! "${NODE_IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: built ${NODE_IMAGE_TAG} but its local image id is '${NODE_IMAGE_ID}', not sha256:<64 hex>." >&2
+    exit 1
+  fi
+  echo "==> Node image id: ${NODE_IMAGE_ID}"
+}
+
 # --- Generate .env on first run ---
 if [ ! -f .env ]; then
+  build_node_image
   echo "==> Generating .env (secrets) via setup-env.sh ..."
-  bash setup-env.sh
+  WRFCOIN_TESTNET_RUNTIME_IMAGE="${NODE_IMAGE_ID}" bash setup-env.sh
 fi
 
 # --- Helper: idempotently set KEY=VALUE in .env ---
@@ -427,9 +461,22 @@ else
   fi
 fi
 
-echo "==> Building + starting postgres, redis, wrfcoin-node (first build can take a while) ..."
+# Existing .env (re-run, or an operator-made file): build now, after the
+# pre-start checks. Record the image that will run (a re-run rebuilds after `git pull`).
+[ -n "${NODE_IMAGE_ID}" ] || build_node_image
+set_env WRFCOIN_TESTNET_RUNTIME_IMAGE "${NODE_IMAGE_ID}"
+
+echo "==> Starting postgres, redis, wrfcoin-node (node image already built above) ..."
+# --no-build: the node must run exactly the image whose id .env records.
 docker compose -f docker-compose.testnet.yml -f docker-compose.override.yml \
-  up -d --build postgres redis wrfcoin-node
+  up -d --no-build postgres redis wrfcoin-node
+
+# The running node must be that image (the gate setup-env used; release profile only).
+if [ "$(sed -n 's/^WRFCOIN_RUNTIME_IMAGE_PROFILE=//p' .env | tail -1)" = "public-release" ]; then
+  bash "${SCRIPT_DIR}/scripts/validate-runtime-image.sh" --profile public-release \
+    --image "${NODE_IMAGE_ID}" --check-running --container wrfcoin-testnet-node \
+    || { echo "ERROR: the running node is not the image recorded in .env (${NODE_IMAGE_ID})." >&2; exit 1; }
+fi
 
 echo "==> Waiting for the node API ..."
 ready=0
@@ -460,6 +507,26 @@ echo ""
 if [ "${ready}" = "1" ]; then
   echo "=== Node is up. Chain identity / sync status: ==="
   INFO="$(curl -s http://localhost:8556/network/info)"
+  # A brand-new node starts at height 0 and reports genesis_hash "unknown"
+  # until block 1 (this chain's genesis) arrives from a peer (core4#2797).
+  # That is "not yet", not a mismatch: wait for it, bounded, before comparing.
+  identity_wait="${JOIN_IDENTITY_WAIT_SECS:-900}"
+  waited=0
+  while { g="$(json_field "${INFO}" genesis_hash)"; [ -z "${g}" ] || [ "${g#0x}" = unknown ]; } \
+      && [ "${waited}" -lt "${identity_wait}" ]; do
+    [ "${waited}" -eq 0 ] && echo "==> Genesis not known yet (height $(json_field "${INFO}" chain_height), peers $(json_field "${INFO}" peer_count)); waiting for block 1 from the seed (up to ${identity_wait}s) ..."
+    sleep 5; waited=$((waited + 5))
+    INFO="$(curl -s http://localhost:8556/network/info)"
+  done
+  g="$(json_field "${INFO}" genesis_hash)"
+  if [ -z "${g}" ] || [ "${g#0x}" = unknown ]; then
+    echo "ERROR: after ${identity_wait}s the node still has no genesis block (height $(json_field "${INFO}" chain_height), peers $(json_field "${INFO}" peer_count))," >&2
+    echo "       so its chain identity cannot be verified yet. This is not a mismatch: the node is running" >&2
+    echo "       but has not received block 1. Check outbound TCP 9000 to the seed and the logs:" >&2
+    echo "         docker compose -f docker-compose.testnet.yml logs --tail=80 wrfcoin-node" >&2
+    echo "       then re-run this script (it is safe to re-run)." >&2
+    exit 1
+  fi
   printf '%s' "${INFO}" \
     | (jq '{network_id, chain_id, genesis_hash, chain_height, peer_count, sync_status}' 2>/dev/null || cat)
   echo ""
