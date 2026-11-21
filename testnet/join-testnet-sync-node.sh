@@ -498,6 +498,26 @@ echo ""
 if [ "${ready}" = "1" ]; then
   echo "=== Node is up. Chain identity / sync status: ==="
   INFO="$(curl -s http://localhost:8556/network/info)"
+  # A brand-new node starts at height 0 and reports genesis_hash "unknown"
+  # until block 1 (this chain's genesis) arrives from a peer (core4#2797).
+  # That is "not yet", not a mismatch: wait for it, bounded, before comparing.
+  identity_wait="${JOIN_IDENTITY_WAIT_SECS:-900}"
+  waited=0
+  while { g="$(json_field "${INFO}" genesis_hash)"; [ -z "${g}" ] || [ "${g#0x}" = unknown ]; } \
+      && [ "${waited}" -lt "${identity_wait}" ]; do
+    [ "${waited}" -eq 0 ] && echo "==> Genesis not known yet (height $(json_field "${INFO}" chain_height), peers $(json_field "${INFO}" peer_count)); waiting for block 1 from the seed (up to ${identity_wait}s) ..."
+    sleep 5; waited=$((waited + 5))
+    INFO="$(curl -s http://localhost:8556/network/info)"
+  done
+  g="$(json_field "${INFO}" genesis_hash)"
+  if [ -z "${g}" ] || [ "${g#0x}" = unknown ]; then
+    echo "ERROR: after ${identity_wait}s the node still has no genesis block (height $(json_field "${INFO}" chain_height), peers $(json_field "${INFO}" peer_count))," >&2
+    echo "       so its chain identity cannot be verified yet. This is not a mismatch: the node is running" >&2
+    echo "       but has not received block 1. Check outbound TCP 9000 to the seed and the logs:" >&2
+    echo "         docker compose -f docker-compose.testnet.yml logs --tail=80 wrfcoin-node" >&2
+    echo "       then re-run this script (it is safe to re-run)." >&2
+    exit 1
+  fi
   printf '%s' "${INFO}" \
     | (jq '{network_id, chain_id, genesis_hash, chain_height, peer_count, sync_status}' 2>/dev/null || cat)
   echo ""

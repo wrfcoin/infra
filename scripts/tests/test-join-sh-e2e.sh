@@ -205,8 +205,16 @@ case "${url}" in
   file://*) cp "${url#file://}" "${out:?}" ;;           # join-snapshot-restore --base-url file://
   http://localhost:8556/readyz) exit 0 ;;
   http://localhost:8556/network/info)
-    printf '{"network_id":"%s","chain_id":"%s","genesis_hash":"0x%s","chain_height":16500,"peer_count":1,"sync_status":"syncing"}' \
-      "${E2E_NODE_NETWORK:?}" "${E2E_NODE_CHAIN:?}" "${E2E_NODE_GENESIS:?}" ;;
+    # E2E_GENESIS_UNKNOWN_POLLS=N: a brand-new node answers at height 0 with
+    # genesis "unknown" for its first N polls (block 1 not received yet).
+    n="${E2E_GENESIS_UNKNOWN_POLLS:-0}"; c="$(grep -c 'network/info' "${E2E_CURL_LOG}")"
+    if [ "${n}" = forever ] || [ "${c}" -le "${n}" ]; then
+      printf '{"network_id":"%s","chain_id":"%s","genesis_hash":"unknown","chain_height":0,"peer_count":1,"sync_status":"genesis"}' \
+        "${E2E_NODE_NETWORK:?}" "${E2E_NODE_CHAIN:?}"
+    else
+      printf '{"network_id":"%s","chain_id":"%s","genesis_hash":"0x%s","chain_height":16500,"peer_count":1,"sync_status":"syncing"}' \
+        "${E2E_NODE_NETWORK:?}" "${E2E_NODE_CHAIN:?}" "${E2E_NODE_GENESIS:?}"
+    fi ;;
   *) exit 7 ;;
 esac
 EOF
@@ -432,6 +440,28 @@ fresh_host_no_env() {
   image_recorded "${ws}" && grep -q 'Chain identity verified' "${ws}/out.log"
 }
 check "fresh host with no .env: image built first, setup-env gets its real id (IMMUTABLE), node runs it" fresh_host_no_env
+
+# Outside-join run 4 (2026-11-21): the brand-new node answered at height 0 with
+# genesis "unknown" and the identity check called that a mismatch. It must wait
+# for block 1, bounded, and never call "not yet" a mismatch.
+fresh_host_genesis_pending() {
+  local ws; ws="$(make_ws fresh-host-pending)"
+  prepare_888 "${ws}"; rm -f "${ws}/infra/testnet/.env"
+  E2E_NODE_CHAIN=888 E2E_GENESIS_UNKNOWN_POLLS=2 JOIN_IDENTITY_WAIT_SECS=30 run_join "${ws}" --yes \
+    || { tail -5 "${ws}/out.log" >&2; return 1; }
+  grep -q 'Genesis not known yet' "${ws}/out.log" && grep -q 'Chain identity verified' "${ws}/out.log" \
+    && ! grep -q 'genesis_hash mismatch' "${ws}/out.log"
+}
+check "fresh host: genesis 'unknown' at height 0 is waited out, then verified" fresh_host_genesis_pending
+
+fresh_host_genesis_never() {
+  local ws; ws="$(make_ws fresh-host-never)"
+  prepare_888 "${ws}"; rm -f "${ws}/infra/testnet/.env"
+  if E2E_NODE_CHAIN=888 E2E_GENESIS_UNKNOWN_POLLS=forever JOIN_IDENTITY_WAIT_SECS=10 run_join "${ws}" --yes; then return 1; fi
+  grep -q 'still has no genesis block' "${ws}/out.log" && ! grep -q 'genesis_hash mismatch' "${ws}/out.log" \
+    && ! grep -q 'Chain identity verified' "${ws}/out.log"
+}
+check "fresh host: genesis never arrives -> nonzero, says 'not verified yet', never 'mismatch' or 'verified'" fresh_host_genesis_never
 
 fresh_host_running_mismatch() {
   local ws; ws="$(make_ws fresh-host-mismatch)"
